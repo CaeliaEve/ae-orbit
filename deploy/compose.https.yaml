@@ -1,0 +1,18 @@
+services:
+  api:
+    environment:
+      AE_PUBLIC_URL: "https://${AE_DOMAIN:?Set AE_DOMAIN to a public DNS hostname}"
+  caddy:
+    image: caddy:2.10.2-alpine
+    restart: unless-stopped
+    depends_on: [api]
+    ports: ["80:80", "443:443"]
+    environment:
+      AE_DOMAIN: ${AE_DOMAIN:?Set AE_DOMAIN to a public DNS hostname}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+volumes:
+  caddy_data:
+  caddy_config:

@@ -1,0 +1,757 @@
+openapi: 3.1.0
+info:
+  title: AE Orbit
+  version: 1.0.0
+  description: |
+    Go service and OC bridge protocol; no frontend is included.
+    Quantities, item IDs, revisions and sequence numbers are exact decimal strings.
+    Network/member/order/session/attempt IDs are opaque strings.
+    Deployment is one service instance with PostgreSQL.
+servers:
+  - url: http://127.0.0.1:8080
+security:
+  - memberBearer: []
+  - browserCookie: []
+tags:
+  - {name: Health}
+  - {name: Members}
+  - {name: Networks}
+  - {name: Inventory}
+  - {name: Orders}
+  - {name: Bridge}
+paths:
+  /oc/{path}:
+    get:
+      operationId: downloadOCFile
+      tags: [Bridge]
+      security: []
+      description: |
+        Download an embedded OC Lua module or installer. The path may contain slashes.
+        Allowed roots are lib/aeorbit/*.lua, bin/ae-orbit.lua, config.example.lua and install.lua.
+        Tests, directories, live configuration and journals are not served.
+      parameters:
+        - {name: path, in: path, required: true, schema: {type: string}}
+      responses:
+        '200': {description: Bundled Lua source, content: {text/plain: {schema: {type: string}}}}
+        '404': {description: File is not included in the bundle}
+        default: {$ref: '#/components/responses/Error'}
+  /healthz:
+    get:
+      operationId: health
+      tags: [Health]
+      security: []
+      responses:
+        '200': {description: Process is running, content: {application/json: {schema: {$ref: '#/components/schemas/HealthStatus'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /readyz:
+    get:
+      operationId: readiness
+      tags: [Health]
+      security: []
+      responses:
+        '200': {description: Database responds, content: {application/json: {schema: {$ref: '#/components/schemas/HealthStatus'}}}}
+        '503': {description: Database unavailable, content: {application/json: {schema: {$ref: '#/components/schemas/HealthStatus'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/session:
+    post:
+      operationId: createSession
+      tags: [Members]
+      security: []
+      description: |
+        Exchange a member/admin token for an HttpOnly SameSite=Strict cookie and a CSRF token.
+        An Origin header, when supplied, must equal AE_PUBLIC_URL. Session lifetime is 24 hours.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [token]
+              properties: {token: {$ref: '#/components/schemas/Token'}}
+      responses:
+        '201':
+          description: Browser session created; the ac_session cookie is scoped to /api/.
+          headers:
+            Set-Cookie: {schema: {type: string}}
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [member, csrf, expires_at]
+                properties:
+                  member: {$ref: '#/components/schemas/Member'}
+                  csrf: {type: string}
+                  expires_at: {type: string, format: date-time}
+        default: {$ref: '#/components/responses/Error'}
+    delete:
+      operationId: deleteSession
+      tags: [Members]
+      parameters: [{$ref: '#/components/parameters/CSRF'}, {$ref: '#/components/parameters/Origin'}]
+      responses:
+        '204': {description: Session deleted and cookie cleared}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/me:
+    get:
+      operationId: currentMember
+      tags: [Members]
+      responses:
+        '200': {description: Authenticated member, content: {application/json: {schema: {$ref: '#/components/schemas/Member'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/members:
+    get:
+      operationId: listMembers
+      tags: [Members]
+      description: Admin only. Returns up to 1000 active members.
+      responses:
+        '200': {description: Active members, content: {application/json: {schema: {type: array, maxItems: 1000, items: {$ref: '#/components/schemas/Member'}}}}}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: createMember
+      tags: [Members]
+      description: Admin only. The plaintext token is returned once. New members are never admins.
+      parameters: [{$ref: '#/components/parameters/CSRF'}, {$ref: '#/components/parameters/Origin'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name]
+              properties:
+                name: {type: string, minLength: 1, maxLength: 128}
+                grants: {type: array, maxItems: 256, items: {$ref: '#/components/schemas/Grant'}}
+      responses:
+        '201':
+          description: Member and token
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [member, token]
+                properties: {member: {$ref: '#/components/schemas/Member'}, token: {$ref: '#/components/schemas/Token'}}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/members/{member}:
+    parameters: [{$ref: '#/components/parameters/MemberID'}]
+    delete:
+      operationId: revokeMember
+      tags: [Members]
+      description: Admin only. Revokes the member token and all their browser sessions. Cannot revoke admin.
+      parameters: [{$ref: '#/components/parameters/CSRF'}, {$ref: '#/components/parameters/Origin'}]
+      responses:
+        '204': {description: Member revoked}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/members/{member}/networks/{network}:
+    parameters: [{$ref: '#/components/parameters/MemberID'}, {$ref: '#/components/parameters/NetworkID'}]
+    put:
+      operationId: grantNetwork
+      tags: [Members]
+      description: Admin only. Grant viewing and optionally crafting access to a network.
+      parameters: [{$ref: '#/components/parameters/CSRF'}, {$ref: '#/components/parameters/Origin'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [can_craft]
+              properties: {can_craft: {type: boolean}}
+      responses:
+        '204': {description: Access updated}
+        default: {$ref: '#/components/responses/Error'}
+    delete:
+      operationId: revokeNetworkGrant
+      tags: [Members]
+      description: Admin only. Removes access; existing game jobs are unaffected.
+      parameters: [{$ref: '#/components/parameters/CSRF'}, {$ref: '#/components/parameters/Origin'}]
+      responses:
+        '204': {description: Access removed}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/networks:
+    get:
+      operationId: listNetworks
+      tags: [Networks]
+      description: Returns up to 1000 accessible networks.
+      responses:
+        '200': {description: Accessible networks, content: {application/json: {schema: {type: array, maxItems: 1000, items: {$ref: '#/components/schemas/Network'}}}}}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: createNetwork
+      tags: [Networks]
+      description: Admin only. Networks on the same Minecraft server must share server_group.
+      parameters: [{$ref: '#/components/parameters/CSRF'}, {$ref: '#/components/parameters/Origin'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name, server_group, source]
+              properties:
+                name: {type: string, minLength: 1, maxLength: 128}
+                server_group: {type: string, minLength: 1, maxLength: 128}
+                source: {type: string, enum: [oc, simulator]}
+      responses:
+        '201':
+          description: Network and one-time device credential
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [network, device_token]
+                properties: {network: {$ref: '#/components/schemas/Network'}, device_token: {$ref: '#/components/schemas/Token'}}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/networks/{network}:
+    parameters: [{$ref: '#/components/parameters/NetworkID'}]
+    get:
+      operationId: getNetwork
+      tags: [Networks]
+      responses:
+        '200': {description: Network freshness and capabilities, content: {application/json: {schema: {$ref: '#/components/schemas/Network'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/networks/{network}/device-token:
+    parameters: [{$ref: '#/components/parameters/NetworkID'}]
+    post:
+      operationId: rotateDeviceToken
+      tags: [Networks]
+      description: |
+        Admin only. Immediately invalidates the old token and bridge session.
+        Retains inventory, marks possible executions needs_review, and clears CPU snapshots.
+        This operation is not idempotent; if the response is lost, rotate again and install the latest token.
+      parameters: [{$ref: '#/components/parameters/CSRF'}, {$ref: '#/components/parameters/Origin'}]
+      requestBody: {$ref: '#/components/requestBodies/Empty'}
+      responses:
+        '200':
+          description: Replacement credential, returned once
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [device_token]
+                properties: {device_token: {$ref: '#/components/schemas/Token'}}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/networks/{network}/items:
+    parameters: [{$ref: '#/components/parameters/NetworkID'}]
+    get:
+      operationId: listItems
+      tags: [Inventory]
+      description: |
+        Keyset pagination bound to network, query and inventory revision.
+        A changed revision returns 409 view_changed. A service restart invalidates cursor signatures.
+        Metadata for display excludes raw NBT; orders use item_id.
+        Short queries (under 3 Unicode characters) use prefix matching; longer queries use substring matching.
+      parameters:
+        - {name: q, in: query, schema: {type: string, maxLength: 128}}
+        - {name: sort, in: query, schema: {type: string, enum: [name, quantity], default: name}}
+        - {name: craftable, in: query, schema: {type: boolean}}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}
+        - {name: cursor, in: query, schema: {type: string, maxLength: 4096}}
+      responses:
+        '200': {description: One inventory page, content: {application/json: {schema: {$ref: '#/components/schemas/ItemPage'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/networks/{network}/inventory-stats:
+    parameters: [{$ref: '#/components/parameters/NetworkID'}]
+    get:
+      operationId: inventoryStats
+      tags: [Inventory]
+      description: Exact database aggregates. This scans network inventory; avoid requesting on every item event.
+      responses:
+        '200':
+          description: Decimal counts; total_quantity may exceed int64
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [entries, craftable, total_quantity]
+                properties:
+                  entries: {type: string, pattern: '^(0|[1-9][0-9]*)$'}
+                  craftable: {type: string, pattern: '^(0|[1-9][0-9]*)$'}
+                  total_quantity: {type: string, pattern: '^(0|[1-9][0-9]*)$'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/networks/{network}/cpus:
+    parameters: [{$ref: '#/components/parameters/NetworkID'}]
+    get:
+      operationId: listCPUs
+      tags: [Inventory]
+      responses:
+        '200': {description: Last CPU snapshot, content: {application/json: {schema: {$ref: '#/components/schemas/CPUView'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/networks/{network}/orders:
+    parameters: [{$ref: '#/components/parameters/NetworkID'}]
+    get:
+      operationId: listOrders
+      tags: [Orders]
+      description: Most recent orders, newest first; no unbounded history export.
+      parameters:
+        - {name: state, in: query, schema: {$ref: '#/components/schemas/OrderState'}}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 100}}
+      responses:
+        '200': {description: Recent orders, content: {application/json: {schema: {type: array, maxItems: 200, items: {$ref: '#/components/schemas/Order'}}}}}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: createOrder
+      tags: [Orders]
+      description: |
+        Requires crafting permission. Crafts an ADDITIONAL quantity and leaves the output in AE.
+        Reuse the same member/network/idempotency_key and parameters for retries.
+        A parameter mismatch returns 409. Default queue TTL is 3600 seconds.
+        Idempotency remains available while the order is retained (terminal history: 30 days).
+      parameters: [{$ref: '#/components/parameters/CSRF'}, {$ref: '#/components/parameters/Origin'}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/OrderInput'}}}
+      responses:
+        '201': {description: New or existing matching order, content: {application/json: {schema: {$ref: '#/components/schemas/Order'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/networks/{network}/orders/{order}:
+    parameters: [{$ref: '#/components/parameters/NetworkID'}, {$ref: '#/components/parameters/OrderID'}]
+    get:
+      operationId: getOrder
+      tags: [Orders]
+      responses:
+        '200': {description: Order state, content: {application/json: {schema: {$ref: '#/components/schemas/Order'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/networks/{network}/orders/{order}/events:
+    parameters: [{$ref: '#/components/parameters/NetworkID'}, {$ref: '#/components/parameters/OrderID'}]
+    get:
+      operationId: getOrderHistory
+      tags: [Orders]
+      description: Last 100 state transitions, newest first. This endpoint returns JSON, not SSE.
+      responses:
+        '200': {description: Audit events, content: {application/json: {schema: {type: array, maxItems: 100, items: {$ref: '#/components/schemas/OrderEvent'}}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/networks/{network}/orders/{order}/cancel:
+    parameters: [{$ref: '#/components/parameters/NetworkID'}, {$ref: '#/components/parameters/OrderID'}]
+    post:
+      operationId: cancelQueuedOrder
+      tags: [Orders]
+      description: Requires crafting permission. Only queued orders can be canceled; a repeated cancel is idempotent.
+      parameters: [{$ref: '#/components/parameters/CSRF'}, {$ref: '#/components/parameters/Origin'}]
+      responses:
+        '200': {description: Canceled order, content: {application/json: {schema: {$ref: '#/components/schemas/Order'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/networks/{network}/orders/{order}/resolve:
+    parameters: [{$ref: '#/components/parameters/NetworkID'}, {$ref: '#/components/parameters/OrderID'}]
+    post:
+      operationId: resolveUncertainOrder
+      tags: [Orders]
+      description: Admin only. Resolve needs_review after checking AE. Does not submit or cancel a game operation.
+      parameters: [{$ref: '#/components/parameters/CSRF'}, {$ref: '#/components/parameters/Origin'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [state, reason]
+              properties:
+                state: {type: string, enum: [done, failed, canceled]}
+                reason: {type: string, minLength: 1, maxLength: 1024}
+      responses:
+        '200': {description: Resolved order, content: {application/json: {schema: {$ref: '#/components/schemas/Order'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/networks/{network}/events:
+    parameters: [{$ref: '#/components/parameters/NetworkID'}]
+    get:
+      operationId: subscribeNetwork
+      tags: [Networks]
+      description: |
+        SSE invalidation metadata only. Initial connection sends reset.
+        Resume with Last-Event-ID; missing history, a future ID, or more than 128 replay events sends reset.
+        change data is NetworkEvent; reset data is {network_id,reason:"refresh_view"}.
+        Heartbeat comments are sent every ~15s. Permission is rechecked while connected.
+      parameters:
+        - {name: Last-Event-ID, in: header, schema: {$ref: '#/components/schemas/Quantity'}}
+      responses:
+        '200': {description: SSE stream (reset/change events), content: {text/event-stream: {schema: {type: string}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/admin/metrics:
+    get:
+      operationId: metrics
+      tags: [Health]
+      description: Admin only. Runtime and database-pool diagnostics, not a public Prometheus endpoint.
+      responses:
+        '200':
+          description: Runtime counters
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  uptime_seconds: {type: integer}
+                  requests: {type: string}
+                  active_requests: {type: integer}
+                  active_streams: {type: integer}
+                  goroutines: {type: integer}
+                  heap_bytes: {type: string}
+                  gc_cycles: {type: integer}
+                  database_connections: {type: integer}
+                  database_acquired: {type: integer}
+                  database_acquire_wait_ms: {type: integer}
+        default: {$ref: '#/components/responses/Error'}
+  /bridge/v1/boot-id:
+    post:
+      operationId: deviceBootID
+      tags: [Bridge]
+      security: [{deviceBearer: []}]
+      description: Obtain a fresh random boot nonce before starting a new bridge process.
+      requestBody: {$ref: '#/components/requestBodies/Empty'}
+      responses:
+        '200':
+          description: Random boot identity
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [boot_id]
+                properties: {boot_id: {type: string, minLength: 32, maxLength: 128}}
+        default: {$ref: '#/components/responses/Error'}
+  /bridge/v1/hello:
+    post:
+      operationId: deviceHello
+      tags: [Bridge]
+      security: [{deviceBearer: []}]
+      description: |
+        Same live boot_id returns the same session; retired boot IDs are rejected.
+        New boot retires prior tracking and marks possible side effects needs_review.
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/Hello'}}}}
+      responses:
+        '200': {description: Negotiated session and bounds, content: {application/json: {schema: {$ref: '#/components/schemas/Welcome'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /bridge/v1/inventory:
+    post:
+      operationId: uploadInventory
+      tags: [Bridge]
+      security: [{deviceBearer: []}]
+      description: |
+        Absolute observed quantities; never event deltas. One unacknowledged batch per session.
+        Retry the same payload at the same sequence. Acknowledgement and inventory commit atomically.
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/InventoryBatch'}}}}
+      responses:
+        '200': {description: Committed checkpoint and short-ID bindings, content: {application/json: {schema: {$ref: '#/components/schemas/InventoryAck'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /bridge/v1/poll:
+    post:
+      operationId: devicePoll
+      tags: [Bridge]
+      security: [{deviceBearer: []}]
+      description: |
+        Independent control sequence, job reports, optional CPU snapshot and health.
+        Returns bounded commands, exact reread hints and shared server-group acquisition credits.
+        On replay, commands that have become terminal/uncertain may be removed from the response.
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/Poll'}}}}
+      responses:
+        '200': {description: Control acknowledgement, content: {application/json: {schema: {$ref: '#/components/schemas/PollAck'}}}}
+        default: {$ref: '#/components/responses/Error'}
+components:
+  securitySchemes:
+    memberBearer: {type: http, scheme: bearer, description: 'Admin/member token, never an OC device token'}
+    deviceBearer: {type: http, scheme: bearer, description: 'Network-specific device token, never a member token'}
+    browserCookie: {type: apiKey, in: cookie, name: ac_session, description: Mutations also require matching Origin and X-CSRF-Token}
+  parameters:
+    NetworkID: {name: network, in: path, required: true, schema: {$ref: '#/components/schemas/ID'}}
+    MemberID: {name: member, in: path, required: true, schema: {$ref: '#/components/schemas/ID'}}
+    OrderID: {name: order, in: path, required: true, schema: {$ref: '#/components/schemas/ID'}}
+    CSRF: {name: X-CSRF-Token, in: header, description: Required for cookie-authenticated mutations, schema: {type: string}}
+    Origin: {name: Origin, in: header, description: Must equal AE_PUBLIC_URL for cookie-authenticated mutations, schema: {type: string}}
+  requestBodies:
+    Empty:
+      required: true
+      content: {application/json: {schema: {type: object, additionalProperties: false}}}
+  responses:
+    Error:
+      description: |
+        Application error. 400 invalid_request/invalid_reference; 401 unauthorized; 403 forbidden;
+        404 not_found; 409 conflict/sequence_conflict/stale_session/view_changed/capability_unavailable;
+        413 body_too_large; 415 json_required; 429 capacity_exceeded; 503 timeout/busy; 500 internal_error.
+        Unknown routes and unsupported methods may use standard HTTP text errors.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [error]
+            properties:
+              error:
+                type: object
+                required: [code, message]
+                properties: {code: {type: string}, message: {type: string}}
+  schemas:
+    ID: {type: string, minLength: 1, maxLength: 128, description: Opaque identifier}
+    Token: {type: string, minLength: 32, maxLength: 256, writeOnly: false}
+    Quantity:
+      type: string
+      pattern: '^(0|[1-9][0-9]{0,18})$'
+      maxLength: 19
+      description: Exact decimal integer in 0..9223372036854775807. No JSON number, sign, decimal point or leading zero.
+      examples: ['0', '9007199254740993', '9223372036854775807']
+    PositiveQuantity:
+      allOf: [{$ref: '#/components/schemas/Quantity'}, {not: {const: '0'}}]
+    HealthStatus:
+      type: object
+      required: [status]
+      properties: {status: {type: string, enum: [ok, ready, unavailable]}}
+    Member:
+      type: object
+      required: [id, name, admin]
+      properties: {id: {$ref: '#/components/schemas/ID'}, name: {type: string}, admin: {type: boolean}}
+    Grant:
+      type: object
+      additionalProperties: false
+      required: [network_id, can_craft]
+      properties: {network_id: {$ref: '#/components/schemas/ID'}, can_craft: {type: boolean}}
+    Definition:
+      type: object
+      additionalProperties: false
+      required: [kind, name, damage, label, exact]
+      properties:
+        kind: {type: string, enum: [item, fluid]}
+        name: {type: string, minLength: 1, maxLength: 256}
+        damage: {type: integer, minimum: 0, maximum: 2147483647}
+        nbt: {type: string, maxLength: 16384, description: Canonical base64 of the OC compressed tag bytes; omitted for untagged items}
+        label: {type: string, maxLength: 512}
+        exact: {const: true}
+    Capabilities:
+      type: object
+      additionalProperties: false
+      properties:
+        inventory: {type: boolean}
+        craft: {type: boolean}
+        cpu_output: {type: boolean}
+        exact_quantities: {type: boolean}
+        max_craft_quantity: {$ref: '#/components/schemas/Quantity'}
+        enumeration: {type: string, maxLength: 64}
+    Network:
+      type: object
+      required: [id, name, server_group, source, revision, capabilities, online, quality]
+      properties:
+        id: {$ref: '#/components/schemas/ID'}
+        name: {type: string}
+        server_group: {type: string}
+        source: {type: string, enum: [oc, simulator]}
+        session_id: {$ref: '#/components/schemas/ID'}
+        revision: {$ref: '#/components/schemas/Quantity'}
+        last_seen: {type: string, format: date-time}
+        last_inventory: {type: string, format: date-time}
+        last_scan: {type: string, format: date-time}
+        capabilities: {$ref: '#/components/schemas/Capabilities'}
+        health: {type: object}
+        online: {type: boolean}
+        quality: {type: string, enum: [unverified, degraded], description: Never an atomic-snapshot guarantee}
+    Item:
+      type: object
+      required: [id, kind, name, damage, label, exact, quantity, craftable, observed_at, current_session]
+      properties:
+        id: {$ref: '#/components/schemas/PositiveQuantity'}
+        kind: {type: string, enum: [item, fluid]}
+        name: {type: string}
+        damage: {type: integer}
+        label: {type: string}
+        exact: {type: boolean}
+        quantity: {$ref: '#/components/schemas/Quantity'}
+        craftable: {type: boolean}
+        observed_at: {type: string, format: date-time}
+        current_session: {type: boolean}
+    ItemPage:
+      type: object
+      required: [items, revision]
+      properties:
+        items: {type: array, maxItems: 200, items: {$ref: '#/components/schemas/Item'}}
+        revision: {$ref: '#/components/schemas/Quantity'}
+        next_cursor: {type: string}
+    Stack:
+      type: object
+      additionalProperties: false
+      required: [name, label, quantity]
+      properties: {name: {type: string, maxLength: 256}, label: {type: string, maxLength: 512}, quantity: {$ref: '#/components/schemas/Quantity'}}
+    CPU:
+      type: object
+      additionalProperties: false
+      required: [id, name, busy, storage, coprocessors]
+      properties:
+        id: {$ref: '#/components/schemas/ID'}
+        name: {type: string, maxLength: 256}
+        busy: {type: boolean}
+        storage: {$ref: '#/components/schemas/Quantity'}
+        coprocessors: {type: integer, minimum: 0}
+        output: {$ref: '#/components/schemas/Stack'}
+        output_unavailable: {type: string, maxLength: 256}
+    CPUView:
+      type: object
+      required: [session_id, cpus, truncated]
+      properties:
+        session_id: {type: string}
+        cpus: {type: array, maxItems: 64, items: {$ref: '#/components/schemas/CPU'}}
+        truncated: {type: boolean}
+        observed_at: {type: string, format: date-time}
+    OrderState: {type: string, enum: [queued, assigned, computing, running, done, failed, canceled, expired, needs_review]}
+    OrderInput:
+      type: object
+      additionalProperties: false
+      required: [item_id, quantity, idempotency_key]
+      properties:
+        item_id: {$ref: '#/components/schemas/PositiveQuantity'}
+        quantity: {$ref: '#/components/schemas/PositiveQuantity'}
+        idempotency_key: {type: string, minLength: 8, maxLength: 128}
+        ttl_seconds: {type: integer, minimum: 0, maximum: 86400, default: 3600}
+    Order:
+      type: object
+      required: [id, network_id, user_id, item_id, quantity, state, created_at, updated_at, expires_at]
+      properties:
+        id: {$ref: '#/components/schemas/ID'}
+        network_id: {$ref: '#/components/schemas/ID'}
+        user_id: {$ref: '#/components/schemas/ID'}
+        item_id: {$ref: '#/components/schemas/PositiveQuantity'}
+        quantity: {$ref: '#/components/schemas/PositiveQuantity'}
+        state: {$ref: '#/components/schemas/OrderState'}
+        attempt_id: {$ref: '#/components/schemas/ID'}
+        reason: {type: string}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+        expires_at: {type: string, format: date-time}
+    OrderEvent:
+      type: object
+      required: [id, state, reason, attempt_id, created_at]
+      properties:
+        id: {$ref: '#/components/schemas/PositiveQuantity'}
+        state: {$ref: '#/components/schemas/OrderState'}
+        reason: {type: string}
+        attempt_id: {type: string}
+        created_at: {type: string, format: date-time}
+    NetworkEvent:
+      type: object
+      required: [id, network_id, kind, revision, created_at]
+      properties:
+        id: {$ref: '#/components/schemas/PositiveQuantity'}
+        network_id: {$ref: '#/components/schemas/ID'}
+        kind: {type: string, enum: [inventory, orders, cpus, session]}
+        revision: {$ref: '#/components/schemas/Quantity'}
+        created_at: {type: string, format: date-time}
+    Hello:
+      type: object
+      additionalProperties: false
+      required: [protocol, boot_id, source, capabilities, max_response_bytes]
+      properties:
+        protocol: {const: 1}
+        boot_id: {$ref: '#/components/schemas/ID'}
+        source: {type: string, enum: [oc, simulator]}
+        capabilities: {$ref: '#/components/schemas/Capabilities'}
+        max_response_bytes: {type: integer, minimum: 2048, maximum: 131072}
+    Limits:
+      type: object
+      required: [batch_bytes, batch_items, response_bytes, commands, cpus, poll_millis]
+      properties:
+        batch_bytes: {type: integer}
+        batch_items: {type: integer}
+        response_bytes: {type: integer}
+        commands: {type: integer}
+        cpus: {type: integer}
+        poll_millis: {type: integer}
+    Welcome:
+      type: object
+      required: [protocol, network_id, session_id, inventory_ack, poll_ack, limits]
+      properties:
+        protocol: {const: 1}
+        network_id: {$ref: '#/components/schemas/ID'}
+        session_id: {$ref: '#/components/schemas/ID'}
+        inventory_ack: {$ref: '#/components/schemas/Quantity'}
+        poll_ack: {$ref: '#/components/schemas/Quantity'}
+        limits: {$ref: '#/components/schemas/Limits'}
+    Update:
+      type: object
+      additionalProperties: false
+      required: [quantity, observation, craftable]
+      oneOf:
+        - {required: [id], not: {required: [item]}}
+        - {required: [item], not: {required: [id]}}
+      properties:
+        id: {$ref: '#/components/schemas/PositiveQuantity'}
+        item: {$ref: '#/components/schemas/Definition'}
+        quantity: {$ref: '#/components/schemas/Quantity'}
+        observation: {$ref: '#/components/schemas/PositiveQuantity'}
+        craftable: {type: boolean}
+    InventoryBatch:
+      type: object
+      additionalProperties: false
+      required: [session_id, sequence, updates]
+      properties:
+        session_id: {$ref: '#/components/schemas/ID'}
+        sequence: {$ref: '#/components/schemas/PositiveQuantity'}
+        updates: {type: array, maxItems: 512, items: {$ref: '#/components/schemas/Update'}}
+        scan_completed: {type: boolean}
+    InventoryAck:
+      type: object
+      required: [ack, revision, bindings]
+      properties:
+        ack: {$ref: '#/components/schemas/PositiveQuantity'}
+        revision: {$ref: '#/components/schemas/Quantity'}
+        bindings:
+          type: array
+          maxItems: 512
+          items:
+            type: object
+            required: [index, id]
+            properties: {index: {type: integer, minimum: 1}, id: {$ref: '#/components/schemas/PositiveQuantity'}}
+    Report:
+      type: object
+      additionalProperties: false
+      required: [order_id, attempt_id, state]
+      properties:
+        order_id: {$ref: '#/components/schemas/ID'}
+        attempt_id: {$ref: '#/components/schemas/ID'}
+        state: {type: string, enum: [computing, running, done, failed, canceled, needs_review]}
+        reason: {type: string, maxLength: 1024}
+    DeviceHealth:
+      type: object
+      additionalProperties: false
+      required: [free_memory, diagnostics]
+      properties:
+        free_memory: {$ref: '#/components/schemas/Quantity'}
+        diagnostics:
+          type: array
+          maxItems: 16
+          items:
+            type: object
+            additionalProperties: false
+            required: [code, count]
+            properties: {code: {type: string, minLength: 1, maxLength: 64}, count: {$ref: '#/components/schemas/Quantity'}}
+    Poll:
+      type: object
+      additionalProperties: false
+      required: [session_id, sequence, reports]
+      properties:
+        session_id: {$ref: '#/components/schemas/ID'}
+        sequence: {$ref: '#/components/schemas/PositiveQuantity'}
+        reports: {type: array, maxItems: 16, items: {$ref: '#/components/schemas/Report'}}
+        cpus: {type: array, maxItems: 64, items: {$ref: '#/components/schemas/CPU'}}
+        cpus_truncated: {type: boolean}
+        health: {$ref: '#/components/schemas/DeviceHealth'}
+    Command:
+      type: object
+      required: [order_id, attempt_id, item_id, item, quantity, current_quantity]
+      properties:
+        order_id: {$ref: '#/components/schemas/ID'}
+        attempt_id: {$ref: '#/components/schemas/ID'}
+        item_id: {$ref: '#/components/schemas/PositiveQuantity'}
+        item: {$ref: '#/components/schemas/Definition'}
+        quantity: {$ref: '#/components/schemas/PositiveQuantity'}
+        current_quantity: {$ref: '#/components/schemas/Quantity'}
+    Verification:
+      type: object
+      required: [id, item, craftable]
+      properties:
+        id: {$ref: '#/components/schemas/PositiveQuantity'}
+        item: {$ref: '#/components/schemas/Definition'}
+        craftable: {type: boolean}
+    PollAck:
+      type: object
+      required: [ack, commands, verify, poll_millis, scan_budget]
+      properties:
+        ack: {$ref: '#/components/schemas/PositiveQuantity'}
+        commands: {type: array, maxItems: 16, items: {$ref: '#/components/schemas/Command'}}
+        verify: {type: array, maxItems: 16, items: {$ref: '#/components/schemas/Verification'}}
+        poll_millis: {type: integer, minimum: 1, maximum: 30000}
+        scan_budget: {type: integer, minimum: 0, maximum: 512}

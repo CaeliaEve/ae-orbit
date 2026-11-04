@@ -1,0 +1,168 @@
+package store
+
+import (
+	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"strings"
+	"unicode/utf8"
+
+	"github.com/CaeliaEve/ae-orbit/internal/protocol"
+	"github.com/jackc/pgx/v5"
+)
+
+type pageCursor struct {
+	Query    string            `json:"query"`
+	Revision protocol.Quantity `json:"revision"`
+	ID       protocol.Quantity `json:"id"`
+	Name     string            `json:"name"`
+	Quantity protocol.Quantity `json:"quantity"`
+}
+
+func (s *Store) encodeCursor(c pageCursor) string {
+	data, _ := json.Marshal(c)
+	mac := hmac.New(sha256.New, s.cursorKey[:])
+	mac.Write(data)
+	return base64.RawURLEncoding.EncodeToString(data) + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+func (s *Store) decodeCursor(value string) (pageCursor, error) {
+	var c pageCursor
+	if len(value) > 4096 {
+		return c, ErrInvalid
+	}
+	parts := strings.Split(value, ".")
+	if len(parts) != 2 {
+		return c, ErrInvalid
+	}
+	data, err := base64.RawURLEncoding.DecodeString(parts[0])
+	if err != nil {
+		return c, ErrInvalid
+	}
+	signature, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return c, ErrInvalid
+	}
+	mac := hmac.New(sha256.New, s.cursorKey[:])
+	mac.Write(data)
+	if !hmac.Equal(signature, mac.Sum(nil)) {
+		return c, ErrInvalid
+	}
+	if err = json.Unmarshal(data, &c); err != nil || c.ID < 1 {
+		return c, ErrInvalid
+	}
+	return c, nil
+}
+
+func (s *Store) Items(ctx context.Context, userID, networkID string, q protocol.ItemQuery) (protocol.ItemPage, error) {
+	page := protocol.ItemPage{Items: []protocol.Item{}}
+	if err := s.RequireAccess(ctx, userID, networkID, false); err != nil {
+		return page, err
+	}
+	if q.Limit == 0 {
+		q.Limit = 50
+	}
+	if q.Sort == "" {
+		q.Sort = "name"
+	}
+	if q.Limit < 1 || q.Limit > 200 || len(q.Search) > 128 || !utf8.ValidString(q.Search) || (q.Sort != "name" && q.Sort != "quantity") {
+		return page, ErrInvalid
+	}
+	queryBytes, _ := json.Marshal([]any{networkID, q.Search, q.Sort, q.Craftable})
+	fingerprint := sha256.Sum256(queryBytes)
+	queryKey := hex.EncodeToString(fingerprint[:])
+	var cursor pageCursor
+	var err error
+	if q.Cursor != "" {
+		cursor, err = s.decodeCursor(q.Cursor)
+		if err != nil || cursor.Query != queryKey {
+			return page, ErrInvalid
+		}
+	}
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return page, err
+	}
+	defer tx.Rollback(context.Background())
+	var session string
+	if err = tx.QueryRow(ctx, "SELECT revision,current_session FROM networks WHERE id=$1", networkID).Scan(&page.Revision, &session); err != nil {
+		return page, notFound(err)
+	}
+	if q.Cursor != "" && cursor.Revision != page.Revision {
+		return page, ErrViewChanged
+	}
+	args := []any{networkID, session}
+	conditions := []string{"d.network_id=$1"}
+	param := func(value any) string { args = append(args, value); return fmt.Sprintf("$%d", len(args)) }
+	if q.Search != "" {
+		value := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(q.Search)
+		if utf8.RuneCountInString(q.Search) < 3 {
+			p := param(value + "%")
+			conditions = append(conditions, "(lower(d.label) LIKE lower("+p+") OR lower(d.name) LIKE lower("+p+"))")
+		} else {
+			p := param("%" + value + "%")
+			conditions = append(conditions, "lower(d.label || ' ' || d.name) LIKE lower("+p+")")
+		}
+	}
+	if q.Craftable != nil {
+		conditions = append(conditions, "i.craftable="+param(*q.Craftable))
+	}
+	order := "lower(d.label),d.id"
+	if q.Sort == "quantity" {
+		order = "i.quantity DESC,d.id"
+	}
+	if q.Cursor != "" {
+		if q.Sort == "quantity" {
+			count := param(int64(cursor.Quantity))
+			id := param(int64(cursor.ID))
+			conditions = append(conditions, "(i.quantity<"+count+" OR (i.quantity="+count+" AND d.id>"+id+"))")
+		} else {
+			conditions = append(conditions, "(lower(d.label),d.id)>("+param(cursor.Name)+","+param(int64(cursor.ID))+")")
+		}
+	}
+	limit := param(q.Limit + 1)
+	rows, err := tx.Query(ctx, `SELECT d.id,d.kind,d.name,d.damage,d.label,d.exact,i.quantity,i.craftable,i.observed_at,i.session_id=$2,lower(d.label)
+        FROM item_definitions d JOIN inventory i ON i.network_id=d.network_id AND i.item_id=d.id WHERE `+strings.Join(conditions, " AND ")+" ORDER BY "+order+" LIMIT "+limit, args...)
+	if err != nil {
+		return page, err
+	}
+	names := []string{}
+	for rows.Next() {
+		var item protocol.Item
+		var name string
+		if err = rows.Scan(&item.ID, &item.Kind, &item.Name, &item.Damage, &item.Label, &item.Exact, &item.Quantity, &item.Craftable, &item.ObservedAt, &item.CurrentSession, &name); err != nil {
+			rows.Close()
+			return page, err
+		}
+		page.Items = append(page.Items, item)
+		names = append(names, name)
+	}
+	rows.Close()
+	if err = rows.Err(); err != nil {
+		return page, err
+	}
+	if len(page.Items) > q.Limit {
+		page.Items = page.Items[:q.Limit]
+		last := page.Items[q.Limit-1]
+		page.NextCursor = s.encodeCursor(pageCursor{Query: queryKey, Revision: page.Revision, ID: last.ID, Name: names[q.Limit-1], Quantity: last.Quantity})
+	}
+	return page, tx.Commit(ctx)
+}
+
+type InventoryStatistics struct {
+	Entries       string `json:"entries"`
+	Craftable     string `json:"craftable"`
+	TotalQuantity string `json:"total_quantity"`
+}
+
+func (s *Store) InventoryStats(ctx context.Context, userID, networkID string) (InventoryStatistics, error) {
+	var result InventoryStatistics
+	if err := s.RequireAccess(ctx, userID, networkID, false); err != nil {
+		return result, err
+	}
+	err := s.pool.QueryRow(ctx, `SELECT count(*)::text,count(*) FILTER(WHERE craftable)::text,coalesce(sum(quantity),0)::text FROM inventory WHERE network_id=$1`, networkID).Scan(&result.Entries, &result.Craftable, &result.TotalQuantity)
+	return result, err
+}

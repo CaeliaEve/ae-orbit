@@ -1,0 +1,121 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Go, Lua and protocol
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:18.6-bookworm
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: aeorbit_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d aeorbit_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      AE_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/aeorbit_test?sslmode=disable
+      CGO_ENABLED: '1'
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.14'
+          cache: pip
+          cache-dependency-path: scripts/requirements-test.txt
+      - name: Install verification tools
+        run: python -m pip install -r scripts/requirements-test.txt
+      - name: Check formatting and module files
+        run: |
+          unformatted="$(gofmt -l cmd internal oc/embed.go)"
+          if [ -n "$unformatted" ]; then
+            printf '%s\n' "$unformatted"
+            exit 1
+          fi
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+          git diff --check
+      - name: Test Go with PostgreSQL and race detector
+        run: |
+          go test -race -count=1 -timeout=5m -json ./... | tee "$RUNNER_TEMP/ae-orbit-tests.jsonl"
+          python - <<'PY'
+          import json, os, pathlib
+          events = [json.loads(line) for line in pathlib.Path(os.environ['RUNNER_TEMP'], 'ae-orbit-tests.jsonl').read_text().splitlines()]
+          skipped = [event['Test'] for event in events if event.get('Test') and event['Action'] == 'skip']
+          passed = [event['Test'] for event in events if event.get('Test') and event['Action'] == 'pass']
+          failed = [event.get('Test', event.get('Package')) for event in events if event['Action'] == 'fail']
+          assert passed and not skipped and not failed, f'Expected passing integration tests; passed={len(passed)}, skipped={skipped}, failed={failed}'
+          print(f'{len(passed)} Go tests passed; no tests skipped.')
+          PY
+      - name: Go vet
+        run: go vet ./...
+      - name: Lua and API contracts
+        run: |
+          python scripts/test_lua.py
+          python scripts/verify_contracts.py
+      - name: Build native executables and OC package
+        run: python scripts/build.py
+      - name: Independent process smoke test
+        run: python scripts/smoke.py --psql "$(command -v psql)"
+
+  container:
+    name: Container smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      AE_HTTP_PORT: '18080'
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Prepare and validate Compose
+        run: |
+          python3 scripts/init_env.py
+          docker compose --env-file .env -f deploy/compose.yaml config --quiet
+          AE_DOMAIN=ae.example.com docker compose --env-file .env -f deploy/compose.yaml -f deploy/compose.https.yaml config --quiet
+      - name: Build and start containers
+        run: docker compose --env-file .env -f deploy/compose.yaml up -d --build --wait --wait-timeout 120
+      - name: Verify service and OC downloads
+        run: |
+          curl --fail --silent --show-error --retry 30 --retry-delay 1 --retry-connrefused http://127.0.0.1:18080/readyz | python3 -c 'import json,sys; assert json.load(sys.stdin)["status"] == "ready"'
+          curl --fail --silent --show-error http://127.0.0.1:18080/oc/install.lua -o "$RUNNER_TEMP/install.lua"
+          curl --fail --silent --show-error http://127.0.0.1:18080/oc/bin/ae-orbit.lua -o "$RUNNER_TEMP/ae-orbit.lua"
+          test -s "$RUNNER_TEMP/install.lua"
+          test -s "$RUNNER_TEMP/ae-orbit.lua"
+          docker compose --env-file .env -f deploy/compose.yaml run --rm --no-deps api version
+      - name: Container logs on failure
+        if: failure()
+        run: docker compose --env-file .env -f deploy/compose.yaml logs --tail 80 api db
+      - name: Stop test containers
+        if: always()
+        run: docker compose --env-file .env -f deploy/compose.yaml down --volumes --remove-orphans

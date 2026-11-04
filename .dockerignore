@@ -1,0 +1,13 @@
+.git
+.tools
+.local
+.cache
+dist
+.env
+.env.*
+.venv
+.github
+**/__pycache__
+contracts
+scripts
+oc/tests

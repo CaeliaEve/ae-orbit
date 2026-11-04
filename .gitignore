@@ -1,0 +1,19 @@
+.tools/
+.cache/
+.local/
+.venv/
+dist/
+.env
+.env.*
+!.env.example
+*.log
+coverage.out
+__pycache__/
+*.pyc
+
+# Live OC credentials and state belong outside the source tree.
+/oc/config.lua
+/oc/config.live.lua
+*.cfg
+*.key
+*.pem
