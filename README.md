@@ -1,0 +1,242 @@
+# AE Orbit
+
+**你的 AE 库存与合成控制中心。**
+
+连接 GTNH 的 AE 网络与外部服务：查询库存、发起额外合成、查看合成 CPU。当前阶段交付 **Go 后端、PostgreSQL、OC Lua 桥接器、模拟器和接口契约**；前端留待下一阶段单独开发。
+
+适合自己或固定小团队，一套服务连接多个 AE 网络。OC 主动通过因特网卡访问后端，游戏服务器不需要向外开放端口，也不要求安装本项目的服务端模组。
+
+已验证真实 PostgreSQL、HTTP 服务进程、Go 模拟器和 Lua 5.2 / 5.3 / 5.4 组件替身的闭环。**尚未完成游戏内验证**：接口、事件来源、区块卸载行为及实际 OC/JVM 内存和 TPS 还需在真实存档中确认。
+
+## 已实现的范围
+
+| 部分 | 行为 |
+| --- | --- |
+| 库存 | 迭代采集、事件提示后精确重读、后台复核、短 ID、分批提交、重复上传去重、观察时间、搜索及游标分页 |
+| 订单 | 指定额外合成数量、成员与网络权限、幂等下单、执行窗口、排队取消、断线待核对、状态审计 |
+| CPU | CPU 概览、忙闲状态、可用的最终产物、观察时间及截断标记 |
+| 多网络 | 每网络一个活跃桥接器；同游戏服务器共享采集和合成规划预算 |
+| HTTP | 成员/设备令牌隔离、浏览器会话与 CSRF、请求容量限制、SSE 失效通知 |
+| 运行维护 | 自动迁移、健康检查、管理指标、设备令牌轮换、OC 安装文件、容器配置 |
+
+第一版 OC 采集对象为**物品**。不包含流体全量采集、成品配送、详细 CPU 物料树、ETA、游戏中正在运行的任务强制取消。CPU 最终产物受 AE 接口和合成监控器能力限制。
+
+## 运行本地实例
+
+容器方案需要 Docker 和 Docker Compose；默认只发布到本机回环地址。在仓库根目录执行：
+
+~~~sh
+python scripts/init_env.py
+docker compose --env-file .env -f deploy/compose.yaml up -d --build
+curl http://127.0.0.1:8080/readyz
+~~~
+
+`init_env.py` 将两个随机凭据写入忽略的 `.env`，不会显示凭据或覆盖已有文件。初次构建需要下载 Go 依赖和容器镜像。数据库保存在 `pg_data` 卷，后端启动时自动执行迁移。
+
+`/readyz` 正常返回 `{"status":"ready"}`。根路径没有网页，返回 404 是预期行为。日志和停止命令：
+
+~~~sh
+docker compose --env-file .env -f deploy/compose.yaml logs --tail=50 api
+docker compose --env-file .env -f deploy/compose.yaml down
+~~~
+
+停止命令保留数据库卷。容器构建和启动由 GitHub Actions 的 `Container smoke` 作业检查；具体验证状态见对应提交的 CI 结果。
+
+### 外部 OC 访问
+
+准备指向部署机器的域名，并让机器的 80/443 端口可达。在 `.env` 设置 `AE_DOMAIN` 为域名本身，例如 `ae.example.com`：
+
+~~~sh
+docker compose --env-file .env -f deploy/compose.yaml -f deploy/compose.https.yaml up -d --build
+~~~
+
+Caddy 提供 HTTPS，并设置匹配的 `AE_PUBLIC_URL`。也可以使用已有 HTTPS 反向代理，转发到本机 8080 端口，关闭 SSE 响应缓冲。
+
+`AE_PUBLIC_URL` 必须是无路径、无末尾斜杠的源地址。非回环访问要求 HTTPS；OC 的 `url` 使用这个外部地址。MC 服务器的因特网卡访问规则需要允许它。
+
+### 原生进程
+
+准备 Go 1.27.3 和专用 PostgreSQL 18 数据库。服务账号需要建表、建索引和安装 `pg_trgm` 扩展的权限；也可由管理员事先在 `public` schema 安装扩展。
+
+~~~sh
+python scripts/build.py --linux
+~~~
+
+脚本生成本机服务、模拟器和 OC ZIP，`--linux` 额外生成 Linux amd64 二进制。优先使用 PATH 中的 Go，本工作区也支持 `.tools/go` 工具链。
+
+PowerShell 启动示例：
+
+~~~powershell
+$env:AE_DATABASE_URL = 'postgres://aeorbit:替换为数据库密码@127.0.0.1:5432/aeorbit?sslmode=disable'
+$env:AE_ADMIN_TOKEN = '替换为至少32字符的随机管理员令牌'
+$env:AE_PUBLIC_URL = 'http://127.0.0.1:8080'
+$env:AE_LISTEN = '127.0.0.1:8080'
+.\dist\ae-orbit.exe serve
+~~~
+
+Linux 执行 `dist/linux-amd64/ae-orbit serve`，通过环境变量传入相同配置。数据库 URL 中的密码需要 URL 编码；生成脚本使用十六进制密码以避免这一步。
+
+原生进程**不自动读取 .env**。`ae-orbit migrate` 只执行迁移；`ae-orbit version` 显示协议版本。当前运行边界是一个应用实例。
+
+## 创建网络、查询与下单
+
+以下 PowerShell 示例使用本地 Compose 地址，在另一个终端执行。先用 `python scripts/build.py` 构建模拟器。
+
+~~~powershell
+$origin = 'http://127.0.0.1:8080'
+$adminToken = ((Get-Content .env | Where-Object { $_ -like 'AE_ADMIN_TOKEN=*' }) -split '=', 2)[1]
+$headers = @{ Authorization = "Bearer $adminToken" }
+$created = Invoke-RestMethod -Method Post -Uri "$origin/api/v1/networks" -Headers $headers -ContentType 'application/json' -Body (@{
+  name = '开发模拟网络'
+  server_group = 'sim-local'
+  source = 'simulator'
+} | ConvertTo-Json)
+$networkId = $created.network.id
+$env:AE_DEVICE_TOKEN = $created.device_token
+.\dist\simulator.exe -url $origin -items 10000 -batch 64 -cache 256
+~~~
+
+`source=simulator` 和 `source=oc` 严格区分。模拟器按索引生成目录，ID 缓存有上限；`-cycles` 限制轮数，`-interval` 设置最小轮询间隔。
+
+模拟器数量随周期变化，订单按模拟状态流转；它不维护真实物料账本，也不证明游戏内性能。额外合成后库存增加由 Lua 组件替身联调另行验证。
+
+在保留这些变量的终端中停止模拟器后，或在另一个配置了相同变量的终端中查询并下单：
+
+~~~powershell
+$page = Invoke-RestMethod -Uri "$origin/api/v1/networks/$networkId/items?craftable=true&limit=20" -Headers $headers
+$order = Invoke-RestMethod -Method Post -Uri "$origin/api/v1/networks/$networkId/orders" -Headers $headers -ContentType 'application/json' -Body (@{
+  item_id = $page.items[0].id
+  quantity = '64'
+  idempotency_key = [guid]::NewGuid().ToString()
+} | ConvertTo-Json)
+Invoke-RestMethod -Uri "$origin/api/v1/networks/$networkId/orders/$($order.id)" -Headers $headers
+Invoke-RestMethod -Uri "$origin/api/v1/networks/$networkId/cpus" -Headers $headers
+~~~
+
+要观察订单完成，模拟器需要保持运行。数量必须是字符串，下单 `"64"` 表示**额外制作 64 个**。提交响应丢失时重用原幂等键和原参数，创建另一张订单时才生成新键。
+
+## OpenOS 安装
+
+先创建 `source=oc` 网络，保存返回的 `device_token`。同一个 MC 服务器上的网络使用相同 `server_group`，不同服务器分组。
+
+游戏内准备 OpenOS 电脑、因特网卡、持久磁盘，以及可通过 OC 组件网络访问的 AE 控制器或完整 ME 接口。每个逻辑网络运行一个桥接器。重新接到不同 AE 网络时创建新的逻辑网络。
+
+后端二进制内嵌 OC 文件，可以直接下载：
+
+~~~sh
+wget https://ae.example.com/oc/install.lua /tmp/ae-install.lua
+lua /tmp/ae-install.lua https://ae.example.com
+cp /etc/ae-orbit.cfg.example /etc/ae-orbit.cfg
+edit /etc/ae-orbit.cfg
+~~~
+
+安装器按块写入磁盘，先下载并检查全部文件语法，再替换程序文件。升级前停止桥接器；安装器不覆盖已有 `/etc/ae-orbit.cfg` 或执行日志。也可复制 `dist/ae-orbit-oc.zip` 中的程序文件。
+
+配置必须填写：
+
+~~~lua
+return {
+  url = "https://ae.example.com",
+  token = "此网络的设备令牌",
+  me_address = "实际发现的 ME 组件完整地址",
+  state_dir = "/var/lib/ae-orbit",
+}
+~~~
+
+完整选项见 [config.example.lua](oc/config.example.lua)。可在 Lua 交互环境用 `component.list()` 查看组件，显式选择目标 ME 地址，然后运行 `ae-orbit`。程序会打印已上传行数、缓存规模和空闲内存。
+
+复合驱动的事件来源可能与 ME 组件地址不同，可设置 `event_sources` 为实测的事件节点列表。未设置时，所有提示仍会针对**配置的 ME 组件**重新查询，事件数量不会直接当作库存。
+
+首次连接、实际接口兼容性、事件订阅和区块卸载后的恢复需要游戏内验证。
+
+## 权限与恢复
+
+管理员通过 `POST /api/v1/members` 创建普通成员：
+
+~~~json
+{"name":"teammate","grants":[{"network_id":"替换为网络ID","can_craft":true}]}
+~~~
+
+`can_craft=false` 只允许查看。成员令牌只返回一次，与设备令牌不可互用。浏览器阶段可将成员令牌换取 HttpOnly 会话，写请求附带 Origin 和 CSRF 令牌。
+
+| 情况 | 处理 |
+| --- | --- |
+| 库存请求超时 | 进程保留已编码批次，使用原序号和原内容重试 |
+| OC 重启 | 获取新 boot ID；旧合成跟踪不能恢复，不自动再次执行 |
+| 订单 `needs_review` | 在 AE 核对后，通过订单 `/resolve` 提交 done / failed / canceled 和原因 |
+| 同一 OC 进程断网恢复 | 保留原句柄；中间状态不清除待核对，同会话可靠终态可以结束订单 |
+| 丢失/更换设备令牌 | 管理员 POST `/api/v1/networks/{network}/device-token`，正文 `{}`；安装新令牌并重启 |
+| 两个日志槽均损坏 | 先核对 AE 与后端订单，再备份损坏日志并建立新桥接会话 |
+| stale_session / sequence_conflict | 排查重复桥接进程、会话切换和丢失的待确认批次 |
+
+待核对订单继续占据执行窗口和服务器组规划额度。`/resolve` 只记录核对结果，不会操作 AE。令牌轮换保留库存、退休旧会话、清理 CPU 快照。
+
+撤销成员会使其令牌和浏览器会话失效。修改 `AE_ADMIN_TOKEN` 并重启会替换旧管理员 Bearer 凭据；已有浏览器会话仍按其有效期存在。
+
+## 性能预算
+
+当前实现可检查和调整的资源边界，不承诺任意 AE 规模下的固定刷新率。
+
+| 环境变量 | 默认 | 可配置范围 / 含义 |
+| --- | --- | --- |
+| AE_DB_CONNECTIONS | 16 | 1–128 个数据库连接 |
+| AE_BATCH_BYTES | 32768 | 2048–131072 字节/设备请求 |
+| AE_BATCH_ITEMS | 128 | 1–512 条/批；还受协商响应大小限制 |
+| AE_RESPONSE_BYTES | 32768 | 2048–131072 字节/设备响应 |
+| AE_SCAN_ITEMS | 32 | 1–512 次读取/服务器组/额度周期 |
+| AE_POLL_MILLIS | 1000 | 100–30000 ms 控制及额度发放间隔 |
+| AE_GROUP_PLANNING | 1 | 1–16 个共享规划/不确定任务额度 |
+| AE_ACTIVE_WINDOW | 4 | 1–16 个每网络活跃订单 |
+| AE_MAX_QUEUED | 256 | 1–4096 个每网络排队订单 |
+| AE_MAX_CONCURRENT | 64 | 1–512 个普通 HTTP 并发 |
+| AE_MAX_STREAMS | 32 | 1–128 个 SSE 连接 |
+| AE_OFFLINE_SECONDS | 90 | 15–3600 秒离线阈值 |
+| AE_RECHECK_SECONDS | 300 | 5–86400 秒重新具备复核资格的间隔 |
+
+OC 默认请求/响应各 16 KiB，按空闲内存继续缩小。ID 缓存默认 256 条，脏条目队列 128 条，同时受字节预算约束；采集时间片默认 50 ms。CPU 默认每 10 秒采样，保留最多 16 个。未用完的读取额度不会累积，多个桥接器通过抖动分摊机会，当前没有严格公平队列。
+
+后端不在应用内保存完整库存镜像；批次通过事务写入数据库。数量未变化时仅更新新鲜度，不使分页版本失效。列表省略原始 NBT，SSE 只发失效通知。
+
+条目种类增加仍会延长枚举。默认每秒 32 次读取时，10 万条目单次遍历的理论下限已超过 52 分钟，还未计入原生调用、时间片、传输和复核。热点事件可以更快更新。`AE_RECHECK_SECONDS` 是复核资格间隔，不是全量刷新 SLA。
+
+OC 不通过全量物品数组回退，也不缓存完整目录。原生 `allItems()` / `getCpus()` 仍可能在 JVM 分配集合，单次原生调用不能由 Lua 时间片强行抢占。Lua 5.2 不能精确表示所有 int64，无法精确表示的值会被诊断和跳过。
+
+管理指标在 `/api/v1/admin/metrics`。`/inventory-stats` 是实时数据库聚合，成本随目录增长，后续前端应低频读取。Compose 的 `GOMEMLIMIT=256MiB` 是 Go 软目标，容器默认限制 512 MiB；数据库资源另计。
+
+## 开发验证
+
+~~~sh
+python -m venv .venv
+# 激活 .venv 后：
+python -m pip install -r scripts/requirements-test.txt
+python scripts/test_lua.py
+python scripts/verify_contracts.py
+go test ./...
+go vet ./...
+~~~
+
+数据库测试需要 `AE_TEST_DATABASE_URL` 指向专用测试库。没有此变量时会明确跳过，不能当作完整验证。测试只创建/删除随机 test_* schema。不要使用生产数据库。
+
+~~~powershell
+$env:AE_TEST_DATABASE_URL = 'postgres://postgres:测试密码@127.0.0.1:5432/aeorbit_test?sslmode=disable'
+go test -count=1 ./...
+go test -race -count=1 ./...
+python scripts/build.py
+python scripts/smoke.py --psql 'C:\PostgreSQL\bin\psql.exe'
+~~~
+
+Windows 竞争检测需要兼容 C 编译器和 `CGO_ENABLED=1`；发行二进制使用 `CGO_ENABLED=0`。冒烟脚本运行独立服务/模拟器和三种 Lua 组件替身，检查 10+64=74、精确整数、CPU、幂等与重启。它会清理自己的进程和 smoke_* schema，日志位于忽略的 .local/。
+
+## 代码与文档
+
+| 目录 | 职责 |
+| --- | --- |
+| cmd/ | 服务和模拟器入口 |
+| internal/api/ | HTTP、鉴权、SSE、OC 下载 |
+| internal/store/ | 数据库、库存事务、订单、共享调度 |
+| internal/protocol/ | 精确整数、身份和协议校验 |
+| oc/ | Lua 桥接器、OpenOS 入口和安装器 |
+| contracts/ | HTTP / 设备协议 |
+| deploy/、scripts/ | 部署、构建和验证 |
+
+进一步阅读：[协议语义](contracts/protocol-v1.md)、[OpenAPI](contracts/openapi.yaml)。本阶段没有前端目录、依赖或 UI 产物。
