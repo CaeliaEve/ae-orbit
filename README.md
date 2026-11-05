@@ -121,16 +121,39 @@ Invoke-RestMethod -Uri "$origin/api/v1/networks/$networkId/cpus" -Headers $heade
 
 游戏内准备 OpenOS 电脑、因特网卡、持久磁盘，以及可通过 OC 组件网络访问的 AE 控制器或完整 ME 接口。每个逻辑网络运行一个桥接器。重新接到不同 AE 网络时创建新的逻辑网络。
 
-后端二进制内嵌 OC 文件，可以直接下载：
+在 OpenOS 终端粘贴这一整行，即可从 GitHub 安装，无需 Git、解压工具或 GitHub 令牌：
 
 ~~~sh
-wget https://ae.example.com/oc/install.lua /tmp/ae-install.lua
-lua /tmp/ae-install.lua https://ae.example.com
-cp /etc/ae-orbit.cfg.example /etc/ae-orbit.cfg
+wget -f https://raw.githubusercontent.com/CaeliaEve/ae-orbit/main/oc/install.lua /tmp/ae-orbit-install.lua && lua /tmp/ae-orbit-install.lua
+~~~
+
+首次安装会创建 `/etc/ae-orbit.cfg`，安装后填写后端地址、**设备令牌**和 ME 组件地址：
+
+~~~sh
+edit /etc/ae-orbit.cfg
+ae-orbit
+~~~
+
+后续升级先停止正在运行的桥接器，再执行：
+
+~~~sh
+ae-orbit-install
+~~~
+
+默认跟随 `main`。也可执行 `ae-orbit-install github <分支、标签或完整提交 SHA>`；安装时先解析出一个固定提交，所有程序文件都从该提交下载，并打印提交 SHA。指定完整的 40 位 SHA 会跳过 GitHub API 查询。因特网卡需能访问 `api.github.com` 和 `raw.githubusercontent.com`；遇到 API 限流时可稍后重试或使用完整 SHA。
+
+后端二进制也内嵌 OC 文件。需要让 OC 程序与已部署后端保持同一发行版本时，可以改用后端安装源：
+
+~~~sh
+wget -f https://ae.example.com/oc/install.lua /tmp/ae-orbit-install.lua && lua /tmp/ae-orbit-install.lua https://ae.example.com
 edit /etc/ae-orbit.cfg
 ~~~
 
-安装器按块写入磁盘，先下载并检查全部文件语法，再替换程序文件。升级前停止桥接器；安装器不覆盖已有 `/etc/ae-orbit.cfg` 或执行日志。也可复制 `dist/ae-orbit-oc.zip` 中的程序文件。
+后端源的后续升级命令为 `ae-orbit-install https://ae.example.com`。安装期间保持该后端版本不变。也可复制 `dist/ae-orbit-oc.zip` 中的 `bin/`、`lib/` 到 OpenOS；离线首次安装再把包内的 `etc/ae-orbit.cfg.example` 复制为 `/etc/ae-orbit.cfg`。
+
+安装器每次读取 1 KiB，每文件最多 128 KiB、超时 30 秒；只下载 OC 所需文件。它先检查全部下载的长度和 Lua 语法，再备份并替换程序。已有配置和执行日志会保留；下载或写入失败会清理本次暂存文件，替换失败会尝试恢复旧程序。安装锁会阻止两个安装器同时修改文件。
+
+**安装中断的恢复：** 正常报错处理完后可直接重试。如果发生断电、强制关机或磁盘故障，跨文件替换无法保证原子性。保持桥接器停止，先保存并检查程序旁的 `.ae-orbit-old` 备份，将需要的旧文件恢复到原路径；移走遗留备份、清理该次安装的 `.ae-orbit-new` 文件，确认没有安装器运行后删除 `/tmp/ae-orbit-install.lock`，再重新安装完整版本。安装器遇到遗留文件会停止，避免覆盖可恢复的数据。
 
 配置必须填写：
 
@@ -225,7 +248,7 @@ python scripts/build.py
 python scripts/smoke.py --psql 'C:\PostgreSQL\bin\psql.exe'
 ~~~
 
-Windows 竞争检测需要兼容 C 编译器和 `CGO_ENABLED=1`；发行二进制使用 `CGO_ENABLED=0`。冒烟脚本运行独立服务/模拟器和三种 Lua 组件替身，检查 10+64=74、精确整数、CPU、幂等与重启。它会清理自己的进程和 smoke_* schema，日志位于忽略的 .local/。
+Windows 竞争检测需要兼容 C 编译器和 `CGO_ENABLED=1`；发行二进制使用 `CGO_ENABLED=0`。`test_lua.py` 还会在真实临时目录运行三种 Lua 版本的安装器测试，覆盖安装、升级、断网、限流、截断、磁盘失败和回滚。冒烟脚本运行独立服务/模拟器和三种 Lua 组件替身，检查 10+64=74、精确整数、CPU、幂等与重启。它会清理自己的进程和 smoke_* schema，日志位于忽略的 .local/。
 
 ## 代码与文档
 

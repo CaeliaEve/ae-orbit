@@ -35,7 +35,9 @@ with zipfile.ZipFile(distribution / "ae-orbit-oc.zip", "w", zipfile.ZIP_DEFLATED
     bundle.write(root / "oc/bin/ae-orbit.lua", "bin/ae-orbit.lua")
     bundle.write(root / "oc/config.example.lua", "etc/ae-orbit.cfg.example")
     bundle.write(root / "oc/install.lua", "install.lua")
+    bundle.write(root / "oc/install.lua", "bin/ae-orbit-install.lua")
     bundle.writestr("README.txt", "Copy bin/ and lib/ to OpenOS. For a first install copy etc/ae-orbit.cfg.example\n"
                     "to /etc/ae-orbit.cfg and configure url, token and me_address. Stop the bridge before updating.\n"
+                    "Update from GitHub with: ae-orbit-install\n"
                     "Alternatively use the running backend's /oc/install.lua installer. See the repository README.\n")
 print("Built service, simulator and OC package in dist/.")

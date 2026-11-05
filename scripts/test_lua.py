@@ -2,6 +2,7 @@
 import pathlib
 import sys
 from lupa import lua52, lua53, lua54
+from test_installer import main as test_installer
 
 root = pathlib.Path(__file__).resolve().parents[1]
 files = sorted((root / "oc" / "tests").glob("test_*.lua"))
@@ -23,4 +24,5 @@ for module in (lua52, lua53, lua54):
             failures += 1
             print(f"FAIL Lua {module.LUA_VERSION}: {source.name}: {str(error).splitlines()[0]}", file=sys.stderr)
 print(f"Lua test files: {len(files)*3}, failures: {failures}")
+failures += test_installer()
 raise SystemExit(bool(failures))

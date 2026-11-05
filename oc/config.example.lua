@@ -1,4 +1,4 @@
--- Copy to /etc/ae-orbit.cfg and replace the three connection values.
+-- The installer creates /etc/ae-orbit.cfg if absent. Set these connection values.
 return {
   url = "https://ae.example.com",
   token = "replace-with-the-device-token-issued-by-the-backend",
