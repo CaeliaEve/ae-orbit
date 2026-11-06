@@ -2,12 +2,20 @@ local quantity = require("aeorbit.quantity")
 local base64 = require("aeorbit.base64")
 local json = require("aeorbit.json")
 local M = {}
+function M.has_method(proxy,name)
+  local value=proxy[name]
+  if type(value)=="function" then return true end
+  -- OC component and userdata methods are tables with an __call metamethod.
+  local meta=type(value)=="table" and getmetatable(value)
+  return type(meta)=="table" and type(meta.__call)=="function"
+end
 function M.new(me,config)
   config=config or {}
-  assert(type(me.allItems)=="function" and type(me.getItemInNetwork)=="function","adapter: allItems and exact item lookup are required")
+  assert(M.has_method(me,"allItems"),"adapter: missing allItems; select an AE controller or full ME interface")
+  assert(M.has_method(me,"getItemInNetwork"),"adapter: missing getItemInNetwork; requires OC 1.12.47-GTNH+ (table/NBT API)")
   local adapter={me=me,identity_bytes=config.identity_bytes or 4096,cpu_limit=config.cpu_limit or 16,cpu_generation="0"}
   function adapter:capabilities()
-    return {inventory=true,craft=type(me.getCraftable)=="function",cpu_output=type(me.getCpus)=="function",
+    return {inventory=true,craft=M.has_method(me,"getCraftable"),cpu_output=M.has_method(me,"getCpus"),
       exact_quantities=true,max_craft_quantity=quantity.maximum(),enumeration="volatile_iterator"}
   end
   function adapter:key(raw)
@@ -68,7 +76,7 @@ function M.new(me,config)
     return handle,nil,true
   end
   function adapter:cpus()
-    if type(me.getCpus)~="function" then return json.array({}),false end
+    if not M.has_method(me,"getCpus") then return json.array({}),false end
     local values=me.getCpus()
     assert(type(values)=="table","adapter: CPU snapshot unavailable")
     self.cpu_generation=quantity.increment(self.cpu_generation)

@@ -191,21 +191,35 @@ class OpenOS:
         self.write("/etc/ae-orbit.cfg", "return {token='keep-device-token'}\n")
         self.write("/var/lib/ae-orbit/journal.0", "keep execution history exactly")
 
-    def run_bridge(self):
+    def run_bridge(self, callable_subscription=False, subscription_error=False):
         """Exercise the real entry point and journal with a bounded runner harness."""
         for source, destination in DESTINATIONS.items():
             self.write(destination, self.sources[source])
         self.write("/etc/ae-orbit.cfg", 'return {me_address="test-me",state_dir="/var/lib/ae-orbit"}\n')
         self.lua.globals().TEST_ROOT = (ROOT / "oc").as_posix()
+        self.lua.globals().callable_subscription = callable_subscription
+        self.lua.globals().subscription_error = subscription_error
         self.lua.execute('''
             package.path = TEST_ROOT .. "/lib/?.lua;" .. package.path
-            test_component.proxy = function() return {} end
+            local me = {
+                allItems = function() return function() end end,
+                getItemInNetwork = function() return nil end
+            }
+            subscription_calls, bridge_diagnostics = {}, {}
+            if callable_subscription then
+                me.setItemEventSubscription = setmetatable({}, {__call = function(_, enabled)
+                    if subscription_error then error("subscription failed") end
+                    subscription_calls[#subscription_calls + 1] = enabled
+                end})
+            end
+            test_component.proxy = function() return me end
             package.loaded.event = {listen = function() end, ignore = function() end}
-            package.loaded["aeorbit.adapter"] = {new = function() return {} end}
             package.loaded["aeorbit.client"] = {new = function() return {} end}
             package.loaded["aeorbit.runner"] = {new = function(_, dependencies)
                 return {
-                    session = "test-session", diagnose = function() end,
+                    session = "test-session", diagnose = function(_, code)
+                        bridge_diagnostics[#bridge_diagnostics + 1] = code
+                    end,
                     start = function()
                         dependencies.journal:save({attempts={},completed={},boot_id="test-boot"})
                     end,
@@ -231,6 +245,17 @@ class InstallerTests(unittest.TestCase):
         for source, destination in DESTINATIONS.items():
             self.assertEqual(self.oc.path(destination).read_text(encoding="utf-8"), self.oc.sources[source])
         self.assertClosed()
+
+    def test_bridge_subscribes_and_unsubscribes_with_oc_callable_method(self):
+        self.oc.run_bridge(callable_subscription=True)
+        globals_ = self.oc.lua.globals()
+        self.assertEqual(list(globals_.subscription_calls.values()), [True, False])
+        self.assertNotIn("subscription_unavailable", list(globals_.bridge_diagnostics.values()))
+
+    def test_bridge_reports_failed_subscription_without_stopping(self):
+        self.oc.run_bridge(callable_subscription=True, subscription_error=True)
+        self.assertIn("subscription_unavailable", list(self.oc.lua.globals().bridge_diagnostics.values()))
+        self.assertTrue(any("AE Orbit connected" in message for message in self.oc.messages))
 
     def test_default_install_pins_all_files_and_creates_initial_config(self):
         self.oc.install()

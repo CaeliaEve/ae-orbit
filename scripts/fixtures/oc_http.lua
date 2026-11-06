@@ -1,4 +1,7 @@
 -- Real bridge modules and real HTTP; only the internet card and AE are fixtures.
+-- Match the OC sandbox and its callable component/handle methods.
+collectgarbage=nil
+local proxy = require("component_proxy")
 local adapter = require("aeorbit.adapter")
 local client = require("aeorbit.client")
 local journal = require("aeorbit.journal")
@@ -16,7 +19,7 @@ end
 local me = {}
 function me.allItems()
   local index=0
-  return function() index=index+1;if index<=2 then return raw(index) end end
+  return proxy.callback(function() index=index+1;if index<=2 then return raw(index) end end)
 end
 function me.getItemInNetwork(detail)
   if detail.name=="fixture:craftable" then return raw(1) end
@@ -25,12 +28,12 @@ end
 function me.getItemsInNetwork() error("full-array fallback is forbidden") end
 function me.getCraftable(detail,kind)
   assert(detail.name=="fixture:craftable" and kind=="item")
-  return {
+  return proxy.new({
     getStack=function() return raw(1) end,
     request=function(amount)
       fixture_requests=fixture_requests+1
       job={amount=amount,stage=0,done=false}
-      return {
+      return proxy.new({
         hasFailed=function() return false end,
         isComputing=function() job.stage=job.stage+1;return job.stage<2 end,
         isCanceled=function() return false end,
@@ -43,23 +46,23 @@ function me.getCraftable(detail,kind)
           end
           return true
         end
-      }
+      })
     end
-  }
+  })
 end
 function me.getCpus()
   local busy=job~=nil and not job.done
-  return {{name="Fixture CPU",storage=65536,coprocessors=4,busy=busy,cpu={
+  return {{name="Fixture CPU",storage=65536,coprocessors=4,busy=busy,cpu=proxy.new({
     finalOutput=function()
       local output=raw(1);output.size=job and job.amount or 0;return output
     end
-  }}}
+  })}}
 end
 local internet={}
 function internet.request(url,body,headers)
   local status,text=fixture_http(url,body,headers)
   local offset,closed=1,false
-  return {
+  return proxy.new({
     finishConnect=function() return true end,
     response=function() return status end,
     read=function(size)
@@ -68,7 +71,7 @@ function internet.request(url,body,headers)
       local part=text:sub(offset,offset+size-1);offset=offset+#part;return part
     end,
     close=function() closed=true end
-  }
+  })
 end
 local fs={}
 function fs.read(path,limit)
@@ -85,8 +88,8 @@ bridge=runner.new({
   cache_entries=2,dirty_entries=2,cache_bytes=1024,dirty_bytes=1024,
   scan_interval=60,cpu_interval=0,scan_slice_seconds=0.05
 },{
-  adapter=adapter.new(me),
-  client=client.new(internet,{url=FIXTURE_URL,token=FIXTURE_TOKEN,response_bytes=4096,request_bytes=2048,timeout=5},
+  adapter=adapter.new(proxy.new(me)),
+  client=client.new(proxy.new(internet),{url=FIXTURE_URL,token=FIXTURE_TOKEN,response_bytes=4096,request_bytes=2048,timeout=5},
     {now=fixture_now,sleep=fixture_sleep}),
   journal=journal.new(fs,FIXTURE_JOURNAL,32768),
   now=fixture_now,free_memory=function() return 131072 end,yield=function() end

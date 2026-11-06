@@ -182,7 +182,7 @@ def main():
                 return raw_request(url, body.encode(), dict(headers.items()), "POST")
 
             globals_.fixture_http = card_request
-            runtime.execute("package.path = TEST_ROOT .. '/oc/lib/?.lua;' .. package.path")
+            runtime.execute("package.path = TEST_ROOT .. '/oc/lib/?.lua;' .. TEST_ROOT .. '/oc/tests/?.lua;' .. package.path")
             runtime.execute((ROOT / "scripts/fixtures/oc_http.lua").read_text(encoding="utf-8"))
 
             def tick_until(check):

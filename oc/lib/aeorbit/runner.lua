@@ -3,6 +3,10 @@ local quantity = require("aeorbit.quantity")
 local cache = require("aeorbit.cache")
 local tracker = require("aeorbit.tracker")
 local M = {}
+local function collect_step(amount)
+  -- OC manages collection in its host; ordinary Lua also allows explicit steps.
+  if collectgarbage then collectgarbage("step",amount) end
+end
 local function fatal(code) error({code=code,message=code,fatal=true},0) end
 local function transient(error_value)
   return type(error_value)=="table" and error_value.fatal==false
@@ -121,7 +125,7 @@ function M.new(config,deps)
     if not ok then self:diagnose("scan_failed");self.iterator=nil;self.next_scan=deps.now()+10;return nil,1 end
     if raw==nil then
       self.iterator=nil;self.scan_completed=true;self.next_scan=deps.now()+(config.scan_interval or 60)
-      collectgarbage("step",16)
+      collect_step(16)
     end
     return raw,1
   end
@@ -154,7 +158,7 @@ function M.new(config,deps)
   function self:_inventory()
     -- Control traffic has already run even when this upload remains pending.
     self:_flush()
-    if deps.free_memory()<self.client.response_bytes*4+4096 then self:diagnose("low_memory");collectgarbage("step",32);return end
+    if deps.free_memory()<self.client.response_bytes*4+4096 then self:diagnose("low_memory");collect_step(32);return end
     local started=deps.now()
     while self.credits>0 or self.carry do
       local limit=math.max(512,math.min(self.client.request_bytes,math.floor(deps.free_memory()/8)))

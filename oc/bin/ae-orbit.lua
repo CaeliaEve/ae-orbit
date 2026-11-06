@@ -55,7 +55,7 @@ local subscribed=false
 local function run()
   bridge:start()
   event.listen("network_item_changed",changed)
-  if type(me.setItemEventSubscription)=="function" then
+  if adapter.has_method(me,"setItemEventSubscription") then
     local ok=pcall(me.setItemEventSubscription,true)
     subscribed=ok
     if not ok then bridge:diagnose("subscription_unavailable") end

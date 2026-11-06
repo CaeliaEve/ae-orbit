@@ -121,6 +121,8 @@ Invoke-RestMethod -Uri "$origin/api/v1/networks/$networkId/cpus" -Headers $heade
 
 游戏内准备 OpenOS 电脑、因特网卡、持久磁盘，以及可通过 OC 组件网络访问的 AE 控制器或完整 ME 接口。每个逻辑网络运行一个桥接器。重新接到不同 AE 网络时创建新的逻辑网络。
 
+**适配目标为最新 GTNH 版 OpenComputers；截至 2026-11-06 为 1.13.0-GTNH，并需要与它配套的 AE2 和 GTNH 模组组合。** 当前桥接器依赖 `allItems()` 逐项迭代、接受物品描述表和 NBT 的 `getItemInNetwork(detail)`，以及 `getCraftable(detail, "item")`。仅更新本项目的 Lua 脚本不能补齐模组接口。安装模组时以游戏实际使用的目录为准；启用版本隔离的启动器通常使用 `versions/<实例>/mods`。建议使用匹配的完整 GTNH 实例。程序不会退回全库存数组采集。
+
 在 OpenOS 终端粘贴这一整行，即可从 GitHub 安装，无需 Git、解压工具或 GitHub 令牌：
 
 ~~~sh

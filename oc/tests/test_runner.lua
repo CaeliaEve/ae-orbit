@@ -2,7 +2,10 @@ local runner = require("aeorbit.runner")
 local adapter = require("aeorbit.adapter")
 local journal = require("aeorbit.journal")
 local json = require("aeorbit.json")
+-- OC owns collection and does not expose this standard Lua function.
+collectgarbage=nil
 local clock=0
+local free_memory=131072
 local amounts={}
 local function raw(index)
   return {name="test:item_"..index,damage=0,label="Item "..index,hasTag=false,size=amounts[index] or index*10,isCraftable=true}
@@ -63,7 +66,7 @@ end
 local files={}
 local j=journal.new({read=function(p) return files[p] end,write=function(p,v) files[p]=v;return true end},"runner",32768)
 local r=runner.new({source="simulator",cache_entries=2,cache_bytes=512,dirty_entries=3,dirty_bytes=1024,max_batch_bytes=2048,max_response_bytes=4096,scan_interval=60,cpu_interval=10,scan_slice_seconds=0.1},
-  {adapter=adapter.new(me),client=client,journal=j,now=function() return clock end,free_memory=function() return 131072 end,yield=function() end})
+  {adapter=adapter.new(me),client=client,journal=j,now=function() return clock end,free_memory=function() return free_memory end,yield=function() end})
 r:start()
 for _=1,12 do r:tick();clock=clock+1 end
 for index=1,10 do assert(backend.items["test:item_"..index]==tostring(index*10),"catalog did not arrive") end
@@ -81,3 +84,11 @@ me.getCpus=function()
 end
 r.next_cpu=0;r:tick()
 assert(backend.last_cpu_count==2 and backend.cpus_truncated,"CPU truncation was not declared")
+local previous_poll,previous_inventory=backend.poll_seq,backend.inventory_seq
+free_memory=8192
+r:tick()
+assert(backend.poll_seq==previous_poll+1 and backend.inventory_seq==previous_inventory,"low memory stopped control traffic or continued acquisition")
+assert(r.diagnostics.low_memory=="1","low memory was not reported")
+free_memory=131072
+r:tick()
+assert(backend.poll_seq==previous_poll+2,"bridge did not recover after memory became available")
