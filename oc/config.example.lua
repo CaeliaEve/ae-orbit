@@ -12,6 +12,8 @@ return {
   dirty_entries = 128,
   identity_bytes = 4096,
   scan_slice_seconds = 0.05,
+  -- Aggregate ordinary observations across slices; priority confirmations flush immediately.
+  batch_interval_seconds = 0.25,
   scan_interval = 60,
   cpu_interval = 10,
   cpu_limit = 16,

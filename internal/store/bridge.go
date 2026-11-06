@@ -3,8 +3,10 @@ package store
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"time"
 
 	"github.com/CaeliaEve/ae-orbit/internal/protocol"
@@ -97,7 +99,17 @@ func (s *Store) Poll(ctx context.Context, d Device, p protocol.Poll) (protocol.P
 			}
 		}
 		if caps.Inventory {
-			if err = s.verifications(ctx, tx, d.NetworkID, responseBytes, &ack); err != nil {
+			slots, queueBytes := 16, 1<<30
+			if p.RecheckSlots != nil {
+				slots = *p.RecheckSlots
+			}
+			if p.RecheckBytes != nil {
+				queueBytes = *p.RecheckBytes
+			}
+			if queueBytes == 0 {
+				slots = 0
+			}
+			if err = s.verifications(ctx, tx, d.NetworkID, responseBytes, slots, queueBytes, &ack); err != nil {
 				return err
 			}
 		}
@@ -229,7 +241,7 @@ func (s *Store) assignCommands(ctx context.Context, tx pgx.Tx, networkID, group,
 	return nil
 }
 
-func (s *Store) verifications(ctx context.Context, tx pgx.Tx, networkID string, responseBytes int, ack *protocol.PollAck) error {
+func (s *Store) verifications(ctx context.Context, tx pgx.Tx, networkID string, responseBytes, slots, queueBytes int, ack *protocol.PollAck) error {
 	rows, err := tx.Query(ctx, `WITH due AS (
         (SELECT r.item_id,r.token,r.next_attempt_at AS due,true AS priority
          FROM inventory_rechecks r WHERE r.network_id=$1 AND r.next_attempt_at<=now()
@@ -238,11 +250,11 @@ func (s *Store) verifications(ctx context.Context, tx pgx.Tx, networkID string, 
         (SELECT i.item_id,'' AS token,i.next_verify_at AS due,false AS priority
          FROM inventory i WHERE i.network_id=$1 AND i.next_verify_at<=now()
          AND NOT EXISTS(SELECT 1 FROM inventory_rechecks r WHERE r.network_id=i.network_id AND r.item_id=i.item_id)
-         ORDER BY i.next_verify_at,i.item_id LIMIT 16)
+         ORDER BY i.next_verify_at,i.item_id LIMIT $2)
     ) SELECT d.id,d.kind,d.name,d.damage,d.nbt,d.label,d.exact,i.craftable,due.token
       FROM due JOIN item_definitions d ON d.network_id=$1 AND d.id=due.item_id
       JOIN inventory i ON i.network_id=$1 AND i.item_id=due.item_id
-      ORDER BY due.priority DESC,due.due,due.item_id LIMIT 16`, networkID)
+      ORDER BY due.priority DESC,due.due,due.item_id LIMIT 16`, networkID, slots)
 	if err != nil {
 		return err
 	}
@@ -260,11 +272,26 @@ func (s *Store) verifications(ctx context.Context, tx pgx.Tx, networkID string, 
 		return err
 	}
 	for _, v := range candidates {
+		// The OC FIFO accounts for two identity keys, the display label and a
+		// fixed descriptor allowance. DecodedLen is conservatively high for
+		// padded NBT, so the receiver always has enough room for admitted work.
+		cost := 2*(len(v.Item.Name)+len(strconv.Itoa(v.Item.Damage))+2+base64.StdEncoding.DecodedLen(len(v.Item.NBT))) + len(v.Item.Label) + 256
+		if v.Token == "" && cost > queueBytes {
+			// Rotate an individually large descriptor briefly instead of letting
+			// it monopolize every candidate window or waiting the normal period.
+			if _, err = tx.Exec(ctx, "UPDATE inventory SET next_verify_at=now()+interval '5 seconds' WHERE network_id=$1 AND item_id=$2", networkID, int64(v.ID)); err != nil {
+				return err
+			}
+			continue
+		}
 		ack.Verify = append(ack.Verify, v)
 		encoded, _ := json.Marshal(ack)
 		if len(encoded) > responseBytes {
 			ack.Verify = ack.Verify[:len(ack.Verify)-1]
 			if v.Token == "" {
+				if _, err = tx.Exec(ctx, "UPDATE inventory SET next_verify_at=now()+interval '5 seconds' WHERE network_id=$1 AND item_id=$2", networkID, int64(v.ID)); err != nil {
+					return err
+				}
 				continue
 			}
 		}
@@ -273,6 +300,7 @@ func (s *Store) verifications(ctx context.Context, tx pgx.Tx, networkID string, 
 			// so a small response or an unavailable item cannot block other reads.
 			_, err = tx.Exec(ctx, "UPDATE inventory_rechecks SET next_attempt_at=now()+interval '5 seconds' WHERE network_id=$1 AND item_id=$2", networkID, int64(v.ID))
 		} else {
+			queueBytes -= cost
 			_, err = tx.Exec(ctx, "UPDATE inventory SET next_verify_at=now()+$3::double precision*interval '1 second' WHERE network_id=$1 AND item_id=$2", networkID, int64(v.ID), s.options.RecheckAfter.Seconds())
 		}
 		if err != nil {

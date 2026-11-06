@@ -3,7 +3,7 @@ local adapter = require("aeorbit.adapter")
 local journal = require("aeorbit.journal")
 local json = require("aeorbit.json")
 
-local function fixture(credits, read_seconds)
+local function fixture(credits, read_seconds, batch_seconds)
   local clock=0
   local observed={items={},polls=0,scans=0,completed=0,lookups=0,reads=0,grant=credits,memory=131072}
   local function raw(name)
@@ -65,7 +65,7 @@ local function fixture(credits, read_seconds)
   local log=journal.new({read=function(path) return files[path] end,
     write=function(path,value) files[path]=value;return true end},"fairness",32768)
   local bridge=runner.new({cache_entries=4,cache_bytes=2048,dirty_entries=8,dirty_bytes=4096,
-    max_batch_bytes=2048,max_response_bytes=4096,scan_slice_seconds=0.05,scan_interval=60},
+    max_batch_bytes=2048,max_response_bytes=4096,scan_slice_seconds=0.05,scan_interval=60,batch_interval_seconds=batch_seconds},
     {adapter=adapter.new(me),client=client,journal=log,now=function() return clock end,
       free_memory=function() return observed.memory end,yield=function() end})
   bridge:start()
@@ -123,13 +123,13 @@ bridge:tick();observed.memory=8192
 assert(not bridge:continue_inventory(),"low memory kept acquisition scheduled")
 assert(observed.reads==1,"continued acquisition ignored the memory reserve")
 
-local observed,_,bridge=fixture(6,0.06)
+local observed,_,bridge=fixture(6,0.06,0)
 bridge:tick();observed.fail_inventory={code="transport_failed",fatal=false}
 assert(not bridge:continue_inventory(),"transport failure kept acquisition scheduled")
 assert(observed.failed_body and bridge.diagnostics.inventory_transport_failed=="1")
 bridge:tick()
 assert(observed.retried and observed.polls==2,"inventory retry bypassed control traffic")
 
-local observed,_,bridge=fixture(6,0.06)
+local observed,_,bridge=fixture(6,0.06,0)
 bridge:tick();observed.fail_inventory={code="invalid_inventory_confirmation",fatal=true}
 assert(not pcall(bridge.continue_inventory,bridge),"continued acquisition swallowed a fatal protocol failure")

@@ -192,8 +192,19 @@ type Diagnostic struct {
 }
 
 type Health struct {
-	FreeMemory  Quantity     `json:"free_memory"`
-	Diagnostics []Diagnostic `json:"diagnostics"`
+	FreeMemory  Quantity            `json:"free_memory"`
+	Diagnostics []Diagnostic        `json:"diagnostics"`
+	Inventory   *InventoryTelemetry `json:"inventory,omitempty"`
+}
+
+// InventoryTelemetry counts acknowledged payloads and collection work per boot.
+// It does not count unique item identities or retransmitted network bytes.
+type InventoryTelemetry struct {
+	Batches       Quantity `json:"batches"`
+	Updates       Quantity `json:"updates"`
+	Bytes         Quantity `json:"bytes"`
+	CreditsUsed   Quantity `json:"credits_used"`
+	CollectMillis Quantity `json:"collect_millis"`
 }
 
 type Poll struct {
@@ -203,6 +214,8 @@ type Poll struct {
 	CPUs          *[]CPU   `json:"cpus,omitempty"`
 	CPUsTruncated bool     `json:"cpus_truncated,omitempty"`
 	Health        *Health  `json:"health,omitempty"`
+	RecheckSlots  *int     `json:"recheck_slots,omitempty"`
+	RecheckBytes  *int     `json:"recheck_bytes,omitempty"`
 }
 
 type Command struct {

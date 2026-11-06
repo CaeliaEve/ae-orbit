@@ -82,6 +82,10 @@ func (p Poll) Validate(maxCPUs, maxReports int) error {
 	if !textOK(p.SessionID, 1, 128) || p.Sequence < 1 || len(p.Reports) > maxReports {
 		return fmt.Errorf("invalid poll envelope")
 	}
+	if (p.RecheckSlots != nil && (*p.RecheckSlots < 0 || *p.RecheckSlots > 16)) ||
+		(p.RecheckBytes != nil && (*p.RecheckBytes < 0 || *p.RecheckBytes > 16384)) {
+		return fmt.Errorf("invalid recheck capacity")
+	}
 	for _, r := range p.Reports {
 		if !textOK(r.OrderID, 1, 128) || !textOK(r.AttemptID, 1, 128) || !textOK(r.Reason, 0, 1024) || !ReportState(r.State) {
 			return fmt.Errorf("invalid order report")
@@ -110,6 +114,9 @@ func (p Poll) Validate(maxCPUs, maxReports int) error {
 			if !textOK(d.Code, 1, 64) || d.Count < 0 {
 				return fmt.Errorf("invalid diagnostic")
 			}
+		}
+		if v := p.Health.Inventory; v != nil && (v.Batches < 0 || v.Updates < 0 || v.Bytes < 0 || v.CreditsUsed < 0 || v.CollectMillis < 0) {
+			return fmt.Errorf("invalid inventory telemetry")
 		}
 	}
 	return nil

@@ -716,6 +716,7 @@ components:
       required: [free_memory, diagnostics]
       properties:
         free_memory: {$ref: '#/components/schemas/Quantity'}
+        inventory: {$ref: '#/components/schemas/InventoryTelemetry'}
         diagnostics:
           type: array
           maxItems: 16
@@ -724,6 +725,17 @@ components:
             additionalProperties: false
             required: [code, count]
             properties: {code: {type: string, minLength: 1, maxLength: 64}, count: {$ref: '#/components/schemas/Quantity'}}
+    InventoryTelemetry:
+      type: object
+      additionalProperties: false
+      description: Per-boot acknowledged inventory payloads and collection work; not unique items or retransmitted wire bytes. OC counters saturate at 9007199254740991.
+      required: [batches, updates, bytes, credits_used, collect_millis]
+      properties:
+        batches: {$ref: '#/components/schemas/Quantity'}
+        updates: {$ref: '#/components/schemas/Quantity'}
+        bytes: {$ref: '#/components/schemas/Quantity'}
+        credits_used: {$ref: '#/components/schemas/Quantity'}
+        collect_millis: {$ref: '#/components/schemas/Quantity'}
     Poll:
       type: object
       additionalProperties: false
@@ -735,6 +747,8 @@ components:
         cpus: {type: array, maxItems: 64, items: {$ref: '#/components/schemas/CPU'}}
         cpus_truncated: {type: boolean}
         health: {$ref: '#/components/schemas/DeviceHealth'}
+        recheck_slots: {type: integer, minimum: 0, maximum: 16, description: Available ordinary verification slots; zero leaves ordinary work due. Priority verification uses a separate queue.}
+        recheck_bytes: {type: integer, minimum: 0, maximum: 16384, description: Available estimated ordinary verification queue bytes; omit for legacy behavior.}
     Command:
       type: object
       required: [order_id, attempt_id, item_id, item, quantity, current_quantity]
