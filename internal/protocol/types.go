@@ -85,20 +85,22 @@ type Welcome struct {
 }
 
 type Update struct {
-	ID          Quantity    `json:"id,omitempty"`
-	Item        *Definition `json:"item,omitempty"`
-	Quantity    Quantity    `json:"quantity"`
-	Observation Quantity    `json:"observation"`
-	Craftable   *bool       `json:"craftable"`
+	ID           Quantity    `json:"id,omitempty"`
+	Item         *Definition `json:"item,omitempty"`
+	Quantity     Quantity    `json:"quantity"`
+	Observation  Quantity    `json:"observation"`
+	Craftable    *bool       `json:"craftable"`
+	Verification string      `json:"verification,omitempty"`
 }
 
 func (u *Update) UnmarshalJSON(data []byte) error {
 	var wire struct {
-		ID          Quantity        `json:"id,omitempty"`
-		Item        *Definition     `json:"item,omitempty"`
-		Quantity    *Quantity       `json:"quantity"`
-		Observation Quantity        `json:"observation"`
-		Craftable   json.RawMessage `json:"craftable"`
+		ID           Quantity        `json:"id,omitempty"`
+		Item         *Definition     `json:"item,omitempty"`
+		Quantity     *Quantity       `json:"quantity"`
+		Observation  Quantity        `json:"observation"`
+		Craftable    json.RawMessage `json:"craftable"`
+		Verification string          `json:"verification,omitempty"`
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
@@ -112,7 +114,7 @@ func (u *Update) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(wire.Craftable, &craftable); err != nil {
 		return err
 	}
-	*u = Update{ID: wire.ID, Item: wire.Item, Quantity: *wire.Quantity, Observation: wire.Observation, Craftable: craftable}
+	*u = Update{ID: wire.ID, Item: wire.Item, Quantity: *wire.Quantity, Observation: wire.Observation, Craftable: craftable, Verification: wire.Verification}
 	return nil
 }
 
@@ -216,6 +218,7 @@ type Verification struct {
 	ID        Quantity   `json:"id"`
 	Item      Definition `json:"item"`
 	Craftable bool       `json:"craftable"`
+	Token     string     `json:"token,omitempty"`
 }
 
 type PollAck struct {

@@ -675,6 +675,10 @@ components:
         craftable:
           type: [boolean, 'null']
           description: Null observes quantity only and preserves the current session's last confirmed recipe flag.
+        verification:
+          type: string
+          pattern: '^[0-9a-f]{32}$'
+          description: Echo a priority verification token only after reading the exact item and its recipe after that request. A fresh observation with a boolean craftable flag confirms it.
     InventoryBatch:
       type: object
       additionalProperties: false
@@ -748,6 +752,10 @@ components:
         id: {$ref: '#/components/schemas/PositiveQuantity'}
         item: {$ref: '#/components/schemas/Definition'}
         craftable: {type: boolean}
+        token:
+          type: string
+          pattern: '^[0-9a-f]{32}$'
+          description: Present for a durable priority read. Keep it separate from evictable inventory events; echo it in a fresh verified Update. Sending the request does not complete it.
     PollAck:
       type: object
       required: [ack, commands, verify, poll_millis, scan_budget]

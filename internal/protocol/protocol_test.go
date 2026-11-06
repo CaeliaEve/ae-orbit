@@ -137,3 +137,18 @@ func TestOrderTransitions(t *testing.T) {
 		}
 	}
 }
+
+func TestVerificationTokenBudget(t *testing.T) {
+	for _, token := range []string{"", strings.Repeat("a", 32), strings.Repeat("0", 32)} {
+		batch := InventoryBatch{SessionID: "session", Sequence: 1, Updates: []Update{{ID: 1, Quantity: 1, Observation: 1, Verification: token}}}
+		if err := batch.Validate(1); err != nil {
+			t.Fatal("valid optional verification rejected", err)
+		}
+	}
+	for _, token := range []string{strings.Repeat("a", 31), strings.Repeat("a", 33), strings.Repeat("A", 32), strings.Repeat("0", 31) + "!", strings.Repeat("a", 4096)} {
+		batch := InventoryBatch{SessionID: "session", Sequence: 1, Updates: []Update{{ID: 1, Quantity: 1, Observation: 1, Verification: token}}}
+		if err := batch.Validate(1); err == nil {
+			t.Fatal("malformed or unbounded verification accepted")
+		}
+	}
+}

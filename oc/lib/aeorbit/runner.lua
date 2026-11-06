@@ -17,8 +17,10 @@ function M.new(config,deps)
   local id_bytes=math.max(256,math.min(config.cache_bytes or math.floor(memory/12),math.floor(memory/8)))
   local dirty_bytes=math.max(256,math.min(config.dirty_bytes or math.floor(memory/12),math.floor(memory/8)))
   local dirty_entries=config.dirty_entries or 128
+  local verification_bytes=math.max(256,math.min(16384,math.floor(memory/32)))
   local self={config=config,deps=deps,client=deps.client,adapter=deps.adapter,diagnostics={},
     ids=cache.new(config.cache_entries or 256,id_bytes),dirty=cache.new(dirty_entries,dirty_bytes),
+    verifications=cache.new(16,verification_bytes),verification_bytes=verification_bytes,
     dirty_bytes=dirty_bytes,dirty_entries=dirty_entries,inventory_seq="0",poll_seq="0",observation="0",
     credits=0,next_scan=0,next_cpu=0,next_recipe_check=0,poll_delay=1,uploaded=0}
   function self:diagnose(code)
@@ -69,6 +71,19 @@ function M.new(config,deps)
     for _,code in ipairs(keys) do diagnostics[#diagnostics+1]={code=code,count=self.diagnostics[code]} end
     return {free_memory=quantity.from_number(deps.free_memory()),diagnostics=diagnostics}
   end
+  function self:_queue_verification(raw,token)
+    local key=self.adapter:key(raw)
+    local previous=self.verifications.entries[key]
+    -- Retries do not move the oldest work to the back of the FIFO. A newer
+    -- completion of the same item replaces only the fixed-size confirmation.
+    if previous then previous.value.verification=token;return end
+    local cost=#key*2+#(raw.label or "")+#token+256
+    if self.verifications.count>=16 or self.verifications.bytes+cost>self.verification_bytes then
+      self:diagnose("verification_queue_full");return
+    end
+    raw.verification=token
+    self.verifications:put(key,raw,cost)
+  end
   function self:_control()
     if not self.pending_poll then
       local body={session_id=self.session,sequence=quantity.increment(self.poll_seq),reports=json.array({}),health=self:_health()}
@@ -100,18 +115,39 @@ function M.new(config,deps)
     self.tracker:ack(pending.reports)
     for _,command in ipairs(ack.commands) do self.tracker:accept(command) end
     for _,verification in ipairs(ack.verify) do
+      local token=verification.token
+      if token~=nil and (type(token)~="string" or #token~=32 or token:find("[^0-9a-f]")) then fatal("invalid_verification_token") end
       local ok,raw=pcall(self.adapter.from_definition,self.adapter,verification.item)
       if ok then
         quantity.validate(verification.id)
         local key=self.adapter:key(raw)
         self.ids:put(key,{id=verification.id,label=raw.label},#key+#verification.id+#(raw.label or "")+160)
-        self:on_item_changed(raw,verification.craftable)
+        if token then self:_queue_verification(raw,token)
+        else self:on_item_changed(raw,verification.craftable) end
       else self:diagnose("verification_identity_unavailable") end
     end
     self.poll_seq=ack.ack;self.pending_poll=nil;self.credits=ack.scan_budget;self.poll_delay=ack.poll_millis/1000
   end
   function self:_next_raw()
     local scan_ready=self.iterator~=nil or deps.now()>=self.next_scan
+    local regular_ready=self.dirty.count>0 or scan_ready
+    if self.verifications.count>0 and self.credits>=4 and deps.now()>=self.next_recipe_check and
+      (not self.regular_turn or not regular_ready) then
+      self.regular_turn=true;self.next_recipe_check=deps.now()+5
+      local _,detail=self.verifications:pop()
+      local ok,value=pcall(self.adapter.read,self.adapter,detail)
+      if not ok then
+        self:diagnose("exact_lookup_failed");self:_queue_verification(detail,detail.verification);return nil,1
+      end
+      -- A new boot may still have the previous boot's catalog. Confirm the
+      -- recipe as well as the count without copying the backend's old flag.
+      local checked,craftable=pcall(self.adapter.recipe_status,self.adapter,detail)
+      if checked and type(craftable)=="boolean" then
+        value.isCraftable=craftable;value.verification=detail.verification
+      else self:diagnose("recipe_lookup_failed");self:_queue_verification(detail,detail.verification) end
+      return value,4
+    end
+    self.regular_turn=false
     -- Keep the turn across time slices and one-item grants. A busy event queue
     -- must not prevent cold items from being discovered or refreshed.
     if self.dirty.count>0 and (not self.scan_turn or not scan_ready) then
@@ -154,10 +190,10 @@ function M.new(config,deps)
     local craftable=raw.isCraftable
     assert(craftable==nil or type(craftable)=="boolean","adapter: invalid recipe observation")
     if craftable==nil then craftable=json.null end
-    local value={quantity=count,observation=self.observation,craftable=craftable}
+    local value={quantity=count,observation=self.observation,craftable=craftable,verification=raw.verification}
     local known=self.ids:get(key)
     if known and known.label==(raw.label or raw.name) then value.id=known.id else value.item=self.adapter:definition(raw) end
-    return {key=key,label=raw.label or raw.name,item=value.item~=nil,encoded=json.encode(value,self.client.request_bytes)}
+    return {key=key,label=raw.label or raw.name,item=value.item~=nil,verification=raw.verification,encoded=json.encode(value,self.client.request_bytes)}
   end
   function self:_flush()
     local pending=self.pending_inventory
@@ -173,7 +209,11 @@ function M.new(config,deps)
       self.ids:put(entry.key,{id=binding.id,label=entry.label},#entry.key+#binding.id+#entry.label+160)
       seen[index]=true
     end
-    for index,entry in ipairs(pending.entries) do if entry.item and not seen[index] then fatal("missing_short_id_binding") end end
+    for index,entry in ipairs(pending.entries) do
+      if entry.item and not seen[index] then fatal("missing_short_id_binding") end
+      local queued=self.verifications.entries[entry.key]
+      if entry.verification and queued and queued.value.verification==entry.verification then self.verifications:remove(entry.key) end
+    end
     self.inventory_seq=ack.ack;self.uploaded=self.uploaded+#pending.entries;self.pending_inventory=nil
   end
   function self:_inventory()

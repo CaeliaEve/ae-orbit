@@ -174,6 +174,11 @@ func (s *Store) finishOrder(ctx context.Context, userID, networkID, id, state, r
 		if err = auditOrder(ctx, tx, id); err != nil {
 			return err
 		}
+		if review {
+			if err = scheduleRecheck(ctx, tx, networkID, result.ItemID); err != nil {
+				return err
+			}
+		}
 		result, err = scanOrder(tx.QueryRow(ctx, "SELECT "+orderColumns+" FROM orders o WHERE o.id=$1", id))
 		if err != nil {
 			return err

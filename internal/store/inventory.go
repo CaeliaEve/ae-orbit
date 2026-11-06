@@ -17,12 +17,14 @@ type definitionRow struct {
 	protocol.Definition
 }
 type inventoryRow struct {
-	ID                   protocol.Quantity `json:"id"`
-	Quantity             protocol.Quantity `json:"quantity"`
-	Observation          protocol.Quantity `json:"observation"`
-	Craftable            *bool             `json:"craftable"`
-	CraftableObservation protocol.Quantity `json:"craftable_observation"`
-	Label                *string           `json:"label"`
+	ID                      protocol.Quantity `json:"id"`
+	Quantity                protocol.Quantity `json:"quantity"`
+	Observation             protocol.Quantity `json:"observation"`
+	Craftable               *bool             `json:"craftable"`
+	CraftableObservation    protocol.Quantity `json:"craftable_observation"`
+	Verification            string            `json:"verification,omitempty"`
+	VerificationObservation protocol.Quantity `json:"verification_observation,omitempty"`
+	Label                   *string           `json:"label"`
 }
 
 func digest(value any) ([32]byte, error) {
@@ -79,6 +81,9 @@ func (s *Store) Ingest(ctx context.Context, d Device, b protocol.InventoryBatch)
 			row := inventoryRow{ID: ids[i], Quantity: u.Quantity, Observation: u.Observation, Craftable: u.Craftable}
 			if u.Craftable != nil {
 				row.CraftableObservation = u.Observation
+				if u.Verification != "" {
+					row.Verification, row.VerificationObservation = u.Verification, u.Observation
+				}
 			}
 			if u.Item != nil {
 				label := u.Item.Label
@@ -101,10 +106,18 @@ func (s *Store) Ingest(ctx context.Context, d Device, b protocol.InventoryBatch)
 				if row.CraftableObservation > observation {
 					flag, observation = row.Craftable, row.CraftableObservation
 				}
+				confirmation, confirmedAt := previous.Verification, previous.VerificationObservation
+				if row.VerificationObservation == confirmedAt && row.Verification != "" && confirmation != "" && row.Verification != confirmation {
+					return ErrConflict
+				}
+				if row.VerificationObservation > confirmedAt {
+					confirmation, confirmedAt = row.Verification, row.VerificationObservation
+				}
 				if row.Observation <= previous.Observation {
 					row = previous
 				}
 				row.Craftable, row.CraftableObservation = flag, observation
+				row.Verification, row.VerificationObservation = confirmation, confirmedAt
 			}
 			merged[row.ID] = row
 		}
@@ -219,12 +232,13 @@ func (s *Store) resolveDefinitions(ctx context.Context, tx pgx.Tx, networkID str
 // separates freshness writes from changes that invalidate sorted browser pages.
 const inventoryUpsert = `WITH input AS (
     SELECT * FROM jsonb_to_recordset($2::jsonb)
-    AS x(id bigint,quantity bigint,observation bigint,craftable boolean,craftable_observation bigint,label text)
+    AS x(id bigint,quantity bigint,observation bigint,craftable boolean,craftable_observation bigint,label text,verification text,verification_observation bigint)
 ), observations AS (
-    SELECT x.id,x.quantity,x.observation,x.label,
+    SELECT x.id,x.quantity,x.observation,x.label,x.verification,x.verification_observation,
         CASE WHEN x.craftable IS NOT NULL AND (i.item_id IS NULL OR i.session_id<>$3 OR x.craftable_observation>i.observation)
             THEN x.craftable WHEN i.session_id=$3 THEN i.craftable ELSE false END AS craftable,
-        i.quantity AS previous_quantity,i.craftable AS previous_craftable,i.session_id AS previous_session,d.label AS previous_label
+        i.quantity AS previous_quantity,i.craftable AS previous_craftable,i.session_id AS previous_session,
+        i.observation AS previous_observation,d.label AS previous_label
     FROM input x JOIN item_definitions d ON d.network_id=$1 AND d.id=x.id
     LEFT JOIN inventory i ON i.network_id=$1 AND i.item_id=x.id
     WHERE i.item_id IS NULL OR i.session_id<>$3 OR x.observation>i.observation
@@ -241,5 +255,10 @@ const inventoryUpsert = `WITH input AS (
 ), labels AS (
     UPDATE item_definitions d SET label=e.label,updated_at=now() FROM eligible e
     WHERE d.network_id=$1 AND d.id=e.id AND e.label IS NOT NULL AND d.label IS DISTINCT FROM e.label RETURNING d.id
+), confirmed AS (
+    DELETE FROM inventory_rechecks r USING eligible e
+    WHERE r.network_id=$1 AND r.item_id=e.id AND r.token=e.verification AND e.verification_observation>0
+      AND (e.previous_session IS DISTINCT FROM $3 OR e.verification_observation>e.previous_observation)
+    RETURNING r.item_id
 )
 SELECT (SELECT count(*) FROM written),coalesce((SELECT bool_or(changed) FROM eligible),false)`

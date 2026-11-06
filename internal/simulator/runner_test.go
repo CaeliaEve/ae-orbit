@@ -102,6 +102,10 @@ func TestSimulatorRetriesCommittedBatchAndBoundsCache(t *testing.T) {
 	if err != nil || got.State != "done" {
 		t.Fatal(got, err)
 	}
+	var pending int
+	if err = db.Pool().QueryRow(ctx, "SELECT count(*) FROM inventory_rechecks WHERE network_id=$1", network.ID).Scan(&pending); err != nil || pending != 0 {
+		t.Fatal("simulator did not confirm its completed output", pending, err)
+	}
 	n, err := db.Network(ctx, admin.ID, network.ID)
 	if err != nil || n.Source != "simulator" {
 		t.Fatal("simulation not labeled", n, err)

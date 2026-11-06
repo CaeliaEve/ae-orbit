@@ -50,6 +50,9 @@ func (b InventoryBatch) Validate(maxItems int) error {
 		if u.Quantity < 0 || u.Observation < 1 || (u.ID > 0) == (u.Item != nil) {
 			return fmt.Errorf("invalid inventory update")
 		}
+		if u.Verification != "" && (len(u.Verification) != 32 || strings.Trim(u.Verification, "0123456789abcdef") != "") {
+			return fmt.Errorf("invalid inventory verification")
+		}
 		if u.Item != nil {
 			if err := u.Item.Validate(); err != nil {
 				return err

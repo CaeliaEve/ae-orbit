@@ -49,8 +49,8 @@ function me.getCraftables(filter)
           if job.stage<3 then return false end
           if not job.done then
             fixture_stock=fixture_stock+job.amount;job.done=true
-            local hint=raw(1);hint.size=-1
-            bridge:on_item_changed(hint)
+            -- Deliberately omit the native change event. Only the completed
+            -- order's durable verification can refresh the output promptly.
           end
           return true
         end

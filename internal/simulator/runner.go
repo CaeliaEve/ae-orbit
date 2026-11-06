@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -42,6 +43,11 @@ type job struct {
 	command protocol.Command
 	stage   int
 }
+type verification struct {
+	index int
+	id    protocol.Quantity
+	token string
+}
 type pendingInventory struct {
 	body    []byte
 	indices []int
@@ -51,21 +57,23 @@ type pendingInventory struct {
 
 // Runner has one owner; Step and Stats are called by the same control loop.
 type Runner struct {
-	config       Config
-	http         *http.Client
-	welcome      protocol.Welcome
-	stats        Statistics
-	inventorySeq protocol.Quantity
-	pollSeq      protocol.Quantity
-	observation  protocol.Quantity
-	cursor       int
-	refresh      int
-	cache        map[int]*list.Element
-	lru          *list.List
-	jobs         map[string]*job
-	pending      *pendingInventory
-	pendingPoll  *protocol.Poll
-	nextPoll     time.Duration
+	config        Config
+	http          *http.Client
+	welcome       protocol.Welcome
+	stats         Statistics
+	inventorySeq  protocol.Quantity
+	pollSeq       protocol.Quantity
+	observation   protocol.Quantity
+	cursor        int
+	refresh       int
+	cache         map[int]*list.Element
+	lru           *list.List
+	jobs          map[string]*job
+	pending       *pendingInventory
+	pendingPoll   *protocol.Poll
+	nextPoll      time.Duration
+	verifications []verification
+	regularTurn   bool
 }
 
 func New(c Config) (*Runner, error) {
@@ -143,7 +151,7 @@ func (r *Runner) Step(ctx context.Context) error {
 	if err := r.call(ctx, "/bridge/v1/poll", r.pendingPoll, &ack); err != nil {
 		return err
 	}
-	if ack.Ack != r.pendingPoll.Sequence || len(ack.Commands) > 16 || ack.ScanBudget < 0 || ack.ScanBudget > 512 {
+	if ack.Ack != r.pendingPoll.Sequence || len(ack.Commands) > 16 || len(ack.Verify) > 16 || ack.ScanBudget < 0 || ack.ScanBudget > 512 {
 		return fmt.Errorf("invalid poll confirmation")
 	}
 	for _, report := range r.pendingPoll.Reports {
@@ -167,6 +175,26 @@ func (r *Runner) Step(ctx context.Context) error {
 				return fmt.Errorf("active simulation window exceeded")
 			}
 			r.jobs[command.AttemptID] = &job{command: command}
+		}
+	}
+	for _, v := range ack.Verify {
+		if v.Token == "" {
+			continue
+		}
+		index, err := strconv.Atoi(strings.TrimPrefix(v.Item.Name, "sim:component_"))
+		if err != nil || index < 0 || index >= r.config.Items || r.definition(index).Key() != v.Item.Key() || v.ID < 1 || len(v.Token) != 32 || strings.Trim(v.Token, "0123456789abcdef") != "" {
+			return fmt.Errorf("invalid simulation verification")
+		}
+		found := false
+		for i := range r.verifications {
+			if r.verifications[i].index == index {
+				r.verifications[i] = verification{index, v.ID, v.Token}
+				found = true
+				break
+			}
+		}
+		if !found && len(r.verifications) < 16 {
+			r.verifications = append(r.verifications, verification{index, v.ID, v.Token})
 		}
 	}
 	r.stats.Cycles++
@@ -194,14 +222,20 @@ func (r *Runner) prepare(count int) (int, error) {
 	catalog := 0
 	for len(b.Updates) < count {
 		initial := r.cursor < r.config.Items
+		priority := len(r.verifications) > 0 && !r.regularTurn
 		index := r.refresh
 		if initial {
 			index = r.cursor
 		}
+		if priority {
+			index = r.verifications[0].index
+		}
 		r.observation++
 		craftable := index%3 == 0
 		u := protocol.Update{Quantity: protocol.Quantity(1000000 + int64(index) + r.stats.Cycles), Observation: r.observation, Craftable: &craftable}
-		if e := r.cache[index]; e != nil {
+		if priority {
+			u.ID, u.Verification = r.verifications[0].id, r.verifications[0].token
+		} else if e := r.cache[index]; e != nil {
 			u.ID = e.Value.(cachedID).id
 			r.lru.MoveToFront(e)
 		} else {
@@ -217,7 +251,12 @@ func (r *Runner) prepare(count int) (int, error) {
 		size += len(encoded) + 1
 		b.Updates = append(b.Updates, u)
 		indices = append(indices, index)
-		if initial {
+		r.regularTurn = priority
+		if priority {
+			copy(r.verifications, r.verifications[1:])
+			r.verifications[len(r.verifications)-1] = verification{}
+			r.verifications = r.verifications[:len(r.verifications)-1]
+		} else if initial {
 			r.cursor++
 			catalog++
 			if r.cursor == r.config.Items {

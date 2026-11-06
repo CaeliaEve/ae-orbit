@@ -118,7 +118,8 @@ func (s *Store) acceptReports(ctx context.Context, tx pgx.Tx, networkID string, 
 	changed := false
 	for _, r := range p.Reports {
 		var state, attempt, session string
-		if err := tx.QueryRow(ctx, "SELECT state,attempt_id,attempt_session FROM orders WHERE network_id=$1 AND id=$2 FOR UPDATE", networkID, r.OrderID).Scan(&state, &attempt, &session); err != nil {
+		var itemID protocol.Quantity
+		if err := tx.QueryRow(ctx, "SELECT state,attempt_id,attempt_session,item_id FROM orders WHERE network_id=$1 AND id=$2 FOR UPDATE", networkID, r.OrderID).Scan(&state, &attempt, &session, &itemID); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return ErrConflict
 			}
@@ -144,6 +145,11 @@ func (s *Store) acceptReports(ctx context.Context, tx pgx.Tx, networkID string, 
 		}
 		if err := auditOrder(ctx, tx, r.OrderID); err != nil {
 			return err
+		}
+		if protocol.Terminal(r.State) {
+			if err := scheduleRecheck(ctx, tx, networkID, itemID); err != nil {
+				return err
+			}
 		}
 		changed = true
 	}
@@ -224,16 +230,26 @@ func (s *Store) assignCommands(ctx context.Context, tx pgx.Tx, networkID, group,
 }
 
 func (s *Store) verifications(ctx context.Context, tx pgx.Tx, networkID string, responseBytes int, ack *protocol.PollAck) error {
-	rows, err := tx.Query(ctx, `SELECT d.id,d.kind,d.name,d.damage,d.nbt,d.label,d.exact,i.craftable
-        FROM inventory i JOIN item_definitions d ON d.network_id=i.network_id AND d.id=i.item_id
-        WHERE i.network_id=$1 AND i.next_verify_at<=now() ORDER BY i.next_verify_at,i.item_id LIMIT 16`, networkID)
+	rows, err := tx.Query(ctx, `WITH due AS (
+        (SELECT r.item_id,r.token,r.next_attempt_at AS due,true AS priority
+         FROM inventory_rechecks r WHERE r.network_id=$1 AND r.next_attempt_at<=now()
+         ORDER BY r.next_attempt_at,r.item_id LIMIT 4)
+        UNION ALL
+        (SELECT i.item_id,'' AS token,i.next_verify_at AS due,false AS priority
+         FROM inventory i WHERE i.network_id=$1 AND i.next_verify_at<=now()
+         AND NOT EXISTS(SELECT 1 FROM inventory_rechecks r WHERE r.network_id=i.network_id AND r.item_id=i.item_id)
+         ORDER BY i.next_verify_at,i.item_id LIMIT 16)
+    ) SELECT d.id,d.kind,d.name,d.damage,d.nbt,d.label,d.exact,i.craftable,due.token
+      FROM due JOIN item_definitions d ON d.network_id=$1 AND d.id=due.item_id
+      JOIN inventory i ON i.network_id=$1 AND i.item_id=due.item_id
+      ORDER BY due.priority DESC,due.due,due.item_id LIMIT 16`, networkID)
 	if err != nil {
 		return err
 	}
 	candidates := []protocol.Verification{}
 	for rows.Next() {
 		var v protocol.Verification
-		if err = rows.Scan(&v.ID, &v.Item.Kind, &v.Item.Name, &v.Item.Damage, &v.Item.NBT, &v.Item.Label, &v.Item.Exact, &v.Craftable); err != nil {
+		if err = rows.Scan(&v.ID, &v.Item.Kind, &v.Item.Name, &v.Item.Damage, &v.Item.NBT, &v.Item.Label, &v.Item.Exact, &v.Craftable, &v.Token); err != nil {
 			rows.Close()
 			return err
 		}
@@ -248,13 +264,29 @@ func (s *Store) verifications(ctx context.Context, tx pgx.Tx, networkID string, 
 		encoded, _ := json.Marshal(ack)
 		if len(encoded) > responseBytes {
 			ack.Verify = ack.Verify[:len(ack.Verify)-1]
-			continue
+			if v.Token == "" {
+				continue
+			}
 		}
-		if _, err = tx.Exec(ctx, "UPDATE inventory SET next_verify_at=now()+$3::double precision*interval '1 second' WHERE network_id=$1 AND item_id=$2", networkID, int64(v.ID), s.options.RecheckAfter.Seconds()); err != nil {
+		if v.Token != "" {
+			// Sending (or failing to fit) is not completion. Rotate bounded work
+			// so a small response or an unavailable item cannot block other reads.
+			_, err = tx.Exec(ctx, "UPDATE inventory_rechecks SET next_attempt_at=now()+interval '5 seconds' WHERE network_id=$1 AND item_id=$2", networkID, int64(v.ID))
+		} else {
+			_, err = tx.Exec(ctx, "UPDATE inventory SET next_verify_at=now()+$3::double precision*interval '1 second' WHERE network_id=$1 AND item_id=$2", networkID, int64(v.ID), s.options.RecheckAfter.Seconds())
+		}
+		if err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func scheduleRecheck(ctx context.Context, tx pgx.Tx, networkID string, itemID protocol.Quantity) error {
+	_, err := tx.Exec(ctx, `INSERT INTO inventory_rechecks(network_id,item_id,token)
+        SELECT network_id,item_id,$3 FROM inventory WHERE network_id=$1 AND item_id=$2
+        ON CONFLICT(network_id,item_id) DO UPDATE SET token=excluded.token,next_attempt_at=now()`, networkID, int64(itemID), newID())
+	return err
 }
 
 func (s *Store) saveCPUs(ctx context.Context, tx pgx.Tx, networkID string, p protocol.Poll) error {
