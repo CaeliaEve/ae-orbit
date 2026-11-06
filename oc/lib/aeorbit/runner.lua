@@ -109,12 +109,17 @@ function M.new(config,deps)
     self.poll_seq=ack.ack;self.pending_poll=nil;self.credits=ack.scan_budget;self.poll_delay=ack.poll_millis/1000
   end
   function self:_next_raw()
-    local _,dirty=self.dirty:pop()
-    if dirty then
+    local scan_ready=self.iterator~=nil or deps.now()>=self.next_scan
+    -- Keep the turn across time slices and one-item grants. A busy event queue
+    -- must not prevent cold items from being discovered or refreshed.
+    if self.dirty.count>0 and (not self.scan_turn or not scan_ready) then
+      local _,dirty=self.dirty:pop()
+      self.scan_turn=true
       local ok,value=pcall(self.adapter.read,self.adapter,dirty)
       if not ok then self:diagnose("exact_lookup_failed");return nil,1 end
       return value,1
     end
+    self.scan_turn=false
     if not self.iterator then
       if deps.now()<self.next_scan then return nil,0 end
       local ok,iterator=pcall(self.adapter.iterator,self.adapter)
