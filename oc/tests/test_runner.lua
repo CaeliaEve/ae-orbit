@@ -72,10 +72,11 @@ for _=1,12 do r:tick();clock=clock+1 end
 for index=1,10 do assert(backend.items["test:item_"..index]==tostring(index*10),"catalog did not arrive") end
 assert(r.ids.count<=2 and backend.poll_seq==12,"inventory retry starved control traffic")
 amounts[1]=777
-local changed=raw(1);changed.size=-5
+local changed=raw(1);changed.size=-5;changed.hasTag=0;changed.isCraftable=0
 r:on_item_changed(changed)
 r:tick()
 assert(backend.items["test:item_1"]=="777","event delta was treated as an absolute quantity")
+assert(not r.diagnostics.event_identity_unavailable,"OC's numeric NBT flag rejected a valid inventory event")
 for index=1,10 do r:on_item_changed(raw(index)) end
 assert(r.dirty.count<=3 and r.dirty.bytes<=1024,"dirty queue grew without bound")
 me.getCpus=function()

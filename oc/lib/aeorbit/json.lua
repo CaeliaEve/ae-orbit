@@ -3,8 +3,32 @@ local array_mt = {__json_array = true}
 M.null = setmetatable({}, {__json_null = true})
 function M.array(value) return setmetatable(value or {}, array_mt) end
 local escapes = {['"']='\\"', ['\\']='\\\\', ['\n']='\\n', ['\r']='\\r', ['\t']='\\t', ['\b']='\\b', ['\f']='\\f'}
-local function quote(value)
-  return '"' .. value:gsub('[%z\1-\31\\"]', function(c) return escapes[c] or string.format("\\u%04x", c:byte()) end) .. '"'
+local function escape(value)
+  if escapes[value] then return escapes[value] end
+  local first,length=value:byte(),#value
+  if length==1 and first<32 then return string.format("\\u%04x",first) end
+  local code,minimum
+  if length==2 and first>=0xc2 and first<=0xdf then code=first-0xc0;minimum=0x80
+  elseif length==3 and first>=0xe0 and first<=0xef then code=first-0xe0;minimum=0x800
+  elseif length==4 and first>=0xf0 and first<=0xf4 then code=first-0xf0;minimum=0x10000
+  else error("json: invalid UTF-8") end
+  for index=2,length do code=code*64+value:byte(index)-0x80 end
+  assert(code>=minimum and code<=0x10ffff and (code<0xd800 or code>0xdfff),"json: invalid UTF-8")
+  if code<0x10000 then return string.format("\\u%04x",code) end
+  code=code-0x10000
+  return string.format("\\u%04x\\u%04x",0xd800+math.floor(code/1024),0xdc00+code%1024)
+end
+local function quote(value,limit)
+  local bytes=#value+2
+  assert(bytes<=limit,"json: encoding budget exceeded")
+  -- OC's HTTP writer uses the JVM default charset. Escape only special/Unicode
+  -- characters; ASCII IDs and base64 data stay on string.gsub's fast path.
+  return '"' .. value:gsub('[%z\1-\31\\"\128-\255][\128-\191]*',function(c)
+    local encoded=escape(c)
+    bytes=bytes+#encoded-#c
+    assert(bytes<=limit,"json: encoding budget exceeded")
+    return encoded
+  end) .. '"'
 end
 function M.encode(value, limit)
   limit = limit or 131072
@@ -21,7 +45,7 @@ function M.encode(value, limit)
     elseif type(v) == "boolean" then add(v and "true" or "false")
     elseif type(v) == "string" then
       assert(#v <= limit, "json: string budget exceeded")
-      add(quote(v))
+      add(quote(v,limit-bytes))
     elseif type(v) == "number" then
       assert(v == v and math.abs(v) ~= math.huge, "json: non-finite number")
       if math.type and math.type(v) == "integer" then add(string.format("%d", v))
@@ -41,7 +65,7 @@ function M.encode(value, limit)
         local keys = {}
         for key in pairs(v) do assert(type(key)=="string", "json: object keys must be strings"); keys[#keys+1]=key end
         table.sort(keys); add("{")
-        for index,key in ipairs(keys) do if index>1 then add(",") end; add(quote(key)); add(":"); encode(v[key], depth+1) end
+        for index,key in ipairs(keys) do if index>1 then add(",") end; add(quote(key,limit-bytes)); add(":"); encode(v[key], depth+1) end
         add("}")
       end
       seen[v] = nil

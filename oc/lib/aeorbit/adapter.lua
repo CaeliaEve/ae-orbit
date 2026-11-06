@@ -22,7 +22,10 @@ function M.new(me,config)
     assert(type(raw)=="table" and type(raw.name)=="string" and #raw.name>0 and #raw.name<=256,"adapter: invalid registry name")
     local damage=raw.damage or 0
     assert(type(damage)=="number" and damage>=0 and damage%1==0 and damage<=2147483647,"adapter: invalid metadata")
-    assert(not raw.hasTag or (type(raw.tag)=="string" and #raw.tag>0),"adapter: NBT identity unavailable")
+    -- OC serializes event booleans through NBT, returning numeric 0/1 in Lua.
+    local flag=raw.hasTag
+    assert(flag==nil or type(flag)=="boolean" or flag==0 or flag==1,"adapter: invalid NBT flag")
+    assert((flag~=true and flag~=1) or (type(raw.tag)=="string" and #raw.tag>0),"adapter: NBT identity unavailable")
     assert(raw.tag==nil or type(raw.tag)=="string","adapter: unsupported NBT representation")
     local tag=raw.tag or ""
     assert(#tag<=self.identity_bytes,"adapter: NBT identity exceeds budget")
@@ -36,7 +39,7 @@ function M.new(me,config)
   end
   function adapter:descriptor(raw)
     self:key(raw)
-    return {name=raw.name,damage=raw.damage or 0,tag=raw.tag,hasTag=raw.hasTag,label=raw.label}
+    return {name=raw.name,damage=raw.damage or 0,tag=raw.tag,hasTag=raw.hasTag==true or raw.hasTag==1,label=raw.label}
   end
   function adapter:from_definition(definition)
     assert(definition.kind=="item" and definition.exact==true,"adapter: unsupported or ambiguous resource")
