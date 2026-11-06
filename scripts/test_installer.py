@@ -1,8 +1,9 @@
 """Run the real installer in Lua 5.2/5.3/5.4 against a temporary OpenOS disk.
 
 Only the OC component/filesystem boundary is replaced. Downloads, validation,
-file writes, updates and rollback execute the production Lua program.
+file writes, updates, rollback and bridge journal writes execute production Lua.
 """
+import json
 import pathlib
 import tempfile
 import unittest
@@ -62,7 +63,28 @@ class OpenOS:
             local open, load_file = io.open, loadfile
             function io.open(path, mode)
                 if fail_open and path:find(fail_open, 1, true) then return nil, "disk full" end
-                return open(map_path(path), mode)
+                local file, reason = open(map_path(path), mode)
+                if not file then return nil, reason end
+                return setmetatable({}, {__index = function(_, method)
+                    return function(_, ...)
+                        if method == "flush" and fail_flush and path:find(fail_flush, 1, true) then
+                            return nil, "injected flush failure"
+                        end
+                        local result, err = file[method](file, ...)
+                        if method == "close" then
+                            if not result then return result, err end
+                            if fail_close and path:find(fail_close, 1, true) then
+                                if close_error_mode == "throw" then error("injected close failure") end
+                                if close_error_mode == "false" then return false, "injected close failure" end
+                                return nil, "injected close failure"
+                            end
+                            -- GTNH OpenOS buffer.close forwards filesystem.close,
+                            -- whose successful component call returns no values.
+                            if not standard_lua_close then return end
+                        end
+                        return result, err
+                    end
+                end})
             end
             function loadfile(path, mode, env) return load_file(map_path(path), mode, env or _ENV) end
             os.sleep = sleep
@@ -169,6 +191,31 @@ class OpenOS:
         self.write("/etc/ae-orbit.cfg", "return {token='keep-device-token'}\n")
         self.write("/var/lib/ae-orbit/journal.0", "keep execution history exactly")
 
+    def run_bridge(self):
+        """Exercise the real entry point and journal with a bounded runner harness."""
+        for source, destination in DESTINATIONS.items():
+            self.write(destination, self.sources[source])
+        self.write("/etc/ae-orbit.cfg", 'return {me_address="test-me",state_dir="/var/lib/ae-orbit"}\n')
+        self.lua.globals().TEST_ROOT = (ROOT / "oc").as_posix()
+        self.lua.execute('''
+            package.path = TEST_ROOT .. "/lib/?.lua;" .. package.path
+            test_component.proxy = function() return {} end
+            package.loaded.event = {listen = function() end, ignore = function() end}
+            package.loaded["aeorbit.adapter"] = {new = function() return {} end}
+            package.loaded["aeorbit.client"] = {new = function() return {} end}
+            package.loaded["aeorbit.runner"] = {new = function(_, dependencies)
+                return {
+                    session = "test-session", diagnose = function() end,
+                    start = function()
+                        dependencies.journal:save({attempts={},completed={},boot_id="test-boot"})
+                    end,
+                    tick = function() error("test finished", 0) end
+                }
+            end}
+            io.stderr = {write = function(_, text) capture_print(text) end}
+            assert(loadfile("/bin/ae-orbit.lua"))()
+        ''')
+
 
 class InstallerTests(unittest.TestCase):
     runtime = lua52
@@ -191,6 +238,11 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual(self.oc.path("/etc/ae-orbit.cfg").read_text(encoding="utf-8"), self.oc.sources["config.example.lua"])
         self.assertEqual(self.oc.requests.count(API + "main"), 1)
         self.assertEqual(sum(url.endswith("/config.example.lua") for url in self.oc.requests), 1)
+
+    def test_standard_lua_close_return_is_also_supported(self):
+        self.oc.lua.globals().standard_lua_close = True
+        self.oc.install()
+        self.assertInstalled()
 
     def test_installs_without_collectgarbage_in_the_openos_sandbox(self):
         self.oc.lua.globals().collectgarbage = None
@@ -304,6 +356,54 @@ class InstallerTests(unittest.TestCase):
             self.oc.install("github", COMMIT)
         self.assertEqual(self.oc.snapshot(), before)
         self.assertClosed()
+
+    def test_flush_failure_leaves_the_old_install_intact(self):
+        self.oc.seed_upgrade()
+        before = self.oc.snapshot()
+        self.oc.lua.globals().fail_flush = "/lib/aeorbit/json.lua"
+        with self.assertRaisesRegex(Exception, "flush failure"):
+            self.oc.install("github", COMMIT)
+        self.assertEqual(self.oc.snapshot(), before)
+        self.assertClosed()
+
+    def test_close_failure_leaves_the_old_install_intact(self):
+        self.oc.seed_upgrade()
+        before = self.oc.snapshot()
+        self.oc.lua.globals().fail_close = "/lib/aeorbit/json.lua"
+        for mode in ("nil", "false", "throw"):
+            with self.subTest(mode=mode):
+                self.oc.lua.globals().close_error_mode = mode
+                with self.assertRaisesRegex(Exception, "close failure"):
+                    self.oc.install("github", COMMIT)
+                self.assertEqual(self.oc.snapshot(), before)
+                self.assertClosed()
+
+    def test_initial_config_copy_close_failure_is_not_ignored(self):
+        self.oc.lua.globals().fail_close = "/etc/ae-orbit.cfg.ae-orbit-new"
+        with self.assertRaisesRegex(Exception, "close failure"):
+            self.oc.install("github", COMMIT)
+        self.assertEqual(self.oc.snapshot(), {})
+        self.assertClosed()
+
+    def test_bridge_entrypoint_persists_journal_with_openos_close(self):
+        self.oc.run_bridge()
+        self.assertIn("AE Orbit connected. Session: test-session", self.oc.messages)
+        envelope = json.loads(self.oc.path("/var/lib/ae-orbit/journal.1").read_text(encoding="utf-8"))
+        self.assertEqual(envelope["generation"], "1")
+        self.assertEqual(json.loads(envelope["body"])["boot_id"], "test-boot")
+        self.assertTrue(any("test finished" in message for message in self.oc.messages))
+
+    def test_bridge_entrypoint_stops_if_journal_flush_fails(self):
+        self.oc.lua.globals().fail_flush = "/var/lib/ae-orbit/journal.1"
+        self.oc.run_bridge()
+        self.assertFalse(any("AE Orbit connected." in message for message in self.oc.messages))
+        self.assertTrue(any("journal: write failed" in message for message in self.oc.messages))
+
+    def test_bridge_entrypoint_stops_if_journal_close_fails(self):
+        self.oc.lua.globals().fail_close = "/var/lib/ae-orbit/journal.1"
+        self.oc.run_bridge()
+        self.assertFalse(any("AE Orbit connected." in message for message in self.oc.messages))
+        self.assertTrue(any("journal: write failed" in message for message in self.oc.messages))
 
     def test_replacement_failure_rolls_back_every_changed_file(self):
         self.oc.seed_upgrade()

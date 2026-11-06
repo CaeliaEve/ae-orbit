@@ -42,6 +42,12 @@ local function exists(path)
   return filesystem.exists(path) or filesystem.isLink(path)
 end
 
+local function close_file(file)
+  -- OpenOS returns no values on a successful close. Flush writes separately.
+  local closed, reason = file:close()
+  assert(closed ~= false and reason == nil, reason or "File close failed")
+end
+
 local function status_error(code, label, metadata)
   if metadata and (code == 403 or code == 429) then
     error("GitHub HTTP " .. code .. ": API access denied or rate limited. Retry later, or use " ..
@@ -107,7 +113,7 @@ local function download(url, destination, budget, metadata)
     assert(total > 0, "Empty download: " .. url)
     assert(not expected or total == expected, "Incomplete download: Content-Length mismatch")
     if file then
-      assert(file:flush()); assert(file:close()); file = nil
+      assert(file:flush()); close_file(file); file = nil
       assert(loadfile(destination, "t"), "Downloaded file is not valid Lua: " .. url)
     else
       return table.concat(parts)
@@ -129,8 +135,8 @@ local function copy(source_path, destination)
       if not chunk then assert(not err, err); break end
       assert(output:write(chunk))
     end
-    assert(output:flush()); assert(output:close()); output = nil
-    assert(input:close()); input = nil
+    assert(output:flush()); close_file(output); output = nil
+    close_file(input); input = nil
   end)
   if input then pcall(input.close, input) end
   if output then pcall(output.close, output) end

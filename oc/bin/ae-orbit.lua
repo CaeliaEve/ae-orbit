@@ -29,7 +29,9 @@ function fs.write(path,text)
   if not ok then file:close();error(err or "write failed") end
   ok,err=file:flush()
   if not ok then file:close();error(err or "flush failed") end
-  assert(file:close())
+  -- OpenOS may return no values when close succeeds; explicit errors still fail.
+  ok,err=file:close()
+  assert(ok~=false and err==nil,err or "close failed")
   return true
 end
 local store=journal.new(fs,state_dir.."/journal",32768)
