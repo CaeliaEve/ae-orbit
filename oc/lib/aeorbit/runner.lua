@@ -163,7 +163,7 @@ function M.new(config,deps)
   function self:_inventory()
     -- Control traffic has already run even when this upload remains pending.
     self:_flush()
-    if deps.free_memory()<self.client.response_bytes*4+4096 then self:diagnose("low_memory");collect_step(32);return end
+    if deps.free_memory()<self.client.response_bytes*4+4096 then self:diagnose("low_memory");collect_step(32);return false end
     local started=deps.now()
     while self.credits>0 or self.carry do
       local limit=math.max(512,math.min(self.client.request_bytes,math.floor(deps.free_memory()/8)))
@@ -193,23 +193,35 @@ function M.new(config,deps)
         for _,entry in ipairs(entries) do entry.encoded=nil end
         self.pending_inventory={body=body,sequence=seq,entries=entries}
         self:_flush()
-      else break end
+      else return false end
       if deps.now()-started>=(config.scan_slice_seconds or 0.05) then break end
     end
-    -- Unused acquisition credit expires at this control cycle; never accumulate a burst.
-    self.credits=0
+    return self.credits>0 or self.carry~=nil
+  end
+  function self:continue_inventory()
+    if self.credits<=0 and not self.carry then return false end
+    local ok,result=pcall(self._inventory,self)
+    if not ok then
+      if not transient(result) then error(result,0) end
+      self:diagnose("inventory_transport_failed")
+      return false
+    end
+    return result==true
   end
   function self:tick()
     assert(self.tracker,"runner: start first")
     self.tracker:pump()
+    -- Grants span processing slices, but expire before the next control cycle.
     self.credits=0
     local control_ok,control_error=pcall(self._control,self)
     if not control_ok and not transient(control_error) then error(control_error,0) end
-    local inventory_ok,inventory_error=pcall(self._inventory,self)
-    if not inventory_ok and not transient(inventory_error) then error(inventory_error,0) end
+    local control_completed_at=deps.now()
+    local inventory_ok,inventory_result=pcall(self._inventory,self)
+    if not inventory_ok and not transient(inventory_result) then error(inventory_result,0) end
     if not control_ok then self:diagnose("control_transport_failed") end
     if not inventory_ok then self:diagnose("inventory_transport_failed") end
-    return {control_ok=control_ok,inventory_ok=inventory_ok}
+    return {control_ok=control_ok,inventory_ok=inventory_ok,control_completed_at=control_completed_at,
+      inventory_work=control_ok and inventory_ok and inventory_result==true}
   end
   return self
 end

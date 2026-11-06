@@ -214,7 +214,8 @@ def main():
             tick_until(finished)
             tick_until(lambda: request("GET", lua_base + "/items?craftable=true")["items"][0]["quantity"] == "74")
             assert globals_.fixture_requests == 1 and "64" in observed_output
-            checks.append(f"Lua {version}: real HTTP, stock 10+64=74, exact int64, CPU output, one craft invocation")
+            assert globals_.fixture_continuations > 0, "real HTTP did not exercise inventory continuation"
+            checks.append(f"Lua {version}: real HTTP with continued slices, stock 10+64=74, exact int64, CPU output, one craft invocation")
             print("PASS " + checks[-1], flush=True)
 
         stop(backend)

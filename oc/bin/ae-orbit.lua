@@ -65,12 +65,19 @@ local function run()
   while true do
     local status=bridge:tick()
     if status.control_ok then backoff=1 else backoff=math.min(backoff*2,30) end
+    -- Reuse the remaining grant in bounded slices until the next control poll.
+    -- Anchor the delay after control completes so retries retain their backoff.
+    local next_poll=status.control_completed_at+math.max(bridge.poll_delay,backoff)*(1+math.random()*0.2)
+    local more=status.inventory_work
+    while more and computer.uptime()<next_poll do
+      more=bridge:continue_inventory()
+      if more then os.sleep(0) end
+    end
     if computer.uptime()>=next_status then
       print(string.format("rows=%d cache=%d dirty=%d free=%d",bridge.uploaded,bridge.ids.count,bridge.dirty.count,computer.freeMemory()))
       next_status=computer.uptime()+60
     end
-    -- Jitter keeps bridges in the same server group from polling in lockstep.
-    os.sleep(math.max(bridge.poll_delay,backoff)*(1+math.random()*0.2))
+    os.sleep(math.max(0,next_poll-computer.uptime()))
   end
 end
 local ok,err=xpcall(run,function(value) return value end)

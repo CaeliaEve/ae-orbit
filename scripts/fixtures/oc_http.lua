@@ -7,7 +7,7 @@ local client = require("aeorbit.client")
 local journal = require("aeorbit.journal")
 local runner = require("aeorbit.runner")
 
-fixture_stock, fixture_requests = 10, 0
+fixture_stock, fixture_requests, fixture_continuations = 10, 0, 0
 local job
 local bridge
 local function raw(index)
@@ -86,7 +86,8 @@ end
 bridge=runner.new({
   source="simulator",max_batch_bytes=2048,max_response_bytes=4096,
   cache_entries=2,dirty_entries=2,cache_bytes=1024,dirty_bytes=1024,
-  scan_interval=60,cpu_interval=0,scan_slice_seconds=0.05
+  -- One read per slice ensures the real HTTP checks exercise continuation.
+  scan_interval=60,cpu_interval=0,scan_slice_seconds=0
 },{
   adapter=adapter.new(proxy.new(me)),
   client=client.new(proxy.new(internet),{url=FIXTURE_URL,token=FIXTURE_TOKEN,response_bytes=4096,request_bytes=2048,timeout=5},
@@ -95,4 +96,14 @@ bridge=runner.new({
   now=fixture_now,free_memory=function() return 131072 end,yield=function() end
 })
 bridge:start()
-function fixture_tick() return bridge:tick() end
+function fixture_tick()
+  local status=bridge:tick()
+  local more,slices=status.inventory_work,0
+  while more do
+    slices=slices+1
+    assert(slices<=64,"inventory continuation did not stop at its budget")
+    fixture_continuations=fixture_continuations+1
+    more=bridge:continue_inventory()
+  end
+  return status
+end

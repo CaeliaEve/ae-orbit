@@ -5,7 +5,7 @@ local json = require("aeorbit.json")
 
 local function fixture(credits, read_seconds)
   local clock=0
-  local observed={items={},polls=0,scans=0,completed=0,lookups=0,reads=0}
+  local observed={items={},polls=0,scans=0,completed=0,lookups=0,reads=0,grant=credits,memory=131072}
   local function raw(name)
     return {name=name,damage=0,label="名称 "..name,hasTag=false,size=42,isCraftable=false}
   end
@@ -37,9 +37,17 @@ local function fixture(credits, read_seconds)
     local request=json.decode(body)
     if path=="/bridge/v1/poll" then
       observed.polls=observed.polls+1
-      return {ack=request.sequence,commands=json.array({}),verify=json.array({}),scan_budget=credits,poll_millis=1000}
+      return {ack=request.sequence,commands=json.array({}),verify=json.array({}),scan_budget=observed.grant,poll_millis=1000}
     end
     assert(path=="/bridge/v1/inventory")
+    if observed.fail_inventory then
+      local failure=observed.fail_inventory;observed.fail_inventory=nil;observed.failed_body=body
+      error(failure)
+    end
+    if observed.failed_body then
+      assert(body==observed.failed_body,"inventory retry changed the pending batch")
+      observed.failed_body=nil;observed.retried=true
+    end
     local bindings=json.array({})
     for index,update in ipairs(request.updates) do
       local id=update.id
@@ -59,7 +67,7 @@ local function fixture(credits, read_seconds)
   local bridge=runner.new({cache_entries=4,cache_bytes=2048,dirty_entries=8,dirty_bytes=4096,
     max_batch_bytes=2048,max_response_bytes=4096,scan_slice_seconds=0.05,scan_interval=60},
     {adapter=adapter.new(me),client=client,journal=log,now=function() return clock end,
-      free_memory=function() return 131072 end,yield=function() end})
+      free_memory=function() return observed.memory end,yield=function() end})
   bridge:start()
   local function tick()
     -- Keep the event queue nonempty, including when only one component read
@@ -71,7 +79,7 @@ local function fixture(credits, read_seconds)
     clock=clock+1;bridge:tick()
     assert(bridge.dirty.count<=8 and bridge.dirty.bytes<=4096,"event memory grew without bound")
   end
-  return observed,tick
+  return observed,tick,bridge
 end
 
 -- Both a small server grant and OC callbacks that consume the wall-clock slice
@@ -88,3 +96,40 @@ end
 local observed,tick=fixture(0,0)
 for _=1,3 do tick() end
 assert(observed.scans==0 and observed.lookups==0 and observed.polls==3,"acquisition bypassed the server budget")
+
+-- A slow OC read ends a processing slice, but the remaining server grant is
+-- still useful before the next control poll. Continuing must not obtain more
+-- credit or turn the bounded slices into one long blocking acquisition.
+local observed,_,bridge=fixture(6,0.06)
+local status=bridge:tick()
+assert(observed.reads==1,"a processing slice ignored its time budget")
+for _=1,8 do
+  local before=observed.reads
+  if bridge.continue_inventory then bridge:continue_inventory() end
+  assert(observed.reads-before<=1,"continued acquisition ignored its processing slice")
+end
+assert(observed.reads==6 and observed.polls==1,"granted reads were discarded between control polls")
+assert(observed.items["test:catalog_6"]=="42","continued acquisition did not reach the backend")
+assert(status.inventory_work,"the runner did not advertise remaining inventory work")
+
+local observed,_,bridge=fixture(6,0.06)
+bridge:tick();observed.grant=0
+local status=bridge:tick()
+assert(not status.inventory_work and not bridge:continue_inventory(),"old credit survived the next control cycle")
+assert(observed.reads==1 and observed.polls==2,"expired credit triggered another component read")
+
+local observed,_,bridge=fixture(6,0.06)
+bridge:tick();observed.memory=8192
+assert(not bridge:continue_inventory(),"low memory kept acquisition scheduled")
+assert(observed.reads==1,"continued acquisition ignored the memory reserve")
+
+local observed,_,bridge=fixture(6,0.06)
+bridge:tick();observed.fail_inventory={code="transport_failed",fatal=false}
+assert(not bridge:continue_inventory(),"transport failure kept acquisition scheduled")
+assert(observed.failed_body and bridge.diagnostics.inventory_transport_failed=="1")
+bridge:tick()
+assert(observed.retried and observed.polls==2,"inventory retry bypassed control traffic")
+
+local observed,_,bridge=fixture(6,0.06)
+bridge:tick();observed.fail_inventory={code="invalid_inventory_confirmation",fatal=true}
+assert(not pcall(bridge.continue_inventory,bridge),"continued acquisition swallowed a fatal protocol failure")
