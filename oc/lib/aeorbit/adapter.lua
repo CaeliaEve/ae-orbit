@@ -50,9 +50,13 @@ function M.new(me,config)
   function adapter:read(raw)
     local detail=self:descriptor(raw)
     local value=me.getItemInNetwork(detail)
-    if value==nil then detail.size=0;detail.isCraftable=false;return detail end
-    assert(self:key(value)==self:key(detail),"adapter: exact lookup returned another item")
-    return value
+    if value~=nil then
+      assert(self:key(value)==self:key(detail),"adapter: exact lookup returned another item")
+      detail.size=value.size;detail.label=value.label or detail.label
+    else detail.size=0 end
+    -- AE's exact stock lookup does not include its crafting inventory. Even a
+    -- returned false (or no stored stack) says nothing about available recipes.
+    return detail
   end
   function adapter:iterator()
     local iterator=me.allItems()
@@ -63,18 +67,40 @@ function M.new(me,config)
     if type(raw.size)=="string" then return quantity.validate(raw.size) end
     return quantity.from_number(raw.size)
   end
+  function adapter:_recipe(detail)
+    local available,craftable=pcall(me.getCraftable,detail,"item")
+    if not available then return nil,"recipe lookup failed" end
+    if craftable==nil then
+      if not M.has_method(me,"getCraftables") then return nil,"recipe lookup unavailable" end
+      -- Filter inside OC before results enter Lua; never request the full
+      -- recipe array. The native method may still walk the AE storage list.
+      local filter={name=detail.name,damage=detail.damage,hasTag=detail.hasTag,tag=detail.tag}
+      local ok,recipes=pcall(me.getCraftables,filter)
+      if not ok or type(recipes)~="table" then return nil,"recipe lookup failed" end
+      if #recipes==0 then return nil end
+      if #recipes~=1 then return nil,"recipe lookup is ambiguous" end
+      craftable=recipes[1]
+    end
+    local matches,stack=pcall(function() return craftable.getStack() end)
+    if not matches then return nil,"recipe identity could not be verified" end
+    local identity_ok,key=pcall(self.key,self,stack)
+    if not identity_ok or key~=self:key(detail) then return nil,"recipe output identity differs" end
+    return craftable
+  end
+  function adapter:recipe_status(raw)
+    local recipe,reason=self:_recipe(self:descriptor(raw))
+    assert(reason==nil,reason)
+    return recipe~=nil
+  end
   function adapter:craft(command)
     local ok,detail=pcall(self.from_definition,self,command.item)
     if not ok then return nil,"item identity unavailable",false end
     local parsed,amount=pcall(quantity.to_number,command.quantity)
     if not parsed or amount<1 then return nil,"quantity is not exactly representable",false end
-    local available,craftable=pcall(me.getCraftable,detail,"item")
-    if not available or not craftable then return nil,"recipe is unavailable",false end
-    local matches,stack=pcall(craftable.getStack)
-    if not matches then return nil,"recipe identity could not be verified",false end
-    local identity_ok,key=pcall(self.key,self,stack)
-    if not identity_ok or key~=self:key(detail) then return nil,"recipe output identity differs",false end
-    local submitted,handle=pcall(craftable.request,amount)
+    local available,craftable,reason=pcall(self._recipe,self,detail)
+    if not available then return nil,"recipe lookup failed",false end
+    if not craftable then return nil,reason or "recipe is unavailable",false end
+    local submitted,handle=pcall(function() return craftable.request(amount) end)
     if not submitted or not handle then return nil,"request returned no reliable tracking handle",true end
     return handle,nil,true
   end

@@ -12,7 +12,8 @@ func stone() *protocol.Definition {
 	return &protocol.Definition{Kind: "item", Name: "minecraft:stone", Label: "Stone", Exact: true}
 }
 func batch(session string, seq, observation, quantity protocol.Quantity) protocol.InventoryBatch {
-	return protocol.InventoryBatch{SessionID: session, Sequence: seq, Updates: []protocol.Update{{Item: stone(), Quantity: quantity, Observation: observation, Craftable: true}}}
+	craftable := true
+	return protocol.InventoryBatch{SessionID: session, Sequence: seq, Updates: []protocol.Update{{Item: stone(), Quantity: quantity, Observation: observation, Craftable: &craftable}}}
 }
 
 func TestInventoryRetryAndPrecision(t *testing.T) {
@@ -51,7 +52,7 @@ func TestInventoryOrderingAndRollback(t *testing.T) {
 	s, admin, n, token := fixture(t)
 	d, w := hello(t, s, token, "boot-1")
 	b := batch(w.SessionID, 1, 10, 45)
-	b.Updates = append(b.Updates, protocol.Update{Item: stone(), Quantity: 50, Observation: 11, Craftable: true})
+	b.Updates = append(b.Updates, protocol.Update{Item: stone(), Quantity: 50, Observation: 11, Craftable: b.Updates[0].Craftable})
 	a, err := s.Ingest(ctx, d, b)
 	if err != nil {
 		t.Fatal(err)

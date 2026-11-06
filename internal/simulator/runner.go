@@ -199,7 +199,8 @@ func (r *Runner) prepare(count int) (int, error) {
 			index = r.cursor
 		}
 		r.observation++
-		u := protocol.Update{Quantity: protocol.Quantity(1000000 + int64(index) + r.stats.Cycles), Observation: r.observation, Craftable: index%3 == 0}
+		craftable := index%3 == 0
+		u := protocol.Update{Quantity: protocol.Quantity(1000000 + int64(index) + r.stats.Cycles), Observation: r.observation, Craftable: &craftable}
 		if e := r.cache[index]; e != nil {
 			u.ID = e.Value.(cachedID).id
 			r.lru.MoveToFront(e)

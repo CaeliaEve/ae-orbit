@@ -17,11 +17,12 @@ type definitionRow struct {
 	protocol.Definition
 }
 type inventoryRow struct {
-	ID          protocol.Quantity `json:"id"`
-	Quantity    protocol.Quantity `json:"quantity"`
-	Observation protocol.Quantity `json:"observation"`
-	Craftable   bool              `json:"craftable"`
-	Label       *string           `json:"label"`
+	ID                   protocol.Quantity `json:"id"`
+	Quantity             protocol.Quantity `json:"quantity"`
+	Observation          protocol.Quantity `json:"observation"`
+	Craftable            *bool             `json:"craftable"`
+	CraftableObservation protocol.Quantity `json:"craftable_observation"`
+	Label                *string           `json:"label"`
 }
 
 func digest(value any) ([32]byte, error) {
@@ -76,6 +77,9 @@ func (s *Store) Ingest(ctx context.Context, d Device, b protocol.InventoryBatch)
 		merged := map[protocol.Quantity]inventoryRow{}
 		for i, u := range b.Updates {
 			row := inventoryRow{ID: ids[i], Quantity: u.Quantity, Observation: u.Observation, Craftable: u.Craftable}
+			if u.Craftable != nil {
+				row.CraftableObservation = u.Observation
+			}
 			if u.Item != nil {
 				label := u.Item.Label
 				if label == "" {
@@ -84,12 +88,25 @@ func (s *Store) Ingest(ctx context.Context, d Device, b protocol.InventoryBatch)
 				row.Label = &label
 			}
 			previous, exists := merged[row.ID]
-			if exists && previous.Observation == row.Observation && (previous.Quantity != row.Quantity || previous.Craftable != row.Craftable) {
-				return ErrConflict
+			if exists {
+				if previous.Observation == row.Observation && previous.Quantity != row.Quantity {
+					return ErrConflict
+				}
+				if previous.CraftableObservation == row.CraftableObservation && previous.Craftable != nil && row.Craftable != nil && *previous.Craftable != *row.Craftable {
+					return ErrConflict
+				}
+				// Counts and recipe flags may be observed independently. Keep the
+				// newest known flag even when a later count has no recipe data.
+				flag, observation := previous.Craftable, previous.CraftableObservation
+				if row.CraftableObservation > observation {
+					flag, observation = row.Craftable, row.CraftableObservation
+				}
+				if row.Observation <= previous.Observation {
+					row = previous
+				}
+				row.Craftable, row.CraftableObservation = flag, observation
 			}
-			if !exists || row.Observation > previous.Observation {
-				merged[row.ID] = row
-			}
+			merged[row.ID] = row
 		}
 		input := make([]inventoryRow, 0, len(merged))
 		for _, row := range merged {
@@ -201,13 +218,20 @@ func (s *Store) resolveDefinitions(ctx context.Context, tx pgx.Tx, networkID str
 // Metadata changes only when the associated observation is accepted. The CTE
 // separates freshness writes from changes that invalidate sorted browser pages.
 const inventoryUpsert = `WITH input AS (
-    SELECT * FROM jsonb_to_recordset($2::jsonb) AS x(id bigint,quantity bigint,observation bigint,craftable boolean,label text)
-), eligible AS MATERIALIZED (
-    SELECT x.*, (i.item_id IS NULL OR i.quantity IS DISTINCT FROM x.quantity OR i.craftable IS DISTINCT FROM x.craftable
-        OR i.session_id IS DISTINCT FROM $3 OR (x.label IS NOT NULL AND d.label IS DISTINCT FROM x.label)) AS changed
+    SELECT * FROM jsonb_to_recordset($2::jsonb)
+    AS x(id bigint,quantity bigint,observation bigint,craftable boolean,craftable_observation bigint,label text)
+), observations AS (
+    SELECT x.id,x.quantity,x.observation,x.label,
+        CASE WHEN x.craftable IS NOT NULL AND (i.item_id IS NULL OR i.session_id<>$3 OR x.craftable_observation>i.observation)
+            THEN x.craftable WHEN i.session_id=$3 THEN i.craftable ELSE false END AS craftable,
+        i.quantity AS previous_quantity,i.craftable AS previous_craftable,i.session_id AS previous_session,d.label AS previous_label
     FROM input x JOIN item_definitions d ON d.network_id=$1 AND d.id=x.id
     LEFT JOIN inventory i ON i.network_id=$1 AND i.item_id=x.id
     WHERE i.item_id IS NULL OR i.session_id<>$3 OR x.observation>i.observation
+), eligible AS MATERIALIZED (
+    SELECT o.*, (previous_quantity IS DISTINCT FROM quantity OR previous_craftable IS DISTINCT FROM craftable
+        OR previous_session IS DISTINCT FROM $3 OR (label IS NOT NULL AND previous_label IS DISTINCT FROM label)) AS changed
+    FROM observations o
 ), written AS (
     INSERT INTO inventory(network_id,item_id,quantity,craftable,session_id,observation,observed_at,next_verify_at)
     SELECT $1,id,quantity,craftable,$3,observation,now(),now()+$4::double precision*interval '1 second' FROM eligible

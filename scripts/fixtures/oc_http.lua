@@ -22,13 +22,21 @@ function me.allItems()
   return proxy.callback(function() index=index+1;if index<=2 then return raw(index) end end)
 end
 function me.getItemInNetwork(detail)
-  if detail.name=="fixture:craftable" then return raw(1) end
+  if detail.name=="fixture:craftable" then
+    local value=raw(1);value.isCraftable=false;return value
+  end
   if detail.name=="fixture:exact" then return raw(2) end
 end
 function me.getItemsInNetwork() error("full-array fallback is forbidden") end
 function me.getCraftable(detail,kind)
   assert(detail.name=="fixture:craftable" and kind=="item")
-  return proxy.new({
+  -- Real AE exact lookups omit its crafting inventory.
+  return nil
+end
+function me.getCraftables(filter)
+  assert(filter.name=="fixture:craftable" and filter.damage==0 and filter.hasTag==false)
+  assert(filter.label==nil and filter.tag==nil and filter.size==nil)
+  return {proxy.new({
     getStack=function() return raw(1) end,
     request=function(amount)
       fixture_requests=fixture_requests+1
@@ -48,7 +56,7 @@ function me.getCraftable(detail,kind)
         end
       })
     end
-  })
+  })}
 end
 function me.getCpus()
   local busy=job~=nil and not job.done

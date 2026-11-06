@@ -93,7 +93,8 @@ func TestHTTPInventoryAndOrderFlow(t *testing.T) {
 	}
 	hello := protocol.Hello{Protocol: 1, BootID: "boot-1", Source: "simulator", MaxResponseBytes: 32768, Capabilities: protocol.Capabilities{Inventory: true, Craft: true, ExactQuantities: true, MaxCraftQuantity: 9223372036854775807, Enumeration: "simulated"}}
 	w := decode[protocol.Welcome](t, send(t, f, "POST", "/bridge/v1/hello", f.device, wire(t, hello)), 200)
-	b := protocol.InventoryBatch{SessionID: w.SessionID, Sequence: 1, Updates: []protocol.Update{{Item: &protocol.Definition{Kind: "item", Name: "minecraft:stone", Label: "石头", NBT: "AQID", Exact: true}, Quantity: 9007199254740993, Observation: 1, Craftable: true}}}
+	craftable := true
+	b := protocol.InventoryBatch{SessionID: w.SessionID, Sequence: 1, Updates: []protocol.Update{{Item: &protocol.Definition{Kind: "item", Name: "minecraft:stone", Label: "石头", NBT: "AQID", Exact: true}, Quantity: 9007199254740993, Observation: 1, Craftable: &craftable}}}
 	ack := decode[protocol.InventoryAck](t, send(t, f, "POST", "/bridge/v1/inventory", f.device, wire(t, b)), 200)
 	base := "/api/v1/networks/" + f.network.ID
 	page := decode[protocol.ItemPage](t, send(t, f, "GET", base+"/items?limit=1", adminToken, ""), 200)

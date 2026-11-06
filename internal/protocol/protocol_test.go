@@ -60,7 +60,8 @@ func TestItemIdentity(t *testing.T) {
 }
 
 func TestBatchValidation(t *testing.T) {
-	valid := InventoryBatch{SessionID: "session", Sequence: 1, Updates: []Update{{Item: &Definition{Kind: "item", Name: "minecraft:stone", Label: "Stone", Exact: true}, Quantity: 0, Observation: 1, Craftable: true}}}
+	craftable := true
+	valid := InventoryBatch{SessionID: "session", Sequence: 1, Updates: []Update{{Item: &Definition{Kind: "item", Name: "minecraft:stone", Label: "Stone", Exact: true}, Quantity: 0, Observation: 1, Craftable: &craftable}}}
 	if err := valid.Validate(2); err != nil {
 		t.Fatal(err)
 	}
@@ -82,13 +83,14 @@ func TestBatchValidation(t *testing.T) {
 }
 
 // A missing count or craftability flag must not silently overwrite stock with
-// the Go zero value. Explicit zero/false remain authoritative observations.
+// the Go zero value. A null flag is explicit uncertainty; zero/false are known.
 func TestInventoryRequiresExplicitObservationFields(t *testing.T) {
 	for _, raw := range []string{
 		`{"id":"1","observation":"1","craftable":true}`,
 		`{"id":"1","observation":"1","quantity":"0"}`,
 		`{"id":"1","observation":"1","quantity":null,"craftable":false}`,
-		`{"id":"1","observation":"1","quantity":"0","craftable":null}`,
+		`{"id":"1","observation":"1","quantity":"0","craftable":0}`,
+		`{"id":"1","observation":"1","quantity":"0","craftable":"false"}`,
 		`{"id":"1","observation":"1","quantity":"0","craftable":false,"unexpected":1}`,
 	} {
 		var update Update
@@ -108,6 +110,18 @@ func TestInventoryRequiresExplicitObservationFields(t *testing.T) {
 	}
 	if err := batch.Validate(1); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestInventoryAllowsExplicitUnknownCraftability(t *testing.T) {
+	raw := `{"id":"1","observation":"1","quantity":"0","craftable":null}`
+	var update Update
+	if err := json.Unmarshal([]byte(raw), &update); err != nil {
+		t.Fatal("quantity-only observation must preserve unknown craftability", err)
+	}
+	encoded, err := json.Marshal(update)
+	if err != nil || !strings.Contains(string(encoded), `"craftable":null`) {
+		t.Fatalf("unknown craftability became an authoritative false: %s, %v", encoded, err)
 	}
 }
 

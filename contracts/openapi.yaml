@@ -672,7 +672,9 @@ components:
         item: {$ref: '#/components/schemas/Definition'}
         quantity: {$ref: '#/components/schemas/Quantity'}
         observation: {$ref: '#/components/schemas/PositiveQuantity'}
-        craftable: {type: boolean}
+        craftable:
+          type: [boolean, 'null']
+          description: Null observes quantity only and preserves the current session's last confirmed recipe flag.
     InventoryBatch:
       type: object
       additionalProperties: false

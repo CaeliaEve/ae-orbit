@@ -89,26 +89,30 @@ type Update struct {
 	Item        *Definition `json:"item,omitempty"`
 	Quantity    Quantity    `json:"quantity"`
 	Observation Quantity    `json:"observation"`
-	Craftable   bool        `json:"craftable"`
+	Craftable   *bool       `json:"craftable"`
 }
 
 func (u *Update) UnmarshalJSON(data []byte) error {
 	var wire struct {
-		ID          Quantity    `json:"id,omitempty"`
-		Item        *Definition `json:"item,omitempty"`
-		Quantity    *Quantity   `json:"quantity"`
-		Observation Quantity    `json:"observation"`
-		Craftable   *bool       `json:"craftable"`
+		ID          Quantity        `json:"id,omitempty"`
+		Item        *Definition     `json:"item,omitempty"`
+		Quantity    *Quantity       `json:"quantity"`
+		Observation Quantity        `json:"observation"`
+		Craftable   json.RawMessage `json:"craftable"`
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&wire); err != nil {
 		return err
 	}
-	if wire.Quantity == nil || wire.Craftable == nil {
+	if wire.Quantity == nil || len(wire.Craftable) == 0 {
 		return fmt.Errorf("inventory quantity and craftable must be explicit")
 	}
-	*u = Update{ID: wire.ID, Item: wire.Item, Quantity: *wire.Quantity, Observation: wire.Observation, Craftable: *wire.Craftable}
+	var craftable *bool
+	if err := json.Unmarshal(wire.Craftable, &craftable); err != nil {
+		return err
+	}
+	*u = Update{ID: wire.ID, Item: wire.Item, Quantity: *wire.Quantity, Observation: wire.Observation, Craftable: craftable}
 	return nil
 }
 

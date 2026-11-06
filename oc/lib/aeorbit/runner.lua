@@ -20,7 +20,7 @@ function M.new(config,deps)
   local self={config=config,deps=deps,client=deps.client,adapter=deps.adapter,diagnostics={},
     ids=cache.new(config.cache_entries or 256,id_bytes),dirty=cache.new(dirty_entries,dirty_bytes),
     dirty_bytes=dirty_bytes,dirty_entries=dirty_entries,inventory_seq="0",poll_seq="0",observation="0",
-    credits=0,next_scan=0,next_cpu=0,poll_delay=1,uploaded=0}
+    credits=0,next_scan=0,next_cpu=0,next_recipe_check=0,poll_delay=1,uploaded=0}
   function self:diagnose(code)
     if not self.diagnostics[code] then
       local count=0;for _ in pairs(self.diagnostics) do count=count+1 end
@@ -53,10 +53,12 @@ function M.new(config,deps)
     self.tracker=tracker.new(self.adapter,deps.journal,16)
     self.poll_delay=(w.limits.poll_millis or 1000)/1000
   end
-  function self:on_item_changed(raw)
+  function self:on_item_changed(raw,verify_craftable)
     local ok,descriptor=pcall(self.adapter.descriptor,self.adapter,raw)
     if not ok then self:diagnose("event_identity_unavailable");return end
     local key=self.adapter:key(descriptor)
+    local previous=self.dirty:get(key)
+    descriptor.verify_craftable=verify_craftable==true or (previous and previous.verify_craftable) or nil
     local cost=#key*2+#(descriptor.label or "")+256
     if not self.dirty.entries[key] and (self.dirty.count>=self.dirty_entries or self.dirty.bytes+cost>self.dirty_bytes) then self:diagnose("dirty_queue_evicted") end
     if not self.dirty:put(key,descriptor,cost) then self:diagnose("dirty_entry_too_large") end
@@ -103,7 +105,7 @@ function M.new(config,deps)
         quantity.validate(verification.id)
         local key=self.adapter:key(raw)
         self.ids:put(key,{id=verification.id,label=raw.label},#key+#verification.id+#(raw.label or "")+160)
-        self:on_item_changed(raw)
+        self:on_item_changed(raw,verification.craftable)
       else self:diagnose("verification_identity_unavailable") end
     end
     self.poll_seq=ack.ack;self.pending_poll=nil;self.credits=ack.scan_budget;self.poll_delay=ack.poll_millis/1000
@@ -117,7 +119,18 @@ function M.new(config,deps)
       self.scan_turn=true
       local ok,value=pcall(self.adapter.read,self.adapter,dirty)
       if not ok then self:diagnose("exact_lookup_failed");return nil,1 end
-      return value,1
+      local cost=1
+      if dirty.verify_craftable and (value.size==0 or value.size=="0") then
+        -- Removed zero-stock recipes disappear from enumeration. Recheck them
+        -- explicitly, reserving four calls and at most one probe per 5 seconds.
+        if self.credits>=4 and deps.now()>=self.next_recipe_check then
+          self.next_recipe_check=deps.now()+5;cost=4
+          local checked,craftable=pcall(self.adapter.recipe_status,self.adapter,dirty)
+          if checked and type(craftable)=="boolean" then value.isCraftable=craftable
+          else self:diagnose("recipe_lookup_failed") end
+        else self:on_item_changed(dirty,true) end
+      end
+      return value,cost
     end
     self.scan_turn=false
     if not self.iterator then
@@ -138,7 +151,10 @@ function M.new(config,deps)
     local key=self.adapter:key(raw)
     local count=self.adapter:count(raw)
     self.observation=quantity.increment(self.observation)
-    local value={quantity=count,observation=self.observation,craftable=raw.isCraftable==true}
+    local craftable=raw.isCraftable
+    assert(craftable==nil or type(craftable)=="boolean","adapter: invalid recipe observation")
+    if craftable==nil then craftable=json.null end
+    local value={quantity=count,observation=self.observation,craftable=craftable}
     local known=self.ids:get(key)
     if known and known.label==(raw.label or raw.name) then value.id=known.id else value.item=self.adapter:definition(raw) end
     return {key=key,label=raw.label or raw.name,item=value.item~=nil,encoded=json.encode(value,self.client.request_bytes)}
