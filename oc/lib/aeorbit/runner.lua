@@ -193,7 +193,9 @@ function M.new(config,deps)
       if dirty.verify_craftable and (value.size==0 or value.size=="0") then
         -- Removed zero-stock recipes disappear from enumeration. Recheck them
         -- explicitly, reserving four calls and at most one probe per 5 seconds.
-        if self.credits>=4 and deps.now()>=self.next_recipe_check then
+        -- This quantity read may have crossed the cooldown boundary. Leave
+        -- the newly available recipe opportunity to already queued priorities.
+        if self.verifications.count==0 and self.credits>=4 and deps.now()>=self.next_recipe_check then
           self.next_recipe_check=deps.now()+5;cost=4
           local checked,craftable=pcall(self.adapter.recipe_status,self.adapter,dirty)
           if checked and type(craftable)=="boolean" then value.isCraftable=craftable
