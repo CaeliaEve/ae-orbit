@@ -3,10 +3,8 @@ package store
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"strconv"
 	"time"
 
 	"github.com/CaeliaEve/ae-orbit/internal/protocol"
@@ -239,82 +237,6 @@ func (s *Store) assignCommands(ctx context.Context, tx pgx.Tx, networkID, group,
 		return s.event(ctx, tx, networkID, "orders")
 	}
 	return nil
-}
-
-func (s *Store) verifications(ctx context.Context, tx pgx.Tx, networkID string, responseBytes, slots, queueBytes int, ack *protocol.PollAck) error {
-	rows, err := tx.Query(ctx, `WITH due AS (
-        (SELECT r.item_id,r.token,r.next_attempt_at AS due,true AS priority
-         FROM inventory_rechecks r WHERE r.network_id=$1 AND r.next_attempt_at<=now()
-         ORDER BY r.next_attempt_at,r.item_id LIMIT 4)
-        UNION ALL
-        (SELECT i.item_id,'' AS token,i.next_verify_at AS due,false AS priority
-         FROM inventory i WHERE i.network_id=$1 AND i.next_verify_at<=now()
-         AND NOT EXISTS(SELECT 1 FROM inventory_rechecks r WHERE r.network_id=i.network_id AND r.item_id=i.item_id)
-         ORDER BY i.next_verify_at,i.item_id LIMIT $2)
-    ) SELECT d.id,d.kind,d.name,d.damage,d.nbt,d.label,d.exact,i.craftable,due.token
-      FROM due JOIN item_definitions d ON d.network_id=$1 AND d.id=due.item_id
-      JOIN inventory i ON i.network_id=$1 AND i.item_id=due.item_id
-      ORDER BY due.priority DESC,due.due,due.item_id LIMIT 16`, networkID, slots)
-	if err != nil {
-		return err
-	}
-	candidates := []protocol.Verification{}
-	for rows.Next() {
-		var v protocol.Verification
-		if err = rows.Scan(&v.ID, &v.Item.Kind, &v.Item.Name, &v.Item.Damage, &v.Item.NBT, &v.Item.Label, &v.Item.Exact, &v.Craftable, &v.Token); err != nil {
-			rows.Close()
-			return err
-		}
-		candidates = append(candidates, v)
-	}
-	rows.Close()
-	if err = rows.Err(); err != nil {
-		return err
-	}
-	for _, v := range candidates {
-		// The OC FIFO accounts for two identity keys, the display label and a
-		// fixed descriptor allowance. DecodedLen is conservatively high for
-		// padded NBT, so the receiver always has enough room for admitted work.
-		cost := 2*(len(v.Item.Name)+len(strconv.Itoa(v.Item.Damage))+2+base64.StdEncoding.DecodedLen(len(v.Item.NBT))) + len(v.Item.Label) + 256
-		if v.Token == "" && cost > queueBytes {
-			// Rotate an individually large descriptor briefly instead of letting
-			// it monopolize every candidate window or waiting the normal period.
-			if _, err = tx.Exec(ctx, "UPDATE inventory SET next_verify_at=now()+interval '5 seconds' WHERE network_id=$1 AND item_id=$2", networkID, int64(v.ID)); err != nil {
-				return err
-			}
-			continue
-		}
-		ack.Verify = append(ack.Verify, v)
-		encoded, _ := json.Marshal(ack)
-		if len(encoded) > responseBytes {
-			ack.Verify = ack.Verify[:len(ack.Verify)-1]
-			if v.Token == "" {
-				if _, err = tx.Exec(ctx, "UPDATE inventory SET next_verify_at=now()+interval '5 seconds' WHERE network_id=$1 AND item_id=$2", networkID, int64(v.ID)); err != nil {
-					return err
-				}
-				continue
-			}
-		}
-		if v.Token != "" {
-			// Sending (or failing to fit) is not completion. Rotate bounded work
-			// so a small response or an unavailable item cannot block other reads.
-			_, err = tx.Exec(ctx, "UPDATE inventory_rechecks SET next_attempt_at=now()+interval '5 seconds' WHERE network_id=$1 AND item_id=$2", networkID, int64(v.ID))
-		} else {
-			queueBytes -= cost
-			_, err = tx.Exec(ctx, "UPDATE inventory SET next_verify_at=now()+$3::double precision*interval '1 second' WHERE network_id=$1 AND item_id=$2", networkID, int64(v.ID), s.options.RecheckAfter.Seconds())
-		}
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func scheduleRecheck(ctx context.Context, tx pgx.Tx, networkID string, itemID protocol.Quantity) error {
-	_, err := tx.Exec(ctx, `INSERT INTO inventory_rechecks(network_id,item_id,token)
-        SELECT network_id,item_id,$3 FROM inventory WHERE network_id=$1 AND item_id=$2
-        ON CONFLICT(network_id,item_id) DO UPDATE SET token=excluded.token,next_attempt_at=now()`, networkID, int64(itemID), newID())
-	return err
 }
 
 func (s *Store) saveCPUs(ctx context.Context, tx pgx.Tx, networkID string, p protocol.Poll) error {

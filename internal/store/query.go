@@ -124,7 +124,7 @@ func (s *Store) Items(ctx context.Context, userID, networkID string, q protocol.
 		}
 	}
 	limit := param(q.Limit + 1)
-	rows, err := tx.Query(ctx, `SELECT d.id,d.kind,d.name,d.damage,d.label,d.exact,i.quantity,i.craftable,i.observed_at,i.session_id=$2,lower(d.label)
+	rows, err := tx.Query(ctx, `SELECT d.id,d.kind,d.name,d.damage,d.label,d.exact,i.quantity,i.craftable,i.observed_at,i.craftable_observed_at,i.session_id=$2,lower(d.label)
         FROM item_definitions d JOIN inventory i ON i.network_id=d.network_id AND i.item_id=d.id WHERE `+strings.Join(conditions, " AND ")+" ORDER BY "+order+" LIMIT "+limit, args...)
 	if err != nil {
 		return page, err
@@ -133,7 +133,7 @@ func (s *Store) Items(ctx context.Context, userID, networkID string, q protocol.
 	for rows.Next() {
 		var item protocol.Item
 		var name string
-		if err = rows.Scan(&item.ID, &item.Kind, &item.Name, &item.Damage, &item.Label, &item.Exact, &item.Quantity, &item.Craftable, &item.ObservedAt, &item.CurrentSession, &name); err != nil {
+		if err = rows.Scan(&item.ID, &item.Kind, &item.Name, &item.Damage, &item.Label, &item.Exact, &item.Quantity, &item.Craftable, &item.ObservedAt, &item.CraftableObservedAt, &item.CurrentSession, &name); err != nil {
 			rows.Close()
 			return page, err
 		}

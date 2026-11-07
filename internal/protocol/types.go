@@ -137,16 +137,17 @@ type InventoryAck struct {
 }
 
 type Item struct {
-	ID             Quantity  `json:"id"`
-	Kind           string    `json:"kind"`
-	Name           string    `json:"name"`
-	Damage         int       `json:"damage"`
-	Label          string    `json:"label"`
-	Exact          bool      `json:"exact"`
-	Quantity       Quantity  `json:"quantity"`
-	Craftable      bool      `json:"craftable"`
-	ObservedAt     time.Time `json:"observed_at"`
-	CurrentSession bool      `json:"current_session"`
+	ID                  Quantity   `json:"id"`
+	Kind                string     `json:"kind"`
+	Name                string     `json:"name"`
+	Damage              int        `json:"damage"`
+	Label               string     `json:"label"`
+	Exact               bool       `json:"exact"`
+	Quantity            Quantity   `json:"quantity"`
+	Craftable           bool       `json:"craftable"`
+	ObservedAt          time.Time  `json:"observed_at"`
+	CraftableObservedAt *time.Time `json:"craftable_observed_at,omitempty"`
+	CurrentSession      bool       `json:"current_session"`
 }
 
 type ItemPage struct {

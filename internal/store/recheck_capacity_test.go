@@ -36,7 +36,8 @@ func TestRecheckReceiverByteBudgetRotatesLargeDescriptors(t *testing.T) {
 		t.Fatal(err)
 	}
 	bigID := bindings.Bindings[0].ID
-	if _, err = s.Pool().Exec(ctx, `UPDATE inventory SET next_verify_at=CASE WHEN item_id=$2 THEN now()-interval '2 minutes' ELSE now()-interval '1 minute' END WHERE network_id=$1 AND item_id IN (SELECT id FROM item_definitions WHERE network_id=$1 AND name LIKE 'test:byte_%')`, n.ID, int64(bigID)); err != nil {
+	expireInventoryEvidence(t, s, n.ID)
+	if _, err = s.Pool().Exec(ctx, `UPDATE inventory_schedule SET next_verify_at=CASE WHEN item_id=$2 THEN now()-interval '2 minutes' ELSE now()-interval '1 minute' END WHERE network_id=$1 AND item_id IN (SELECT id FROM item_definitions WHERE network_id=$1 AND name LIKE 'test:byte_%')`, n.ID, int64(bigID)); err != nil {
 		t.Fatal(err)
 	}
 	// Each plain descriptor costs 288 bytes; the NBT descriptor costs 888.
@@ -50,11 +51,11 @@ func TestRecheckReceiverByteBudgetRotatesLargeDescriptors(t *testing.T) {
 		}
 	}
 	var shortRetry bool
-	if err = s.Pool().QueryRow(ctx, `SELECT next_verify_at>now() AND next_verify_at<=now()+interval '10 seconds' FROM inventory WHERE network_id=$1 AND item_id=$2`, n.ID, int64(bigID)).Scan(&shortRetry); err != nil || !shortRetry {
+	if err = s.Pool().QueryRow(ctx, `SELECT next_verify_at>now() AND next_verify_at<=now()+interval '10 seconds' FROM inventory_schedule WHERE network_id=$1 AND item_id=$2`, n.ID, int64(bigID)).Scan(&shortRetry); err != nil || !shortRetry {
 		t.Fatal("unadmitted item lost its short retry", err)
 	}
 	// A reduced budget can hold only one of the two plain descriptors.
-	if _, err = s.Pool().Exec(ctx, `UPDATE inventory SET next_verify_at=now()-interval '1 minute' WHERE network_id=$1 AND item_id<>$2 AND item_id IN (SELECT id FROM item_definitions WHERE network_id=$1 AND name LIKE 'test:byte_%')`, n.ID, int64(bigID)); err != nil {
+	if _, err = s.Pool().Exec(ctx, `UPDATE inventory_schedule SET next_verify_at=now()-interval '1 minute' WHERE network_id=$1 AND item_id<>$2 AND item_id IN (SELECT id FROM item_definitions WHERE network_id=$1 AND name LIKE 'test:byte_%')`, n.ID, int64(bigID)); err != nil {
 		t.Fatal(err)
 	}
 	ack, err = s.Poll(ctx, d, capacityPoll(t, w.SessionID, 2, 16, 300))
@@ -74,7 +75,8 @@ func TestRecheckReceiverCapacityKeepsUnsentWorkDue(t *testing.T) {
 	if _, err := s.Ingest(ctx, d, b); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Pool().Exec(ctx, `UPDATE inventory SET next_verify_at=now()-interval '1 minute' WHERE network_id=$1`, n.ID); err != nil {
+	expireInventoryEvidence(t, s, n.ID)
+	if _, err := s.Pool().Exec(ctx, `UPDATE inventory_schedule SET next_verify_at=now()-interval '1 minute' WHERE network_id=$1`, n.ID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.Pool().Exec(ctx, `INSERT INTO inventory_rechecks(network_id,item_id,token) VALUES($1,$2,$3)`, n.ID, int64(priorityID), "0123456789abcdef0123456789abcdef"); err != nil {
@@ -83,7 +85,7 @@ func TestRecheckReceiverCapacityKeepsUnsentWorkDue(t *testing.T) {
 	due := func(want int) {
 		t.Helper()
 		var count int
-		if err := s.Pool().QueryRow(ctx, `SELECT count(*) FROM inventory WHERE network_id=$1 AND item_id<>$2 AND next_verify_at<=now()`, n.ID, int64(priorityID)).Scan(&count); err != nil || count != want {
+		if err := s.Pool().QueryRow(ctx, `SELECT count(*) FROM inventory_schedule WHERE network_id=$1 AND item_id<>$2 AND next_verify_at<=now()`, n.ID, int64(priorityID)).Scan(&count); err != nil || count != want {
 			t.Fatalf("ordinary requests still due = %d, want %d: %v", count, want, err)
 		}
 	}

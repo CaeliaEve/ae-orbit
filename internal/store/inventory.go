@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"sort"
@@ -228,37 +229,5 @@ func (s *Store) resolveDefinitions(ctx context.Context, tx pgx.Tx, networkID str
 	return ids, bindings, nil
 }
 
-// Metadata changes only when the associated observation is accepted. The CTE
-// separates freshness writes from changes that invalidate sorted browser pages.
-const inventoryUpsert = `WITH input AS (
-    SELECT * FROM jsonb_to_recordset($2::jsonb)
-    AS x(id bigint,quantity bigint,observation bigint,craftable boolean,craftable_observation bigint,label text,verification text,verification_observation bigint)
-), observations AS (
-    SELECT x.id,x.quantity,x.observation,x.label,x.verification,x.verification_observation,
-        CASE WHEN x.craftable IS NOT NULL AND (i.item_id IS NULL OR i.session_id<>$3 OR x.craftable_observation>i.observation)
-            THEN x.craftable WHEN i.session_id=$3 THEN i.craftable ELSE false END AS craftable,
-        i.quantity AS previous_quantity,i.craftable AS previous_craftable,i.session_id AS previous_session,
-        i.observation AS previous_observation,d.label AS previous_label
-    FROM input x JOIN item_definitions d ON d.network_id=$1 AND d.id=x.id
-    LEFT JOIN inventory i ON i.network_id=$1 AND i.item_id=x.id
-    WHERE i.item_id IS NULL OR i.session_id<>$3 OR x.observation>i.observation
-), eligible AS MATERIALIZED (
-    SELECT o.*, (previous_quantity IS DISTINCT FROM quantity OR previous_craftable IS DISTINCT FROM craftable
-        OR previous_session IS DISTINCT FROM $3 OR (label IS NOT NULL AND previous_label IS DISTINCT FROM label)) AS changed
-    FROM observations o
-), written AS (
-    INSERT INTO inventory(network_id,item_id,quantity,craftable,session_id,observation,observed_at,next_verify_at)
-    SELECT $1,id,quantity,craftable,$3,observation,now(),now()+$4::double precision*interval '1 second' FROM eligible
-    ON CONFLICT(network_id,item_id) DO UPDATE SET quantity=excluded.quantity,craftable=excluded.craftable,
-        session_id=excluded.session_id,observation=excluded.observation,observed_at=excluded.observed_at,next_verify_at=excluded.next_verify_at
-    RETURNING item_id
-), labels AS (
-    UPDATE item_definitions d SET label=e.label,updated_at=now() FROM eligible e
-    WHERE d.network_id=$1 AND d.id=e.id AND e.label IS NOT NULL AND d.label IS DISTINCT FROM e.label RETURNING d.id
-), confirmed AS (
-    DELETE FROM inventory_rechecks r USING eligible e
-    WHERE r.network_id=$1 AND r.item_id=e.id AND r.token=e.verification AND e.verification_observation>0
-      AND (e.previous_session IS DISTINCT FROM $3 OR e.verification_observation>e.previous_observation)
-    RETURNING r.item_id
-)
-SELECT (SELECT count(*) FROM written),coalesce((SELECT bool_or(changed) FROM eligible),false)`
+//go:embed inventory_write.sql
+var inventoryUpsert string

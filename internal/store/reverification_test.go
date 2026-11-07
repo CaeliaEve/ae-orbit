@@ -188,7 +188,8 @@ func TestPostCraftVerificationBacklogRotatesWithinResponseBudget(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err = s.Pool().Exec(ctx, "UPDATE inventory SET next_verify_at=now()-interval '1 hour' WHERE network_id=$1", n.ID); err != nil {
+	expireInventoryEvidence(t, s, n.ID)
+	if _, err = s.Pool().Exec(ctx, "UPDATE inventory_schedule SET next_verify_at=now()-interval '1 hour' WHERE network_id=$1", n.ID); err != nil {
 		t.Fatal(err)
 	}
 	seen := map[protocol.Quantity]bool{}
@@ -251,6 +252,7 @@ func TestPostCraftVerificationMigrationRecoversUnobservedOutput(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Emulate the old schema in this isolated test database, then upgrade twice.
+	restoreLegacyInventory(t, s)
 	if _, err = s.Pool().Exec(ctx, "DROP TABLE inventory_rechecks; DELETE FROM schema_versions WHERE version='migrations/003_inventory_rechecks.sql'"); err != nil {
 		t.Fatal(err)
 	}

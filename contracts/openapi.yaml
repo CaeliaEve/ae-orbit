@@ -643,7 +643,8 @@ components:
         exact: {type: boolean}
         quantity: {$ref: '#/components/schemas/Quantity'}
         craftable: {type: boolean}
-        observed_at: {type: string, format: date-time}
+        observed_at: {type: string, format: date-time, description: Server acceptance time of the latest quantity observation.}
+        craftable_observed_at: {type: string, format: date-time, description: Server acceptance time of the latest recipe observation. Omitted when unknown; quantity-only readings do not refresh this time.}
         current_session: {type: boolean}
     ItemPage:
       type: object
