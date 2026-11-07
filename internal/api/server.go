@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/CaeliaEve/ae-orbit/internal/store"
+	"github.com/CaeliaEve/ae-orbit/internal/telemetry"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
@@ -28,7 +29,7 @@ type Options struct {
 }
 
 func DefaultOptions() Options {
-	return Options{Origin: "http://127.0.0.1:8080", MaxConcurrent: 64, MaxStreams: 32, RequestTimeout: 15 * time.Second, StreamInterval: time.Second}
+	return Options{Origin: "http://127.0.0.1:8080", MaxConcurrent: 64, MaxStreams: 32, RequestTimeout: 15 * time.Second, StreamInterval: 15 * time.Second}
 }
 
 type Server struct {
@@ -41,6 +42,8 @@ type Server struct {
 	deviceInFlight map[string]int
 	total          atomic.Uint64
 	started        time.Time
+	performance    httpMetrics
+	eventMetrics   streamMetrics
 }
 
 func New(db *store.Store, options Options) *Server {
@@ -54,6 +57,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
 	stream := r.Method == "GET" && len(parts) == 5 && parts[0] == "api" && parts[1] == "v1" && parts[2] == "networks" && parts[4] == "events"
+	ctx, sample := telemetry.WithRequest(r.Context())
+	r = r.WithContext(ctx)
+	measured := &measuredResponse{ResponseWriter: w, sample: sample, started: time.Now(), timing: !stream && strings.HasPrefix(r.URL.Path, "/api/"), head: r.Method == http.MethodHead}
+	w = measured
+	if !stream {
+		defer func() { s.performance.observe(r.Pattern, measured) }()
+	}
 	if stream {
 		select {
 		case s.streams <- struct{}{}:

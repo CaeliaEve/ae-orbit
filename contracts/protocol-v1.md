@@ -201,6 +201,10 @@ done 与库存观察通过独立通道到达；客户端不能看到 done 后自
 
 不足 3 个 Unicode 字符的查询按前缀匹配，较长查询进行子串匹配并使用 trigram 索引；百分号和下划线当作普通字符。
 
+成功的库存列表响应支持 `Accept-Encoding: gzip`，并返回 `Vary: Accept-Encoding`。默认只压缩至少 1024 字节且压缩后确实缩小的正文；客户端显式拒绝 identity 时可压缩小正文。gzip 和 identity 都不可接受时返回 406 encoding_not_acceptable。未协商压缩时保留原 JSON，数量和 ID 的字符串表示不变。该能力不改变 OC 上传/响应编码，也不压缩 SSE 或返回凭据的接口。
+
+普通 Web API 的 `Server-Timing` 包含 `app`（到响应头生成）、`db_query`、`db_acquire`、`db_batch` 和 `db_lock_query`，单位为毫秒。阶段可能重叠：加锁语句属于查询，事务提交也包含在查询中，不能直接相加。它们不包含游戏采集或完整客户端下载时间。
+
 网络 events 端点为 SSE，发送失效元数据：
 
 ~~~text
@@ -212,9 +216,22 @@ data: {"id":"123","network_id":"...","kind":"inventory","revision":"8","created_
 
 首次连接收到 reset。重连带 Last-Event-ID；事件已淘汰、ID 位于未来或待回放超过 128 条时也发送 reset。每网络默认保留 1024 条事件。change.kind 为 inventory、orders、cpus 或 session。
 
-慢消费者不会积累无界发送队列，SSE 在鉴权前受连接数预算控制，运行中定期重查权限。会话到期时关闭连接。当前通过有界数据库轮询读取持久事件。
+慢消费者不会积累无界发送队列，SSE 在鉴权前受连接数预算控制。当前服务进程中的事件事务提交成功后按网络唤醒订阅者，每个订阅者最多积压一个唤醒信号；持久事件不会因信号合并而丢失。先订阅再读取事件，避免建立连接期间的变化被遗漏；回滚事务不通知。
+
+默认每 15 秒补读持久事件并重查权限；收到通知也会重查权限后读取。进程外写入依靠这次周期补偿，因此多后端实例需要另行加入跨进程通知。会话到期和客户端取消直接结束连接；HEAD 只返回响应头，不占用持续订阅。事件仍逐次 flush，不为了压缩积攒。
 
 online 会随时间自然过期，后续前端除处理事件外，还需低频更新网络状态及观察年龄。不要为每条 SSE 通知拉取整个库存。订单的 /events 端点返回 JSON 审计记录，最多 100 条，并非 SSE。
+
+## 管理性能指标
+
+`GET /api/v1/admin/metrics` 保留原有运行时/连接池字段，新增 `http`、`database`、`notifications` 和 `events`。仅管理员可以读取；不记录请求 URL 参数、SQL、令牌、物品标签或网络 ID。
+
+- `http` 按已注册的固定路由模板聚合，未匹配请求统一为 `unmatched`，SSE 长连接不混入普通请求耗时。`duration` 是服务端处理到写出正文的耗时；`database_*` 是每个请求中的相应阶段累计耗时。`database_queries`、`database_acquires`、`database_batches` 记录调用数，即使操作短到计时器读数为零也计数。`response_bytes` 是交给 HTTP writer 的正文字节，`uncompressed_bytes` 在压缩页上记录序列化后的原文大小；均不包含 HTTP/TLS 或重传。`gzip_responses`、`client_errors`、`server_errors` 是响应计数。
+- `database.query` 包含 pgx 查询往返及结果消费；`acquire` 包含获取连接、建连及等待，失败/取消也计数；`batch` 单独记录 SendBatch 整体耗时。`lock_query` 是显式 FOR UPDATE/FOR SHARE 语句的总耗时，包含执行成本，不能等同 PostgreSQL 的纯锁等待，也不涵盖所有隐式写锁。`transaction` / `commit` 记录存储层写事务及其提交。
+- `notifications` 记录当前订阅网络/客户端数、事务发布的网络唤醒次数、已合并信号数。空闲网络不长期占用通知表内存。
+- `events` 记录持久事件读取、唤醒、兜底检查、发送 change/reset 的次数及读取耗时。`event_age` 是事件 created_at 到服务端 flush 的时间，包含事务前段与历史回放，不是纯提交后延迟或游戏到网页延迟。
+
+延迟直方图使用固定的累计上界桶（1、5、10、25、50、100、250、500、1000、5000、15000 毫秒），包含 `count`、`errors`、`total_ms`、`max_ms` 和 `buckets`。超过最后一个桶的样本仍进入总数、总时长和最大值。次数/字节使用十进制字符串，毫秒是数值；这些累计诊断在进程重启后清零，不提供精确分位数。
 
 ## 错误处理
 
@@ -223,6 +240,7 @@ online 会随时间自然过期，后续前端除处理事件外，还需低频�
 | 400 invalid_request / invalid_reference | 修正字段、协议、游标或引用 |
 | 401 unauthorized | 修正失效凭据或身份类型 |
 | 403 forbidden | 权限不足，或 Origin/CSRF 不匹配 |
+| 406 encoding_not_acceptable | 库存查询需允许 gzip 或 identity |
 | 409 sequence_conflict / stale_session | 保留现场，排查重复进程、会话退休或丢失的待确认正文 |
 | 409 conflict | 幂等参数冲突或不允许的状态变化 |
 | 409 view_changed | 从首屏重取 |

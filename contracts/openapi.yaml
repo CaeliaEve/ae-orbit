@@ -243,6 +243,9 @@ paths:
         A changed revision returns 409 view_changed. A service restart invalidates cursor signatures.
         Metadata for display excludes raw NBT; orders use item_id.
         Short queries (under 3 Unicode characters) use prefix matching; longer queries use substring matching.
+        Supports negotiated gzip for successful pages. Normally only bodies of at least 1024 bytes
+        that shrink are compressed; explicitly refusing identity can require gzip for smaller bodies.
+        Returns 406 if neither gzip nor identity is acceptable. OC and SSE encodings are unchanged.
       parameters:
         - {name: q, in: query, schema: {type: string, maxLength: 128}}
         - {name: sort, in: query, schema: {type: string, enum: [name, quantity], default: name}}
@@ -250,7 +253,14 @@ paths:
         - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}
         - {name: cursor, in: query, schema: {type: string, maxLength: 4096}}
       responses:
-        '200': {description: One inventory page, content: {application/json: {schema: {$ref: '#/components/schemas/ItemPage'}}}}
+        '200':
+          description: One inventory page; decimal strings remain exact after decompression.
+          headers:
+            Content-Encoding: {description: Present when gzip is selected., schema: {type: string, enum: [gzip]}}
+            Vary: {schema: {type: string, example: Accept-Encoding}}
+            Server-Timing: {description: Server time to headers and database phase timings in milliseconds; phases can overlap., schema: {type: string}}
+          content: {application/json: {schema: {$ref: '#/components/schemas/ItemPage'}}}
+        '406': {$ref: '#/components/responses/Error'}
         default: {$ref: '#/components/responses/Error'}
   /api/v1/networks/{network}/inventory-stats:
     parameters: [{$ref: '#/components/parameters/NetworkID'}]
@@ -364,6 +374,10 @@ paths:
         Resume with Last-Event-ID; missing history, a future ID, or more than 128 replay events sends reset.
         change data is NetworkEvent; reset data is {network_id,reason:"refresh_view"}.
         Heartbeat comments are sent every ~15s. Permission is rechecked while connected.
+        In-process commits wake subscribers immediately; durable events remain the replay source.
+        Each subscriber holds at most one pending wakeup. A 15s fallback discovers external writes
+        and rechecks permissions. Session expiry and cancellation close the stream independently.
+        SSE is not compressed. HEAD returns headers without opening a persistent subscription.
       parameters:
         - {name: Last-Event-ID, in: header, schema: {$ref: '#/components/schemas/Quantity'}}
       responses:
@@ -373,7 +387,12 @@ paths:
     get:
       operationId: metrics
       tags: [Health]
-      description: Admin only. Runtime and database-pool diagnostics, not a public Prometheus endpoint.
+      description: |
+        Admin only. Bounded runtime, HTTP, database and event diagnostics; not a public Prometheus endpoint.
+        HTTP labels are registered route templates; unmatched URLs share one label. SSE lifetimes are excluded.
+        Database acquisition includes connection establishment and canceled waits. lock_query measures entire
+        explicit locking statements, not pure lock wait. transaction and commit cover store write transactions.
+        Timing phases can overlap. Counters reset on restart. No SQL, credentials or resource IDs are retained.
       responses:
         '200':
           description: Runtime counters
@@ -392,6 +411,38 @@ paths:
                   database_connections: {type: integer}
                   database_acquired: {type: integer}
                   database_acquire_wait_ms: {type: integer}
+                  database_acquires: {$ref: '#/components/schemas/Counter'}
+                  database_empty_acquires: {$ref: '#/components/schemas/Counter'}
+                  database_canceled_acquires: {$ref: '#/components/schemas/Counter'}
+                  http: {type: array, items: {$ref: '#/components/schemas/HTTPPerformance'}}
+                  database:
+                    type: object
+                    properties:
+                      query: {$ref: '#/components/schemas/DurationMetric'}
+                      acquire: {$ref: '#/components/schemas/DurationMetric'}
+                      batch: {$ref: '#/components/schemas/DurationMetric'}
+                      lock_query: {$ref: '#/components/schemas/DurationMetric'}
+                      transaction: {$ref: '#/components/schemas/DurationMetric'}
+                      commit: {$ref: '#/components/schemas/DurationMetric'}
+                  notifications:
+                    type: object
+                    properties:
+                      networks: {type: integer, minimum: 0}
+                      subscribers: {type: integer, minimum: 0}
+                      published: {$ref: '#/components/schemas/Counter'}
+                      coalesced: {$ref: '#/components/schemas/Counter'}
+                  events:
+                    type: object
+                    properties:
+                      reads: {$ref: '#/components/schemas/Counter'}
+                      wakeups: {$ref: '#/components/schemas/Counter'}
+                      fallback_checks: {$ref: '#/components/schemas/Counter'}
+                      delivered: {$ref: '#/components/schemas/Counter'}
+                      resets: {$ref: '#/components/schemas/Counter'}
+                      read_duration: {$ref: '#/components/schemas/DurationMetric'}
+                      event_age:
+                        description: Event created_at to server flush, including historical replay and pre-commit time; not game-to-browser latency.
+                        allOf: [{$ref: '#/components/schemas/DurationMetric'}]
         default: {$ref: '#/components/responses/Error'}
   /bridge/v1/boot-id:
     post:
@@ -480,6 +531,45 @@ components:
                 required: [code, message]
                 properties: {code: {type: string}, message: {type: string}}
   schemas:
+    Counter:
+      type: string
+      pattern: '^(0|[1-9][0-9]*)$'
+    DurationMetric:
+      type: object
+      description: Fixed cumulative buckets in milliseconds; samples above 15000ms still count toward count, total_ms and max_ms. Not exact percentiles.
+      required: [count, errors, total_ms, max_ms, buckets]
+      properties:
+        count: {$ref: '#/components/schemas/Counter'}
+        errors: {$ref: '#/components/schemas/Counter'}
+        total_ms: {type: number, minimum: 0}
+        max_ms: {type: number, minimum: 0}
+        buckets:
+          type: array
+          maxItems: 11
+          items:
+            type: object
+            required: [le_ms, count]
+            properties:
+              le_ms: {type: number, enum: [1, 5, 10, 25, 50, 100, 250, 500, 1000, 5000, 15000]}
+              count: {$ref: '#/components/schemas/Counter'}
+    HTTPPerformance:
+      type: object
+      description: Completed ordinary requests grouped by route template. Database durations aggregate each request's calls. Byte counts exclude HTTP/TLS overhead.
+      properties:
+        route: {type: string}
+        duration: {$ref: '#/components/schemas/DurationMetric'}
+        database_query: {$ref: '#/components/schemas/DurationMetric'}
+        database_acquire: {$ref: '#/components/schemas/DurationMetric'}
+        database_batch: {$ref: '#/components/schemas/DurationMetric'}
+        database_lock_query: {$ref: '#/components/schemas/DurationMetric'}
+        database_queries: {$ref: '#/components/schemas/Counter'}
+        database_acquires: {$ref: '#/components/schemas/Counter'}
+        database_batches: {$ref: '#/components/schemas/Counter'}
+        response_bytes: {$ref: '#/components/schemas/Counter'}
+        uncompressed_bytes: {$ref: '#/components/schemas/Counter'}
+        gzip_responses: {$ref: '#/components/schemas/Counter'}
+        client_errors: {$ref: '#/components/schemas/Counter'}
+        server_errors: {$ref: '#/components/schemas/Counter'}
     ID: {type: string, minLength: 1, maxLength: 128, description: Opaque identifier}
     Token: {type: string, minLength: 32, maxLength: 256, writeOnly: false}
     Quantity:

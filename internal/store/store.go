@@ -46,9 +46,11 @@ func DefaultOptions() Options {
 }
 
 type Store struct {
-	pool      *pgxpool.Pool
-	options   Options
-	cursorKey [32]byte
+	pool          *pgxpool.Pool
+	options       Options
+	cursorKey     [32]byte
+	notifications eventNotifications
+	performance   databaseMetrics
 }
 type Device struct {
 	NetworkID string
@@ -59,11 +61,13 @@ func Open(ctx context.Context, dsn string, options Options) (*Store, error) {
 	if options.MaxConnections < 1 || options.Limits.BatchItems < 1 || options.Limits.BatchBytes < 2048 || options.Limits.ResponseBytes < 2048 || options.Limits.Commands < 1 || options.ActiveWindow < 1 || options.GroupPlanning < 1 || options.EventRetention < 1 || options.OfflineAfter <= 0 || options.RecheckAfter <= 0 {
 		return nil, fmt.Errorf("invalid store budgets")
 	}
+	s := &Store{options: options}
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		return nil, err
 	}
 	cfg.MaxConns = options.MaxConnections
+	cfg.ConnConfig.Tracer = &databaseTracer{metrics: &s.performance}
 	cfg.MinConns = 0
 	cfg.MaxConnIdleTime = 5 * time.Minute
 	cfg.ConnConfig.ConnectTimeout = 5 * time.Second
@@ -77,7 +81,7 @@ func Open(ctx context.Context, dsn string, options Options) (*Store, error) {
 		p.Close()
 		return nil, err
 	}
-	s := &Store{pool: p, options: options}
+	s.pool = p
 	if _, err = rand.Read(s.cursorKey[:]); err != nil {
 		p.Close()
 		return nil, err
@@ -88,16 +92,28 @@ func (s *Store) Close()              { s.pool.Close() }
 func (s *Store) Pool() *pgxpool.Pool { return s.pool }
 func (s *Store) Options() Options    { return s.options }
 
-func (s *Store) transaction(ctx context.Context, fn func(pgx.Tx) error) error {
+func (s *Store) transaction(ctx context.Context, fn func(pgx.Tx) error) (err error) {
+	started := time.Now()
+	defer func() { s.performance.transaction.Observe(time.Since(started), err != nil) }()
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(context.Background())
-	if err = fn(tx); err != nil {
+	tracked := &notifyingTx{Tx: tx}
+	if err = fn(tracked); err != nil {
 		return err
 	}
-	return tx.Commit(ctx)
+	commitStarted := time.Now()
+	err = tx.Commit(ctx)
+	s.performance.commit.Observe(time.Since(commitStarted), err != nil)
+	if err != nil {
+		return err
+	}
+	for network := range tracked.networks {
+		s.notifications.publish(network)
+	}
+	return nil
 }
 
 func newID() string {
@@ -128,5 +144,13 @@ func (s *Store) event(ctx context.Context, tx pgx.Tx, networkID, kind string) er
 		return err
 	}
 	_, err = tx.Exec(ctx, `DELETE FROM network_events WHERE network_id=$1 AND id < (SELECT id FROM network_events WHERE network_id=$1 ORDER BY id DESC OFFSET $2 LIMIT 1)`, networkID, s.options.EventRetention-1)
+	if err == nil {
+		if tracked, ok := tx.(*notifyingTx); ok {
+			if tracked.networks == nil {
+				tracked.networks = make(map[string]struct{})
+			}
+			tracked.networks[networkID] = struct{}{}
+		}
+	}
 	return err
 }

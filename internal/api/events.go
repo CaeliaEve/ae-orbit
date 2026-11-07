@@ -13,6 +13,11 @@ import (
 )
 
 func (s *Server) events(w http.ResponseWriter, r *http.Request, m protocol.Member) {
+	if expiry, ok := r.Context().Value(authExpiryKey{}).(time.Time); ok {
+		ctx, cancel := context.WithDeadline(r.Context(), expiry)
+		defer cancel()
+		r = r.WithContext(ctx)
+	}
 	network := r.PathValue("network")
 	if err := s.db.RequireAccess(r.Context(), m.ID, network, false); err != nil {
 		fail(w, err)
@@ -27,7 +32,15 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request, m protocol.Membe
 		}
 		after = protocol.Quantity(number)
 	}
-	page, err := s.db.Events(r.Context(), m.ID, network, after)
+	if r.Method == http.MethodHead {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("X-Accel-Buffering", "no")
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	wake, unsubscribe := s.db.SubscribeEvents(network)
+	defer unsubscribe()
+	page, err := s.readEvents(r.Context(), m.ID, network, after)
 	if err != nil {
 		fail(w, err)
 		return
@@ -45,6 +58,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request, m protocol.Membe
 	}
 	apply := func(page store.EventPage, initial bool) error {
 		if initial || page.Reset {
+			s.eventMetrics.resets.Add(1)
 			after = page.LastID
 			return send(after, "reset", map[string]any{"network_id": network, "reason": "refresh_view"})
 		}
@@ -52,6 +66,8 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request, m protocol.Membe
 			if err := send(event.ID, "change", event); err != nil {
 				return err
 			}
+			s.eventMetrics.delivered.Add(1)
+			s.eventMetrics.eventAge.Observe(time.Since(event.CreatedAt), false)
 			after = event.ID
 		}
 		return nil
@@ -75,13 +91,16 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request, m protocol.Membe
 		select {
 		case <-r.Context().Done():
 			return
+		case <-wake:
+			s.eventMetrics.wakeups.Add(1)
 		case <-ticker.C:
+			s.eventMetrics.fallback.Add(1)
 		}
 		if expiry, ok := r.Context().Value(authExpiryKey{}).(time.Time); ok && !time.Now().Before(expiry) {
 			return
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-		page, err = s.db.Events(ctx, m.ID, network, after)
+		page, err = s.readEvents(ctx, m.ID, network, after)
 		cancel()
 		if err != nil {
 			return

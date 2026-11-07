@@ -4,9 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"net/http"
-	"runtime"
 	"strconv"
-	"time"
 
 	"github.com/CaeliaEve/ae-orbit/internal/protocol"
 	"github.com/CaeliaEve/ae-orbit/internal/store"
@@ -103,7 +101,7 @@ func (s *Server) routes() {
 			fail(w, err)
 			return
 		}
-		respond(w, 200, value)
+		respondInventory(w, r, value)
 	}))
 	s.mux.HandleFunc("GET /api/v1/networks/{network}/inventory-stats", s.user(func(w http.ResponseWriter, r *http.Request, m protocol.Member) {
 		value, err := s.db.InventoryStats(r.Context(), m.ID, r.PathValue("network"))
@@ -293,15 +291,4 @@ func (s *Server) routes() {
 		}
 		respond(w, 200, result)
 	}))
-}
-
-func (s *Server) metrics(w http.ResponseWriter, r *http.Request, m protocol.Member) {
-	if err := s.db.RequireAdmin(r.Context(), m.ID); err != nil {
-		fail(w, err)
-		return
-	}
-	var memory runtime.MemStats
-	runtime.ReadMemStats(&memory)
-	pool := s.db.Pool().Stat()
-	respond(w, 200, map[string]any{"uptime_seconds": int64(time.Since(s.started).Seconds()), "requests": strconv.FormatUint(s.total.Load(), 10), "active_requests": len(s.requests), "active_streams": len(s.streams), "goroutines": runtime.NumGoroutine(), "heap_bytes": strconv.FormatUint(memory.HeapAlloc, 10), "gc_cycles": memory.NumGC, "database_connections": pool.TotalConns(), "database_acquired": pool.AcquiredConns(), "database_acquire_wait_ms": pool.EmptyAcquireWaitTime().Milliseconds()})
 }
