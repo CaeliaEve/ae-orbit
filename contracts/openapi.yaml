@@ -239,8 +239,12 @@ paths:
       operationId: listItems
       tags: [Inventory]
       description: |
-        Keyset pagination bound to network, query and inventory revision.
-        A changed revision returns 409 view_changed. A service restart invalidates cursor signatures.
+        Keyset pagination bound to network and query. The default strict consistency rejects
+        any changed inventory revision with 409 view_changed. Opt-in live consistency supports
+        only name sorting and tolerates quantity changes. It still rejects catalog/label/session
+        changes, and recipe-flag changes when craftable is filtered. These checks are conservatively
+        network-wide. Each page carries current cached values and its current inventory revision;
+        live pages are not a frozen multi-page snapshot. A service restart invalidates cursor signatures.
         Metadata for display excludes raw NBT; orders use item_id.
         Short queries (under 3 Unicode characters) use prefix matching; longer queries use substring matching.
         Supports negotiated gzip for successful pages. Normally only bodies of at least 1024 bytes
@@ -249,6 +253,7 @@ paths:
       parameters:
         - {name: q, in: query, schema: {type: string, maxLength: 128}}
         - {name: sort, in: query, schema: {type: string, enum: [name, quantity], default: name}}
+        - {name: consistency, in: query, schema: {type: string, enum: [strict, live], default: strict}, description: Live consistency requires name sorting.}
         - {name: craftable, in: query, schema: {type: boolean}}
         - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}
         - {name: cursor, in: query, schema: {type: string, maxLength: 4096}}
@@ -260,6 +265,41 @@ paths:
             Vary: {schema: {type: string, example: Accept-Encoding}}
             Server-Timing: {description: Server time to headers and database phase timings in milliseconds; phases can overlap., schema: {type: string}}
           content: {application/json: {schema: {$ref: '#/components/schemas/ItemPage'}}}
+        '406': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/networks/{network}/items/lookup:
+    parameters: [{$ref: '#/components/parameters/NetworkID'}]
+    get:
+      operationId: lookupInventoryItems
+      tags: [Inventory]
+      description: |
+        Read up to 200 requested IDs from cached inventory in one short consistent transaction.
+        Does not request new OC observations, schedule work or execute crafting. Duplicates are
+        merged in first-occurrence order. Items and missing_ids each follow request order.
+        Unknown IDs and IDs from other networks appear only in missing_ids, never as invented zero stock.
+        Values, independent observation times and current_session have the same meaning as inventory pages.
+        Accepts exactly one ids parameter, at most 3999 decoded bytes, with the 200-entry bound checked
+        before deduplication. Supports the same negotiated gzip and HEAD behavior as inventory pages.
+        Display metadata excludes raw NBT. Does not freeze membership or ordering of a previous page.
+      parameters:
+        - name: ids
+          in: query
+          required: true
+          style: form
+          explode: false
+          schema:
+            type: array
+            minItems: 1
+            maxItems: 200
+            items: {$ref: '#/components/schemas/PositiveQuantity'}
+      responses:
+        '200':
+          description: Cached items and explicit missing IDs; all IDs and quantities are exact decimal strings.
+          headers:
+            Content-Encoding: {schema: {type: string, enum: [gzip]}}
+            Vary: {schema: {type: string, example: Accept-Encoding}}
+            Server-Timing: {schema: {type: string}}
+          content: {application/json: {schema: {$ref: '#/components/schemas/ItemLookup'}}}
         '406': {$ref: '#/components/responses/Error'}
         default: {$ref: '#/components/responses/Error'}
   /api/v1/networks/{network}/inventory-stats:
@@ -653,6 +693,13 @@ components:
         items: {type: array, maxItems: 200, items: {$ref: '#/components/schemas/Item'}}
         revision: {$ref: '#/components/schemas/Quantity'}
         next_cursor: {type: string}
+    ItemLookup:
+      type: object
+      required: [items, missing_ids, revision]
+      properties:
+        items: {type: array, maxItems: 200, items: {$ref: '#/components/schemas/Item'}}
+        missing_ids: {type: array, maxItems: 200, items: {$ref: '#/components/schemas/PositiveQuantity'}}
+        revision: {$ref: '#/components/schemas/Quantity'}
     Stack:
       type: object
       additionalProperties: false

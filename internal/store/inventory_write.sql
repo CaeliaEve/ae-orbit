@@ -57,4 +57,7 @@ WITH input AS (
 SELECT (SELECT count(*) FROM values_written)+(SELECT count(*) FROM evidence_written),coalesce((SELECT bool_or(
     previous_quantity IS DISTINCT FROM quantity OR previous_craftable IS DISTINCT FROM craftable
     OR previous_session IS DISTINCT FROM $3 OR (label IS NOT NULL AND previous_label IS DISTINCT FROM label)
-) FROM eligible),false)
+) FROM eligible),false),
+coalesce((SELECT bool_or(previous_observation IS NULL
+    OR (label IS NOT NULL AND previous_label IS DISTINCT FROM label)) FROM eligible),false),
+coalesce((SELECT bool_or(previous_craftable IS DISTINCT FROM craftable) FROM eligible),false)

@@ -157,11 +157,18 @@ type ItemPage struct {
 }
 
 type ItemQuery struct {
-	Search    string
-	Sort      string
-	Craftable *bool
-	Limit     int
-	Cursor    string
+	Search      string
+	Sort        string
+	Craftable   *bool
+	Limit       int
+	Cursor      string
+	Consistency string
+}
+
+type ItemLookup struct {
+	Items      []Item     `json:"items"`
+	MissingIDs []Quantity `json:"missing_ids"`
+	Revision   Quantity   `json:"revision"`
 }
 
 type Stack struct {

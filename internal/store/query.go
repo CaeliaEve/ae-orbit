@@ -16,11 +16,13 @@ import (
 )
 
 type pageCursor struct {
-	Query    string            `json:"query"`
-	Revision protocol.Quantity `json:"revision"`
-	ID       protocol.Quantity `json:"id"`
-	Name     string            `json:"name"`
-	Quantity protocol.Quantity `json:"quantity"`
+	Query             string            `json:"query"`
+	Revision          protocol.Quantity `json:"revision"`
+	CatalogRevision   protocol.Quantity `json:"catalog_revision,omitempty"`
+	CraftableRevision protocol.Quantity `json:"craftable_revision,omitempty"`
+	ID                protocol.Quantity `json:"id"`
+	Name              string            `json:"name"`
+	Quantity          protocol.Quantity `json:"quantity"`
 }
 
 func (s *Store) encodeCursor(c pageCursor) string {
@@ -68,10 +70,16 @@ func (s *Store) Items(ctx context.Context, userID, networkID string, q protocol.
 	if q.Sort == "" {
 		q.Sort = "name"
 	}
+	if q.Consistency == "" {
+		q.Consistency = "strict"
+	}
 	if q.Limit < 1 || q.Limit > 200 || len(q.Search) > 128 || !utf8.ValidString(q.Search) || (q.Sort != "name" && q.Sort != "quantity") {
 		return page, ErrInvalid
 	}
-	queryBytes, _ := json.Marshal([]any{networkID, q.Search, q.Sort, q.Craftable})
+	if (q.Consistency != "strict" && q.Consistency != "live") || (q.Consistency == "live" && q.Sort != "name") {
+		return page, ErrInvalid
+	}
+	queryBytes, _ := json.Marshal([]any{networkID, q.Search, q.Sort, q.Craftable, q.Consistency})
 	fingerprint := sha256.Sum256(queryBytes)
 	queryKey := hex.EncodeToString(fingerprint[:])
 	var cursor pageCursor
@@ -88,11 +96,17 @@ func (s *Store) Items(ctx context.Context, userID, networkID string, q protocol.
 	}
 	defer tx.Rollback(context.Background())
 	var session string
-	if err = tx.QueryRow(ctx, "SELECT revision,current_session FROM networks WHERE id=$1", networkID).Scan(&page.Revision, &session); err != nil {
+	var catalogRevision, craftableRevision protocol.Quantity
+	if err = tx.QueryRow(ctx, "SELECT revision,current_session,catalog_revision,craftable_revision FROM networks WHERE id=$1", networkID).Scan(&page.Revision, &session, &catalogRevision, &craftableRevision); err != nil {
 		return page, notFound(err)
 	}
-	if q.Cursor != "" && cursor.Revision != page.Revision {
-		return page, ErrViewChanged
+	if q.Cursor != "" {
+		if q.Consistency == "strict" && cursor.Revision != page.Revision {
+			return page, ErrViewChanged
+		}
+		if q.Consistency == "live" && (cursor.CatalogRevision != catalogRevision || (q.Craftable != nil && cursor.CraftableRevision != craftableRevision)) {
+			return page, ErrViewChanged
+		}
 	}
 	args := []any{networkID, session}
 	conditions := []string{"d.network_id=$1"}
@@ -147,7 +161,11 @@ func (s *Store) Items(ctx context.Context, userID, networkID string, q protocol.
 	if len(page.Items) > q.Limit {
 		page.Items = page.Items[:q.Limit]
 		last := page.Items[q.Limit-1]
-		page.NextCursor = s.encodeCursor(pageCursor{Query: queryKey, Revision: page.Revision, ID: last.ID, Name: names[q.Limit-1], Quantity: last.Quantity})
+		next := pageCursor{Query: queryKey, Revision: page.Revision, ID: last.ID, Name: names[q.Limit-1], Quantity: last.Quantity}
+		if q.Consistency == "live" {
+			next.CatalogRevision, next.CraftableRevision = catalogRevision, craftableRevision
+		}
+		page.NextCursor = s.encodeCursor(next)
 	}
 	return page, tx.Commit(ctx)
 }

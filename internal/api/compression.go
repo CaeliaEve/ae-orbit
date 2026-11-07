@@ -19,7 +19,7 @@ var inventoryCompressors = sync.Pool{New: func() any {
 	return w
 }}
 
-// Only bounded inventory pages use compression. Credential responses, OC
+// Only bounded inventory responses use compression. Credential responses, OC
 // messages and streaming events continue through their existing writers.
 func respondInventory(w http.ResponseWriter, r *http.Request, value any) {
 	w.Header().Add("Vary", "Accept-Encoding")

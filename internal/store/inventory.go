@@ -128,10 +128,10 @@ func (s *Store) Ingest(ctx context.Context, d Device, b protocol.InventoryBatch)
 		}
 		sort.Slice(input, func(i, j int) bool { return input[i].ID < input[j].ID })
 		var accepted int
-		var changed bool
+		var changed, catalogChanged, recipeChanged bool
 		if len(input) > 0 {
 			encoded, _ := json.Marshal(input)
-			err = tx.QueryRow(ctx, inventoryUpsert, d.NetworkID, encoded, b.SessionID, s.options.RecheckAfter.Seconds()).Scan(&accepted, &changed)
+			err = tx.QueryRow(ctx, inventoryUpsert, d.NetworkID, encoded, b.SessionID, s.options.RecheckAfter.Seconds()).Scan(&accepted, &changed, &catalogChanged, &recipeChanged)
 			if err != nil {
 				return err
 			}
@@ -139,7 +139,10 @@ func (s *Store) Ingest(ctx context.Context, d Device, b protocol.InventoryBatch)
 		if err = tx.QueryRow(ctx, `UPDATE networks SET last_seen=now(),
             last_inventory=CASE WHEN $2::int>0 THEN now() ELSE last_inventory END,
             last_scan=CASE WHEN $3 THEN now() ELSE last_scan END,
-            revision=revision+CASE WHEN $4 THEN 1 ELSE 0 END WHERE id=$1 RETURNING revision`, d.NetworkID, accepted, b.ScanCompleted, changed).Scan(&ack.Revision); err != nil {
+            revision=revision+CASE WHEN $4 THEN 1 ELSE 0 END,
+            catalog_revision=catalog_revision+CASE WHEN $5 THEN 1 ELSE 0 END,
+            craftable_revision=craftable_revision+CASE WHEN $6 THEN 1 ELSE 0 END
+            WHERE id=$1 RETURNING revision`, d.NetworkID, accepted, b.ScanCompleted, changed, catalogChanged, recipeChanged).Scan(&ack.Revision); err != nil {
 			return err
 		}
 		ack.Ack = b.Sequence
