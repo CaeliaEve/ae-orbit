@@ -144,6 +144,7 @@ func (s *Store) negotiatedLimits(responseBytes int) protocol.Limits {
 	l := s.options.Limits
 	l.ResponseBytes = min(responseBytes, l.ResponseBytes)
 	l.BatchItems = min(l.BatchItems, l.ResponseBytes/96)
+	l.DiagnosticSamples = protocol.MaxReadFailureSamples
 	return l
 }
 
@@ -184,7 +185,7 @@ func (s *Store) Hello(ctx context.Context, d Device, h protocol.Hello) (protocol
 			if _, err = tx.Exec(ctx, "INSERT INTO bridge_sessions(id,network_id,boot_id,capabilities,response_bytes) VALUES($1,$2,$3,$4,$5)", w.SessionID, d.NetworkID, h.BootID, caps, w.Limits.ResponseBytes); err != nil {
 				return err
 			}
-			if _, err = tx.Exec(ctx, "UPDATE networks SET current_session=$2,capabilities=$3,revision=revision+1,catalog_revision=catalog_revision+1,last_scan=NULL WHERE id=$1", d.NetworkID, w.SessionID, caps); err != nil {
+			if _, err = tx.Exec(ctx, "UPDATE networks SET current_session=$2,capabilities=$3,health='{}',revision=revision+1,catalog_revision=catalog_revision+1,last_scan=NULL WHERE id=$1", d.NetworkID, w.SessionID, caps); err != nil {
 				return err
 			}
 			if _, err = tx.Exec(ctx, "DELETE FROM cpu_snapshots WHERE network_id=$1", d.NetworkID); err != nil {

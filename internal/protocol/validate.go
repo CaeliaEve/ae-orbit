@@ -1,12 +1,14 @@
 package protocol
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -118,6 +120,39 @@ func (p Poll) Validate(maxCPUs, maxReports int) error {
 		if v := p.Health.Inventory; v != nil && (v.Batches < 0 || v.Updates < 0 || v.Bytes < 0 || v.CreditsUsed < 0 || v.CollectMillis < 0) {
 			return fmt.Errorf("invalid inventory telemetry")
 		}
+		if samples := p.Health.ReadFailures; samples != nil {
+			if len(*samples) > MaxReadFailureSamples {
+				return fmt.Errorf("too many read failure samples")
+			}
+			for _, sample := range *samples {
+				if err := sample.Validate(); err != nil {
+					return err
+				}
+			}
+			var encoded bytes.Buffer
+			encoder := json.NewEncoder(&encoded)
+			// OC emits ordinary JSON, not an HTML script. Expanding <>& here
+			// would reject otherwise byte-bounded exception messages.
+			encoder.SetEscapeHTML(false)
+			if err := encoder.Encode(samples); err != nil || encoded.Len()-1 > MaxReadFailureBytes {
+				return fmt.Errorf("read failure samples exceed byte budget")
+			}
+		}
+	}
+	return nil
+}
+
+func (d ReadFailure) Validate() error {
+	if (d.Code != "exact_lookup_failed" && d.Code != "recipe_lookup_failed") ||
+		(d.Source != "event" && d.Source != "recheck" && d.Source != "priority") ||
+		!textOK(d.Name, 1, 256) || !textOK(d.Message, 1, 160) ||
+		strings.ContainsFunc(d.Name, unicode.IsControl) || strings.ContainsFunc(d.Message, unicode.IsControl) ||
+		d.Damage < 0 || d.Damage > 2147483647 || d.NBTBytes < 0 || d.NBTBytes > 16384 ||
+		(d.ItemID != nil && *d.ItemID < 1) || d.Occurrences < 1 || d.LastSeenMillis < 0 {
+		return fmt.Errorf("invalid read failure sample")
+	}
+	if d.NBTAdler32 != "" && (len(d.NBTAdler32) != 8 || strings.Trim(d.NBTAdler32, "0123456789abcdef") != "") {
+		return fmt.Errorf("invalid diagnostic NBT checksum")
 	}
 	return nil
 }

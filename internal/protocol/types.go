@@ -67,12 +67,13 @@ type Hello struct {
 }
 
 type Limits struct {
-	BatchBytes    int `json:"batch_bytes"`
-	BatchItems    int `json:"batch_items"`
-	ResponseBytes int `json:"response_bytes"`
-	Commands      int `json:"commands"`
-	CPUs          int `json:"cpus"`
-	PollMillis    int `json:"poll_millis"`
+	BatchBytes        int `json:"batch_bytes"`
+	BatchItems        int `json:"batch_items"`
+	ResponseBytes     int `json:"response_bytes"`
+	Commands          int `json:"commands"`
+	CPUs              int `json:"cpus"`
+	PollMillis        int `json:"poll_millis"`
+	DiagnosticSamples int `json:"diagnostic_samples,omitempty"`
 }
 
 type Welcome struct {
@@ -200,9 +201,29 @@ type Diagnostic struct {
 }
 
 type Health struct {
-	FreeMemory  Quantity            `json:"free_memory"`
-	Diagnostics []Diagnostic        `json:"diagnostics"`
-	Inventory   *InventoryTelemetry `json:"inventory,omitempty"`
+	FreeMemory   Quantity            `json:"free_memory"`
+	Diagnostics  []Diagnostic        `json:"diagnostics"`
+	Inventory    *InventoryTelemetry `json:"inventory,omitempty"`
+	ReadFailures *[]ReadFailure      `json:"read_failures,omitempty"`
+}
+
+const MaxReadFailureSamples = 4
+const MaxReadFailureBytes = 2048
+
+// ReadFailure is a bounded diagnostic hint, never an authoritative identity.
+// Omitted health snapshots retain the last details; an empty slice clears them.
+type ReadFailure struct {
+	Code           string    `json:"code"`
+	Source         string    `json:"source"`
+	ItemID         *Quantity `json:"item_id,omitempty"`
+	Name           string    `json:"name"`
+	Damage         int       `json:"damage"`
+	NBTBytes       int       `json:"nbt_bytes"`
+	NBTAdler32     string    `json:"nbt_adler32,omitempty"`
+	Message        string    `json:"message"`
+	Occurrences    Quantity  `json:"occurrences"`
+	LastSeenMillis Quantity  `json:"last_seen_millis"`
+	Truncated      bool      `json:"truncated,omitempty"`
 }
 
 // InventoryTelemetry counts acknowledged payloads and collection work per boot.

@@ -29,17 +29,20 @@ return function(options)
     getCraftable=function() return nil end,
     getCraftables=function(filter) return {{getStack=function() return raw(filter.name) end}} end,
   }
+  s.me=me
   local client={request_bytes=options.bytes or 4096,response_bytes=4096}
   function client:post(path)
     if path=="/bridge/v1/boot-id" then return {boot_id="inventory-fixture"} end
     return {protocol=1,session_id="s",inventory_ack="0",poll_ack="0",
-      limits={batch_items=options.batch_items or 32,batch_bytes=self.request_bytes,response_bytes=4096,cpus=16,poll_millis=1000}}
+      limits={batch_items=options.batch_items or 32,batch_bytes=self.request_bytes,response_bytes=4096,cpus=16,poll_millis=1000,
+        diagnostic_samples=options.diagnostic_samples}}
   end
   function client:send(path,body)
     assert(#body<=self.request_bytes,"wire request exceeded the negotiated byte limit")
     s.clock=s.clock+s.http_delay
     local value=json.decode(body)
     if path=="/bridge/v1/poll" then
+      if s.on_poll then s.on_poll(body,value) end
       s.polls[#s.polls+1]=value
       local verify=s.verify or {};s.verify=nil
       return {ack=value.sequence,scan_budget=s.grant,poll_millis=1000,commands=json.array({}),verify=json.array(verify)}

@@ -22,6 +22,7 @@ function me.allItems()
   return proxy.callback(function() index=index+1;if index<=2 then return raw(index) end end)
 end
 function me.getItemInNetwork(detail)
+  if fixture_lookup_failure then error("fixture lookup failed",0) end
   if detail.name=="fixture:craftable" then
     local value=raw(1);value.isCraftable=false;return value
   end
@@ -104,6 +105,10 @@ bridge=runner.new({
   now=fixture_now,free_memory=function() return 131072 end,yield=function() end
 })
 bridge:start()
+function fixture_fail_lookup(value)
+  fixture_lookup_failure=value
+  if value then bridge:on_item_changed(raw(1)) end
+end
 function fixture_tick()
   local status=bridge:tick()
   local more,slices=status.inventory_work,0

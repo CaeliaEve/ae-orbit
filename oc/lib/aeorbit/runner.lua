@@ -2,6 +2,7 @@ local json = require("aeorbit.json")
 local quantity = require("aeorbit.quantity")
 local cache = require("aeorbit.cache")
 local tracker = require("aeorbit.tracker")
+local read_diagnostics = require("aeorbit.read_diagnostics")
 local M = {}
 local function collect_step(amount)
   -- OC manages collection in its host; ordinary Lua also allows explicit steps.
@@ -25,7 +26,7 @@ function M.new(config,deps)
   local verification_bytes=math.max(256,math.min(16384,math.floor(memory/32)))
   local batch_delay=config.batch_interval_seconds or 0.25
   assert(type(batch_delay)=="number" and batch_delay>=0 and batch_delay<=1,"runner: invalid batch interval")
-  local self={config=config,deps=deps,client=deps.client,adapter=deps.adapter,diagnostics={},
+  local self={config=config,deps=deps,client=deps.client,adapter=deps.adapter,diagnostics={},diagnostic_samples=0,
     ids=cache.new(config.cache_entries or 256,id_bytes),dirty=cache.new(dirty_entries,dirty_bytes),
     verifications=cache.new(16,verification_bytes),verification_bytes=verification_bytes,
     rechecks=cache.new(16,verification_bytes),batch_delay=batch_delay,ordinary_turn=0,
@@ -39,6 +40,12 @@ function M.new(config,deps)
       self.diagnostics[code]="0"
     end
     self.diagnostics[code]=quantity.increment(self.diagnostics[code])
+  end
+  function self:_read_failure(code,source,key,raw,error_value)
+    self:diagnose(code)
+    if self.diagnostic_samples==0 then return end
+    local known=self.ids.entries[key]
+    self.read_diagnostics:record(code,source,raw,raw.diagnostic_item_id or (known and known.value.id),error_value)
   end
   function self:start()
     local nonce=self.client:post("/bridge/v1/boot-id",{})
@@ -54,6 +61,9 @@ function M.new(config,deps)
       type(w.limits.cpus)~="number" or w.limits.cpus<1 or w.limits.cpus>64 or w.limits.cpus%1~=0 or
       type(w.limits.response_bytes)~="number" or w.limits.response_bytes>response then fatal("invalid_device_limits") end
     self.session=w.session_id;self.limits=w.limits
+    self.read_diagnostics=read_diagnostics.new(deps.now)
+    local sample_limit=w.limits.diagnostic_samples
+    self.diagnostic_samples=type(sample_limit)=="number" and sample_limit>=1 and sample_limit<=4 and sample_limit%1==0 and sample_limit or 0
     self.client.response_bytes=w.limits.response_bytes
     self.client.request_bytes=math.min(config.max_batch_bytes or 16384,w.limits.batch_bytes)
     local recovered=0;for _ in pairs(deps.journal.data.attempts or {}) do recovered=recovered+1 end
@@ -132,7 +142,13 @@ function M.new(config,deps)
           end
         else self:diagnose("cpu_unavailable") end
       end
-      self.pending_poll={body=json.encode(body,limit),sequence=body.sequence,reports=body.reports}
+      local samples,diagnostic_token=self.read_diagnostics:snapshot(self.diagnostic_samples)
+      if samples then
+        body.health.read_failures=samples
+        while #samples>0 and not pcall(json.encode,body,limit) do samples[#samples]=nil end
+        if #samples==0 then body.health.read_failures=nil;diagnostic_token=nil end
+      end
+      self.pending_poll={body=json.encode(body,limit),sequence=body.sequence,reports=body.reports,diagnostic_token=diagnostic_token}
     end
     local pending=self.pending_poll
     local ack=self.client:send("/bridge/v1/poll",pending.body)
@@ -147,6 +163,7 @@ function M.new(config,deps)
       local ok,raw=pcall(self.adapter.from_definition,self.adapter,verification.item)
       if ok then
         quantity.validate(verification.id)
+        raw.diagnostic_item_id=verification.id
         local key=self.adapter:key(raw)
         self.ids:put(key,{id=verification.id,label=raw.label},#key+#verification.id+#(raw.label or "")+160)
         if token then self:_queue_verification(raw,token)
@@ -154,6 +171,7 @@ function M.new(config,deps)
       else self:diagnose("verification_identity_unavailable") end
     end
     self.poll_seq=ack.ack;self.pending_poll=nil;self.credits=ack.scan_budget;self.poll_delay=ack.poll_millis/1000
+    if pending.diagnostic_token then self.read_diagnostics:ack(pending.diagnostic_token) end
   end
   function self:_next_raw()
     local scan_ready=self.iterator~=nil or deps.now()>=self.next_scan
@@ -161,17 +179,20 @@ function M.new(config,deps)
     if self.verifications.count>0 and self.credits>=4 and deps.now()>=self.next_recipe_check and
       (not self.regular_turn or not regular_ready) then
       self.regular_turn=true;self.next_recipe_check=deps.now()+5
-      local _,detail=self.verifications:pop()
+      local key,detail=self.verifications:pop()
       local ok,value=pcall(self.adapter.read,self.adapter,detail)
       if not ok then
-        self:diagnose("exact_lookup_failed");self:_queue_verification(detail,detail.verification);return nil,1
+        self:_read_failure("exact_lookup_failed","priority",key,detail,value);self:_queue_verification(detail,detail.verification);return nil,1
       end
       -- A new boot may still have the previous boot's catalog. Confirm the
       -- recipe as well as the count without copying the backend's old flag.
       local checked,craftable=pcall(self.adapter.recipe_status,self.adapter,detail)
       if checked and type(craftable)=="boolean" then
         value.isCraftable=craftable;value.verification=detail.verification
-      else self:diagnose("recipe_lookup_failed");self:_queue_verification(detail,detail.verification) end
+      else
+        self:_read_failure("recipe_lookup_failed","priority",key,detail,checked and "invalid recipe result" or craftable)
+        self:_queue_verification(detail,detail.verification)
+      end
       return value,4
     end
     self.regular_turn=false
@@ -186,9 +207,9 @@ function M.new(config,deps)
     end
     if lane==0 or lane==1 then
       local queue=lane==0 and self.dirty or self.rechecks
-      local _,dirty=queue:pop()
+      local key,dirty=queue:pop()
       local ok,value=pcall(self.adapter.read,self.adapter,dirty)
-      if not ok then self:diagnose("exact_lookup_failed");return nil,1 end
+      if not ok then self:_read_failure("exact_lookup_failed",lane==0 and "event" or "recheck",key,dirty,value);return nil,1 end
       local cost=1
       if dirty.verify_craftable and (value.size==0 or value.size=="0") then
         -- Removed zero-stock recipes disappear from enumeration. Recheck them
@@ -199,7 +220,7 @@ function M.new(config,deps)
           self.next_recipe_check=deps.now()+5;cost=4
           local checked,craftable=pcall(self.adapter.recipe_status,self.adapter,dirty)
           if checked and type(craftable)=="boolean" then value.isCraftable=craftable
-          else self:diagnose("recipe_lookup_failed") end
+          else self:_read_failure("recipe_lookup_failed",lane==0 and "event" or "recheck",key,dirty,checked and "invalid recipe result" or craftable) end
         elseif lane==1 then self:_queue_recheck(dirty)
         else self:on_item_changed(dirty,true) end
       end

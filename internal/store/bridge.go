@@ -77,7 +77,12 @@ func (s *Store) Poll(ctx context.Context, d Device, p protocol.Poll) (protocol.P
 		}
 		if p.Health != nil {
 			health, _ := json.Marshal(p.Health)
-			if _, err = tx.Exec(ctx, "UPDATE networks SET health=$2 WHERE id=$1", d.NetworkID, health); err != nil {
+			// Sparse diagnostic snapshots avoid resending unchanged details.
+			// Retain only this field; ordinary health always reflects this poll.
+			if _, err = tx.Exec(ctx, `UPDATE networks SET health=CASE
+				WHEN health ? 'read_failures' AND NOT ($2::jsonb ? 'read_failures')
+				THEN $2::jsonb || jsonb_build_object('read_failures',health->'read_failures')
+				ELSE $2::jsonb END WHERE id=$1`, d.NetworkID, health); err != nil {
 				return err
 			}
 		}

@@ -215,7 +215,19 @@ def main():
             tick_until(lambda: request("GET", lua_base + "/items?craftable=true")["items"][0]["quantity"] == "74")
             assert globals_.fixture_requests == 1 and "64" in observed_output
             assert globals_.fixture_continuations > 0, "real HTTP did not exercise inventory continuation"
+            globals_.fixture_fail_lookup(True)
+            tick_until(lambda: request("GET", lua_base).get("health", {}).get("read_failures"))
+            samples = request("GET", lua_base)["health"]["read_failures"]
+            failure = next(sample for sample in samples if sample["source"] == "event")
+            assert failure["code"] == "exact_lookup_failed" and failure["message"] == "fixture lookup failed"
+            assert failure["name"] == "fixture:craftable" and failure["item_id"] == target["id"]
+            globals_.fixture_fail_lookup(False)
+            globals_.fixture_tick()
+            assert request("GET", lua_base)["health"]["read_failures"] == samples, "omitted snapshot was erased"
+            assert request("GET", lua_base + "/items?craftable=true")["items"][0]["quantity"] == "74", "read failure invented zero stock"
             checks.append(f"Lua {version}: real HTTP with continued slices, stock 10+64=74 without change events or periodic rechecks, exact int64, CPU output, one craft invocation")
+            print("PASS " + checks[-1], flush=True)
+            checks.append(f"Lua {version}: bounded read failure details survive a sparse health poll without changing stock")
             print("PASS " + checks[-1], flush=True)
 
         stop(backend)

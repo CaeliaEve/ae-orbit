@@ -788,6 +788,11 @@ components:
         commands: {type: integer}
         cpus: {type: integer}
         poll_millis: {type: integer}
+        diagnostic_samples:
+          type: integer
+          minimum: 0
+          maximum: 4
+          description: Optional read_failures support. Omitted or zero disables the new field on OC.
     Welcome:
       type: object
       required: [protocol, network_id, session_id, inventory_ack, poll_ack, limits]
@@ -855,6 +860,11 @@ components:
       properties:
         free_memory: {$ref: '#/components/schemas/Quantity'}
         inventory: {$ref: '#/components/schemas/InventoryTelemetry'}
+        read_failures:
+          type: array
+          maxItems: 4
+          description: A bounded replacement snapshot; omit to retain the previous snapshot in this session, send [] to clear. Normalized JSON is limited to 2048 bytes.
+          items: {$ref: '#/components/schemas/ReadFailure'}
         diagnostics:
           type: array
           maxItems: 16
@@ -863,6 +873,23 @@ components:
             additionalProperties: false
             required: [code, count]
             properties: {code: {type: string, minLength: 1, maxLength: 64}, count: {$ref: '#/components/schemas/Quantity'}}
+    ReadFailure:
+      type: object
+      additionalProperties: false
+      description: A lossy diagnostic hint, never an inventory identity or evidence of zero stock. OC retains no full NBT or original exception object.
+      required: [code, source, name, damage, nbt_bytes, message, occurrences, last_seen_millis]
+      properties:
+        code: {type: string, enum: [exact_lookup_failed, recipe_lookup_failed]}
+        source: {type: string, enum: [event, recheck, priority]}
+        item_id: {$ref: '#/components/schemas/PositiveQuantity'}
+        name: {type: string, minLength: 1, maxLength: 256, description: At most 256 UTF-8 bytes after sanitizing and truncation.}
+        damage: {type: integer, minimum: 0, maximum: 2147483647}
+        nbt_bytes: {type: integer, minimum: 0, maximum: 16384, description: Length of the NBT prefix used for diagnostics; capped at 16384 bytes.}
+        nbt_adler32: {type: string, pattern: '^[0-9a-f]{8}$', description: Optional Adler-32 of that prefix; collisions are possible and it must not identify inventory.}
+        message: {type: string, minLength: 1, maxLength: 160, description: At most 160 UTF-8 bytes. OC replaces invalid UTF-8 and control characters; non-string errors expose only their type.}
+        occurrences: {$ref: '#/components/schemas/PositiveQuantity'}
+        last_seen_millis: {$ref: '#/components/schemas/Quantity'}
+        truncated: {type: boolean, description: A text field or NBT prefix was sanitized or shortened, or an exception object was reduced to its type.}
     InventoryTelemetry:
       type: object
       additionalProperties: false
