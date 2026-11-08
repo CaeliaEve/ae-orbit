@@ -32,7 +32,7 @@ function M.new(config,deps)
     rechecks=cache.new(16,verification_bytes),batch_delay=batch_delay,ordinary_turn=0,
     statistics={batches=0,updates=0,bytes=0,credits_used=0,collect_millis=0},
     dirty_bytes=dirty_bytes,dirty_entries=dirty_entries,inventory_seq="0",poll_seq="0",observation="0",
-    credits=0,next_scan=0,next_cpu=0,next_recipe_check=0,poll_delay=1,uploaded=0}
+    credits=0,next_scan=0,next_cpu=0,next_recipe_check=0,poll_delay=1,uploaded=0,first_scan_acked=false}
   function self:diagnose(code)
     if not self.diagnostics[code] then
       local count=0;for _ in pairs(self.diagnostics) do count=count+1 end
@@ -122,8 +122,17 @@ function M.new(config,deps)
   end
   function self:_control()
     if not self.pending_poll then
+      -- An inherited catalog is already covered by initial discovery. Keep a
+      -- small ordinary reread trickle until the completed scan is acknowledged;
+      -- event reads and the separate priority queue keep their normal turns.
+      -- If discovery fails, use the retry delay for ordinary verification.
+      local recheck_limit=16
+      if not self.first_scan_acked and (self.iterator~=nil or deps.now()>=self.next_scan or
+        self.scan_completed or (self.pending_inventory and self.pending_inventory.scan_completed)) then
+        recheck_limit=1
+      end
       local body={session_id=self.session,sequence=quantity.increment(self.poll_seq),reports=json.array({}),health=self:_health(),
-        recheck_slots=16-self.rechecks.count,recheck_bytes=self.verification_bytes-self.rechecks.bytes}
+        recheck_slots=math.max(0,recheck_limit-self.rechecks.count),recheck_bytes=self.verification_bytes-self.rechecks.bytes}
       local limit=self.client.request_bytes
       local reports=self.tracker:reports()
       for _,report in ipairs(reports) do
@@ -275,6 +284,7 @@ function M.new(config,deps)
       if entry.verification and queued and queued.value.verification==entry.verification then self.verifications:remove(entry.key) end
     end
     account(self,"batches",1);account(self,"updates",#pending.entries);account(self,"bytes",#pending.body)
+    if pending.scan_completed then self.first_scan_acked=true end
     self.inventory_seq=ack.ack;self.uploaded=self.uploaded+#pending.entries;self.pending_inventory=nil
   end
   function self:_memory_ready()
@@ -291,10 +301,11 @@ function M.new(config,deps)
     if not self:_memory_ready() then return false end
     local seq=quantity.increment(self.inventory_seq)
     local body='{"session_id":'..json.encode(self.session)..',"sequence":'..json.encode(seq)..',"updates":['..table.concat(batch.encoded,",")..']'
-    if self.scan_completed then body=body..',"scan_completed":true' end
+    local completed=self.scan_completed
+    if completed then body=body..',"scan_completed":true' end
     body=body.."}";self.scan_completed=false
     for _,entry in ipairs(batch.entries) do entry.encoded=nil end
-    self.pending_inventory={body=body,sequence=seq,entries=batch.entries}
+    self.pending_inventory={body=body,sequence=seq,entries=batch.entries,scan_completed=completed}
     self.staged_inventory=nil
     self:_flush()
     return true
