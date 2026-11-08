@@ -19,7 +19,8 @@ RAW = f"https://raw.githubusercontent.com/{REPOSITORY}/{COMMIT}/oc/"
 SERVICE = "https://ae.example.test"
 DESTINATIONS = {
     **{f"lib/aeorbit/{name}.lua": f"/lib/aeorbit/{name}.lua" for name in (
-        "quantity", "json", "base64", "cache", "journal", "client", "adapter", "tracker", "runner", "read_diagnostics")},
+        "quantity", "json", "base64", "cache", "bitops", "sha256", "gzip", "nbt",
+        "journal", "client", "adapter", "tracker", "runner", "read_diagnostics")},
     "bin/ae-orbit.lua": "/bin/ae-orbit.lua",
     "config.example.lua": "/etc/ae-orbit.cfg.example",
     "install.lua": "/bin/ae-orbit-install.lua",

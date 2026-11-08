@@ -36,13 +36,22 @@ func (s *Store) CreateOrder(ctx context.Context, userID, networkID string, in pr
 		if err := tx.QueryRow(ctx, "SELECT capabilities,current_session FROM networks WHERE id=$1 FOR UPDATE", networkID).Scan(&capsJSON, &session); err != nil {
 			return notFound(err)
 		}
+		canonical, err := canonicalItemID(ctx, tx, networkID, in.ItemID)
+		if err != nil {
+			return err
+		}
+		in.ItemID = canonical
 		existing, err := scanOrder(tx.QueryRow(ctx, "SELECT "+orderColumns+" FROM orders o WHERE o.member_id=$1 AND o.network_id=$2 AND o.idempotency_key=$3", userID, networkID, in.IdempotencyKey))
 		if err == nil {
 			var ttl int
 			if err = tx.QueryRow(ctx, "SELECT ttl_seconds FROM orders WHERE id=$1", existing.ID).Scan(&ttl); err != nil {
 				return err
 			}
-			if existing.ItemID != in.ItemID || existing.Quantity != in.Quantity || ttl != in.TTLSeconds {
+			existingID, err := canonicalItemID(ctx, tx, networkID, existing.ItemID)
+			if err != nil {
+				return err
+			}
+			if existingID != in.ItemID || existing.Quantity != in.Quantity || ttl != in.TTLSeconds {
 				return ErrConflict
 			}
 			result = existing

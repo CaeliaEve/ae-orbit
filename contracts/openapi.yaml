@@ -641,7 +641,7 @@ components:
         kind: {type: string, enum: [item, fluid]}
         name: {type: string, minLength: 1, maxLength: 256}
         damage: {type: integer, minimum: 0, maximum: 2147483647}
-        nbt: {type: string, maxLength: 16384, description: Canonical base64 of the OC compressed tag bytes; omitted for untagged items}
+        nbt: {type: string, maxLength: 16384, description: 'Canonical base64 of one gzip member containing a typed NBT root compound. At most 12288 compressed bytes, 65536 expanded bytes, 32 levels and 1024 tags. Compound order and root name do not affect identity; primitive bits, types and list order do. Omitted for untagged items.'}
         label: {type: string, maxLength: 512}
         exact: {const: true}
     Capabilities:
@@ -676,6 +676,7 @@ components:
       required: [id, kind, name, damage, label, exact, quantity, craftable, observed_at, current_session]
       properties:
         id: {$ref: '#/components/schemas/PositiveQuantity'}
+        canonical_id: {allOf: [{$ref: '#/components/schemas/PositiveQuantity'}], description: 'Present only when an ID lookup used a legacy alias. Stock belongs to this canonical item; aliases must not be added together.'}
         kind: {type: string, enum: [item, fluid]}
         name: {type: string}
         damage: {type: integer}

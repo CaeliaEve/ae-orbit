@@ -1,6 +1,8 @@
 package store_test
 
 import (
+	"bytes"
+	"compress/gzip"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -27,7 +29,20 @@ func TestRecheckReceiverByteBudgetRotatesLargeDescriptors(t *testing.T) {
 	for index := 0; index < 3; index++ {
 		definition := &protocol.Definition{Kind: "item", Name: fmt.Sprintf("test:byte_%d", index), Label: "Cold", Exact: true}
 		if index == 0 {
-			definition.NBT = base64.StdEncoding.EncodeToString(make([]byte, 300))
+			var compressed bytes.Buffer
+			writer, err := gzip.NewWriterLevel(&compressed, gzip.NoCompression)
+			if err != nil {
+				t.Fatal(err)
+			}
+			payload := append([]byte{10, 0, 0, 7, 0, 1, 'a', 0, 0, 1, 44}, make([]byte, 300)...)
+			payload = append(payload, 0)
+			if _, err = writer.Write(payload); err != nil {
+				t.Fatal(err)
+			}
+			if err = writer.Close(); err != nil {
+				t.Fatal(err)
+			}
+			definition.NBT = base64.StdEncoding.EncodeToString(compressed.Bytes())
 		}
 		updates = append(updates, protocol.Update{Item: definition, Observation: protocol.Quantity(index + 2), Quantity: 42, Craftable: &flag})
 	}
@@ -40,7 +55,7 @@ func TestRecheckReceiverByteBudgetRotatesLargeDescriptors(t *testing.T) {
 	if _, err = s.Pool().Exec(ctx, `UPDATE inventory_schedule SET next_verify_at=CASE WHEN item_id=$2 THEN now()-interval '2 minutes' ELSE now()-interval '1 minute' END WHERE network_id=$1 AND item_id IN (SELECT id FROM item_definitions WHERE network_id=$1 AND name LIKE 'test:byte_%')`, n.ID, int64(bigID)); err != nil {
 		t.Fatal(err)
 	}
-	// Each plain descriptor costs 288 bytes; the NBT descriptor costs 888.
+	// Each plain descriptor costs 288 bytes; the stored NBT exceeds 600.
 	ack, err := s.Poll(ctx, d, capacityPoll(t, w.SessionID, 1, 16, 600))
 	if err != nil || len(ack.Verify) != 2 {
 		t.Fatal("byte budget or large-item rotation blocked fitting work", ack, err)

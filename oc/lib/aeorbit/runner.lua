@@ -80,7 +80,7 @@ function M.new(config,deps)
     local key=self.adapter:key(descriptor)
     local previous=self.dirty:get(key)
     descriptor.verify_craftable=verify_craftable==true or (previous and previous.verify_craftable) or nil
-    local cost=#key*2+#(descriptor.label or "")+256
+    local cost=#key*2+#(descriptor.tag or "")+#(descriptor.label or "")+256
     if not self.dirty.entries[key] and (self.dirty.count>=self.dirty_entries or self.dirty.bytes+cost>self.dirty_bytes) then self:diagnose("dirty_queue_evicted") end
     if not self.dirty:put(key,descriptor,cost) then self:diagnose("dirty_entry_too_large") end
   end
@@ -100,7 +100,7 @@ function M.new(config,deps)
       previous.value.verify_craftable=previous.value.verify_craftable or raw.verify_craftable
       return
     end
-    local cost=#key*2+#(raw.label or "")+256
+    local cost=#key*2+#(raw.tag or "")+#(raw.label or "")+256
     if self.rechecks.count>=16 or self.rechecks.bytes+cost>self.verification_bytes then
       self:diagnose("recheck_queue_full");return
     end
@@ -113,7 +113,7 @@ function M.new(config,deps)
     -- Retries do not move the oldest work to the back of the FIFO. A newer
     -- completion of the same item replaces only the fixed-size confirmation.
     if previous then previous.value.verification=token;return end
-    local cost=#key*2+#(raw.label or "")+#token+256
+    local cost=#key*2+#(raw.tag or "")+#(raw.label or "")+#token+256
     if self.verifications.count>=16 or self.verifications.bytes+cost>self.verification_bytes then
       self:diagnose("verification_queue_full");return
     end
@@ -165,7 +165,7 @@ function M.new(config,deps)
         quantity.validate(verification.id)
         raw.diagnostic_item_id=verification.id
         local key=self.adapter:key(raw)
-        self.ids:put(key,{id=verification.id,label=raw.label},#key+#verification.id+#(raw.label or "")+160)
+        self.ids:put(key,{id=verification.id,label=raw.label,tag=raw.tag},#key+#verification.id+#(raw.tag or "")+#(raw.label or "")+160)
         if token then self:_queue_verification(raw,token)
         else raw.verify_craftable=verification.craftable;self:_queue_recheck(raw) end
       else self:diagnose("verification_identity_unavailable") end
@@ -186,7 +186,7 @@ function M.new(config,deps)
       end
       -- A new boot may still have the previous boot's catalog. Confirm the
       -- recipe as well as the count without copying the backend's old flag.
-      local checked,craftable=pcall(self.adapter.recipe_status,self.adapter,detail)
+      local checked,craftable=pcall(self.adapter.recipe_status,self.adapter,value)
       if checked and type(craftable)=="boolean" then
         value.isCraftable=craftable;value.verification=detail.verification
       else
@@ -218,7 +218,7 @@ function M.new(config,deps)
         -- the newly available recipe opportunity to already queued priorities.
         if self.verifications.count==0 and self.credits>=4 and deps.now()>=self.next_recipe_check then
           self.next_recipe_check=deps.now()+5;cost=4
-          local checked,craftable=pcall(self.adapter.recipe_status,self.adapter,dirty)
+          local checked,craftable=pcall(self.adapter.recipe_status,self.adapter,value)
           if checked and type(craftable)=="boolean" then value.isCraftable=craftable
           else self:_read_failure("recipe_lookup_failed",lane==0 and "event" or "recheck",key,dirty,checked and "invalid recipe result" or craftable) end
         elseif lane==1 then self:_queue_recheck(dirty)
@@ -250,8 +250,10 @@ function M.new(config,deps)
     if craftable==nil then craftable=json.null end
     local value={quantity=count,observation=self.observation,craftable=craftable,verification=raw.verification}
     local known=self.ids:get(key)
-    if known and known.label==(raw.label or raw.name) then value.id=known.id else value.item=self.adapter:definition(raw) end
-    return {key=key,label=raw.label or raw.name,item=value.item~=nil,verification=raw.verification,encoded=json.encode(value,self.client.request_bytes)}
+    if known and known.label==(raw.label or raw.name) and (known.tag or "")== (raw.tag or "") then value.id=known.id else value.item=self.adapter:definition(raw) end
+    -- Only full definitions need their representation retained until binding.
+    -- Short-ID rows must not hide a large raw tag behind a tiny wire record.
+    return {key=key,label=raw.label or raw.name,tag=value.item and raw.tag or nil,item=value.item~=nil,verification=raw.verification,encoded=json.encode(value,self.client.request_bytes)}
   end
   function self:_flush()
     local pending=self.pending_inventory
@@ -264,7 +266,7 @@ function M.new(config,deps)
       if type(index)~="number" or index%1~=0 or index<1 or index>#pending.entries or seen[index] or not pending.entries[index].item then fatal("invalid_short_id_binding") end
       quantity.validate(binding.id);if binding.id=="0" then fatal("invalid_short_id_binding") end
       local entry=pending.entries[index]
-      self.ids:put(entry.key,{id=binding.id,label=entry.label},#entry.key+#binding.id+#entry.label+160)
+      self.ids:put(entry.key,{id=binding.id,label=entry.label,tag=entry.tag},#entry.key+#binding.id+#entry.label+#(entry.tag or "")+160)
       seen[index]=true
     end
     for index,entry in ipairs(pending.entries) do

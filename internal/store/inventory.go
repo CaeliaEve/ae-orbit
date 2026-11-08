@@ -26,6 +26,7 @@ type inventoryRow struct {
 	Verification            string            `json:"verification,omitempty"`
 	VerificationObservation protocol.Quantity `json:"verification_observation,omitempty"`
 	Label                   *string           `json:"label"`
+	NBT                     *string           `json:"nbt"`
 }
 
 func digest(value any) ([32]byte, error) {
@@ -92,6 +93,8 @@ func (s *Store) Ingest(ctx context.Context, d Device, b protocol.InventoryBatch)
 					label = u.Item.Name
 				}
 				row.Label = &label
+				nbt := u.Item.NBT
+				row.NBT = &nbt
 			}
 			previous, exists := merged[row.ID]
 			if exists {
@@ -163,9 +166,11 @@ func (s *Store) Ingest(ctx context.Context, d Device, b protocol.InventoryBatch)
 
 func (s *Store) resolveDefinitions(ctx context.Context, tx pgx.Tx, networkID string, updates []protocol.Update) ([]protocol.Quantity, []protocol.Binding, error) {
 	definitions := map[string]protocol.Definition{}
-	for _, u := range updates {
+	updateKeys := make([]string, len(updates))
+	for i, u := range updates {
 		if u.Item != nil {
-			definitions[u.Item.Key()] = *u.Item
+			updateKeys[i] = u.Item.Key()
+			definitions[updateKeys[i]] = *u.Item
 		}
 	}
 	resolved := map[string]protocol.Quantity{}
@@ -211,7 +216,7 @@ func (s *Store) resolveDefinitions(ctx context.Context, tx pgx.Tx, networkID str
 	for i, u := range updates {
 		ids[i] = u.ID
 		if u.Item != nil {
-			ids[i] = resolved[u.Item.Key()]
+			ids[i] = resolved[updateKeys[i]]
 			bindings = append(bindings, protocol.Binding{Index: i + 1, ID: ids[i]})
 		}
 		unique[int64(ids[i])] = true
@@ -221,12 +226,33 @@ func (s *Store) resolveDefinitions(ctx context.Context, tx pgx.Tx, networkID str
 		for id := range unique {
 			values = append(values, id)
 		}
-		var found int
-		if err := tx.QueryRow(ctx, "SELECT count(*) FROM item_definitions WHERE network_id=$1 AND id=ANY($2::bigint[])", networkID, values).Scan(&found); err != nil {
+		rows, err := tx.Query(ctx, `SELECT d.id,coalesce(a.canonical_id,d.id) FROM item_definitions d
+            LEFT JOIN item_aliases a ON a.network_id=d.network_id AND a.alias_id=d.id
+            WHERE d.network_id=$1 AND d.id=ANY($2::bigint[])`, networkID, values)
+		if err != nil {
 			return nil, nil, err
 		}
-		if found != len(unique) {
+		canonical := make(map[protocol.Quantity]protocol.Quantity, len(unique))
+		for rows.Next() {
+			var id, target protocol.Quantity
+			if err = rows.Scan(&id, &target); err != nil {
+				rows.Close()
+				return nil, nil, err
+			}
+			canonical[id] = target
+		}
+		rows.Close()
+		if err = rows.Err(); err != nil {
+			return nil, nil, err
+		}
+		if len(canonical) != len(unique) {
 			return nil, nil, ErrInvalid
+		}
+		for i, id := range ids {
+			ids[i] = canonical[id]
+		}
+		for i := range bindings {
+			bindings[i].ID = ids[bindings[i].Index-1]
 		}
 	}
 	return ids, bindings, nil

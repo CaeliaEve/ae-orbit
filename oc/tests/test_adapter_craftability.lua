@@ -52,7 +52,7 @@ local function exercise(proxy)
   assert(got==nil and not submitted and requests==2,"wrong metadata recipe was submitted")
   output.damage=stored.damage
 
-  stored.hasTag=true;stored.tag="\31\139\0\255NBT"
+  stored.hasTag=true;stored.tag=require("aeorbit.base64").decode("H4sIAAAAAAAAA+NiYGAAAHg/+U4EAAAA")
   command.item=a:definition(stored)
   got,reason,submitted=a:craft(command)
   assert(got==nil and not submitted and requests==2,"missing NBT in recipe output was accepted")

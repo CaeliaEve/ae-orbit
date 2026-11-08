@@ -22,7 +22,7 @@ for _,case in ipairs({{flag=0},{flag=false},{}}) do
   assert(raw.size==-5 and raw.hasTag==case.flag,"event input was mutated")
 end
 
-expected_tag="\31\139\0\255binary"
+expected_tag=require("aeorbit.base64").decode("H4sIAAAAAAAAA+NiYGAAAHg/+U4EAAAA")
 observed.tag=expected_tag;observed.hasTag=true
 for _,flag in ipairs({1,true}) do
   local raw={name="minecraft:stone",damage=0,label="Stone",size=1,hasTag=flag,tag=expected_tag}

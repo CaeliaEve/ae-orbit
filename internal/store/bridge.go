@@ -186,9 +186,10 @@ func (s *Store) assignCommands(ctx context.Context, tx pgx.Tx, networkID, group,
 	if available <= 0 {
 		return nil
 	}
-	rows, err := tx.Query(ctx, `SELECT o.id,o.item_id,o.quantity,i.quantity,i.craftable,d.kind,d.name,d.damage,d.nbt,d.label,d.exact
-        FROM orders o JOIN item_definitions d ON d.network_id=o.network_id AND d.id=o.item_id
-        JOIN inventory i ON i.network_id=o.network_id AND i.item_id=o.item_id
+	rows, err := tx.Query(ctx, `SELECT o.id,d.id,o.quantity,i.quantity,i.craftable,d.kind,d.name,d.damage,d.nbt,d.label,d.exact
+        FROM orders o LEFT JOIN item_aliases a ON a.network_id=o.network_id AND a.alias_id=o.item_id
+        JOIN item_definitions d ON d.network_id=o.network_id AND d.id=coalesce(a.canonical_id,o.item_id)
+        JOIN inventory i ON i.network_id=d.network_id AND i.item_id=d.id
         WHERE o.network_id=$1 AND o.state='queued' AND o.expires_at>now() ORDER BY o.created_at,o.id LIMIT $2 FOR UPDATE OF o SKIP LOCKED`, networkID, available)
 	if err != nil {
 		return err

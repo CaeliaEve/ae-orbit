@@ -10,6 +10,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/CaeliaEve/ae-orbit/internal/nbt"
 )
 
 func textOK(s string, min, max int) bool {
@@ -17,7 +19,18 @@ func textOK(s string, min, max int) bool {
 }
 
 func (d Definition) Key() string {
-	encoded, _ := json.Marshal([]any{d.Kind, d.Name, d.Damage, d.NBT})
+	identity := d.NBT
+	if d.NBT != "" {
+		compressed, err := base64.StdEncoding.Strict().DecodeString(d.NBT)
+		if err == nil {
+			if canonical, err := nbt.Digest(compressed); err == nil {
+				identity = "nbt-sha256:" + hex.EncodeToString(canonical[:])
+			}
+		}
+	}
+	// Retain distinct legacy keys for unsupported saved tags. Validate rejects
+	// new unsupported definitions; migration never guesses their contents.
+	encoded, _ := json.Marshal([]any{d.Kind, d.Name, d.Damage, identity})
 	h := sha256.Sum256(encoded)
 	return hex.EncodeToString(h[:])
 }
@@ -39,6 +52,9 @@ func (d Definition) Validate() error {
 		decoded, err := base64.StdEncoding.Strict().DecodeString(d.NBT)
 		if err != nil || base64.StdEncoding.EncodeToString(decoded) != d.NBT {
 			return fmt.Errorf("NBT must be canonical base64")
+		}
+		if _, err = nbt.Digest(decoded); err != nil {
+			return err
 		}
 	}
 	return nil

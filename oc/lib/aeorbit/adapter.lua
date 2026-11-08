@@ -1,6 +1,8 @@
 local quantity = require("aeorbit.quantity")
 local base64 = require("aeorbit.base64")
 local json = require("aeorbit.json")
+local nbt = require("aeorbit.nbt")
+local cache = require("aeorbit.cache")
 local M = {}
 function M.has_method(proxy,name)
   local value=proxy[name]
@@ -13,7 +15,8 @@ function M.new(me,config)
   config=config or {}
   assert(M.has_method(me,"allItems"),"adapter: missing allItems; select an AE controller or full ME interface")
   assert(M.has_method(me,"getItemInNetwork"),"adapter: missing getItemInNetwork; requires OC 1.12.47-GTNH+ (table/NBT API)")
-  local adapter={me=me,identity_bytes=config.identity_bytes or 4096,cpu_limit=config.cpu_limit or 16,cpu_generation="0"}
+  local adapter={me=me,identity_bytes=config.identity_bytes or 4096,cpu_limit=config.cpu_limit or 16,cpu_generation="0",
+    nbt_cache=cache.new(64,32768)}
   function adapter:capabilities()
     return {inventory=true,craft=M.has_method(me,"getCraftable"),cpu_output=M.has_method(me,"getCpus"),
       exact_quantities=true,max_craft_quantity=quantity.maximum(),enumeration="volatile_iterator"}
@@ -29,7 +32,15 @@ function M.new(me,config)
     assert(raw.tag==nil or type(raw.tag)=="string","adapter: unsupported NBT representation")
     local tag=raw.tag or ""
     assert(#tag<=self.identity_bytes,"adapter: NBT identity exceeds budget")
-    return raw.name.."\0"..quantity.from_number(damage).."\0"..tag
+    local identity=""
+    if #tag>0 then
+      identity=self.nbt_cache:get(tag)
+      if not identity then
+        identity=nbt.digest(tag)
+        self.nbt_cache:put(tag,identity,#tag+#identity+160)
+      end
+    end
+    return raw.name.."\0"..quantity.from_number(damage).."\0"..identity
   end
   function adapter:definition(raw)
     self:key(raw)
@@ -53,6 +64,7 @@ function M.new(me,config)
     if value~=nil then
       assert(self:key(value)==self:key(detail),"adapter: exact lookup returned another item")
       detail.size=value.size;detail.label=value.label or detail.label
+      detail.tag=value.tag;detail.hasTag=value.hasTag==true or value.hasTag==1 or (value.tag~=nil and #value.tag>0)
     else detail.size=0 end
     -- AE's exact stock lookup does not include its crafting inventory. Even a
     -- returned false (or no stored stack) says nothing about available recipes.
@@ -77,7 +89,13 @@ function M.new(me,config)
       local filter={name=detail.name,damage=detail.damage,hasTag=detail.hasTag,tag=detail.tag}
       local ok,recipes=pcall(me.getCraftables,filter)
       if not ok or type(recipes)~="table" then return nil,"recipe lookup failed" end
-      if #recipes==0 then return nil end
+      if #recipes==0 then
+        -- This fallback compares compressed bytes inside OC. A tagged miss
+        -- is inconclusive; do not turn a representation change into a false
+        -- recipe observation or issue a broader, unbounded native query.
+        if detail.tag and #detail.tag>0 then return nil,"recipe NBT encoding could not be verified" end
+        return nil
+      end
       if #recipes~=1 then return nil,"recipe lookup is ambiguous" end
       craftable=recipes[1]
     end

@@ -25,7 +25,7 @@ func browsingFixture(t *testing.T) (fixture, protocol.Welcome, []protocol.Update
 	updates := []protocol.Update{}
 	for i, label := range []string{"Alpha", "Beta", "Gamma"} {
 		updates = append(updates, protocol.Update{Item: &protocol.Definition{
-			Kind: "item", Name: "test:" + label, Label: label, Exact: true, NBT: "AQID",
+			Kind: "item", Name: "test:" + label, Label: label, Exact: true, NBT: "H4sIAAAAAAAAA+NiYGAAAHg/+U4EAAAA",
 		}, Quantity: protocol.Quantity((i + 1) * 10), Observation: 10, Craftable: &yes})
 	}
 	ack := uploadBrowse(t, f, w, 1, updates)

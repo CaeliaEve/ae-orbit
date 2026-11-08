@@ -42,6 +42,11 @@ func (s *Store) Migrate(ctx context.Context) error {
 			if _, err = tx.Exec(ctx, string(body)); err != nil {
 				return fmt.Errorf("migration %s: %w", strings.TrimPrefix(name, "migrations/"), err)
 			}
+			if name == "migrations/006_nbt_identity.sql" {
+				if err = migrateNBTIdentity(ctx, tx); err != nil {
+					return err
+				}
+			}
 			if _, err = tx.Exec(ctx, "INSERT INTO schema_versions(version) VALUES($1)", name); err != nil {
 				return err
 			}

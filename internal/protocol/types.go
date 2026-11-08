@@ -139,6 +139,7 @@ type InventoryAck struct {
 
 type Item struct {
 	ID                  Quantity   `json:"id"`
+	CanonicalID         Quantity   `json:"canonical_id,omitempty"`
 	Kind                string     `json:"kind"`
 	Name                string     `json:"name"`
 	Damage              int        `json:"damage"`

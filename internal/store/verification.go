@@ -40,9 +40,14 @@ func (s *Store) verifications(ctx context.Context, tx pgx.Tx, networkID string, 
 	}
 	var ordinary, shortRetry, priority []int64
 	for _, v := range candidates {
-		// Match the OC FIFO's two identity keys, display label and fixed
-		// descriptor allowance. DecodedLen conservatively includes padding.
-		cost := 2*(len(v.Item.Name)+len(strconv.Itoa(v.Item.Damage))+2+base64.StdEncoding.DecodedLen(len(v.Item.NBT))) + len(v.Item.Label) + 256
+		// Bound both published raw-tag FIFO keys and the new digest keys while
+		// devices update. DecodedLen conservatively includes base64 padding.
+		tagKeyBytes := 0
+		if v.Item.NBT != "" {
+			tagKeyBytes = 64
+		}
+		rawBytes := base64.StdEncoding.DecodedLen(len(v.Item.NBT))
+		cost := 2*(len(v.Item.Name)+len(strconv.Itoa(v.Item.Damage))+2) + max(2*rawBytes, 2*tagKeyBytes+rawBytes) + len(v.Item.Label) + 256
 		if v.Token == "" {
 			ordinary = append(ordinary, int64(v.ID))
 			if cost > queueBytes {
@@ -83,7 +88,8 @@ func (s *Store) verifications(ctx context.Context, tx pgx.Tx, networkID string, 
 
 func scheduleRecheck(ctx context.Context, tx pgx.Tx, networkID string, itemID protocol.Quantity) error {
 	_, err := tx.Exec(ctx, `INSERT INTO inventory_rechecks(network_id,item_id,token)
-        SELECT network_id,item_id,$3 FROM inventory WHERE network_id=$1 AND item_id=$2
+        SELECT network_id,item_id,$3 FROM inventory WHERE network_id=$1 AND item_id=coalesce(
+            (SELECT canonical_id FROM item_aliases WHERE network_id=$1 AND alias_id=$2),$2)
         ON CONFLICT(network_id,item_id) DO UPDATE SET token=excluded.token,next_attempt_at=now()`, networkID, int64(itemID), newID())
 	return err
 }

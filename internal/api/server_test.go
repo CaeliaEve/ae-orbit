@@ -94,7 +94,7 @@ func TestHTTPInventoryAndOrderFlow(t *testing.T) {
 	hello := protocol.Hello{Protocol: 1, BootID: "boot-1", Source: "simulator", MaxResponseBytes: 32768, Capabilities: protocol.Capabilities{Inventory: true, Craft: true, ExactQuantities: true, MaxCraftQuantity: 9223372036854775807, Enumeration: "simulated"}}
 	w := decode[protocol.Welcome](t, send(t, f, "POST", "/bridge/v1/hello", f.device, wire(t, hello)), 200)
 	craftable := true
-	b := protocol.InventoryBatch{SessionID: w.SessionID, Sequence: 1, Updates: []protocol.Update{{Item: &protocol.Definition{Kind: "item", Name: "minecraft:stone", Label: "石头", NBT: "AQID", Exact: true}, Quantity: 9007199254740993, Observation: 1, Craftable: &craftable}}}
+	b := protocol.InventoryBatch{SessionID: w.SessionID, Sequence: 1, Updates: []protocol.Update{{Item: &protocol.Definition{Kind: "item", Name: "minecraft:stone", Label: "石头", NBT: "H4sIAAAAAAAAA+NiYGAAAHg/+U4EAAAA", Exact: true}, Quantity: 9007199254740993, Observation: 1, Craftable: &craftable}}}
 	ack := decode[protocol.InventoryAck](t, send(t, f, "POST", "/bridge/v1/inventory", f.device, wire(t, b)), 200)
 	base := "/api/v1/networks/" + f.network.ID
 	page := decode[protocol.ItemPage](t, send(t, f, "GET", base+"/items?limit=1", adminToken, ""), 200)
@@ -106,7 +106,7 @@ func TestHTTPInventoryAndOrderFlow(t *testing.T) {
 	}
 	o := decode[protocol.Order](t, send(t, f, "POST", base+"/orders", adminToken, wire(t, protocol.OrderInput{ItemID: ack.Bindings[0].ID, Quantity: 64, IdempotencyKey: "http-order-001"})), 201)
 	p := decode[protocol.PollAck](t, send(t, f, "POST", "/bridge/v1/poll", f.device, wire(t, protocol.Poll{SessionID: w.SessionID, Sequence: 1})), 200)
-	if len(p.Commands) != 1 || p.Commands[0].OrderID != o.ID || p.Commands[0].Item.NBT != "AQID" {
+	if len(p.Commands) != 1 || p.Commands[0].OrderID != o.ID || p.Commands[0].Item.NBT != "H4sIAAAAAAAAA+NiYGAAAHg/+U4EAAAA" {
 		t.Fatal(p)
 	}
 	decode[protocol.PollAck](t, send(t, f, "POST", "/bridge/v1/poll", f.device, wire(t, protocol.Poll{SessionID: w.SessionID, Sequence: 2, Reports: []protocol.Report{{OrderID: o.ID, AttemptID: p.Commands[0].AttemptID, State: "done"}}})), 200)
