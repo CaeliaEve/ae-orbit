@@ -418,6 +418,9 @@ paths:
         Each subscriber holds at most one pending wakeup. A 15s fallback discovers external writes
         and rechecks permissions. Session expiry and cancellation close the stream independently.
         SSE is not compressed. HEAD returns headers without opening a persistent subscription.
+        CPU invalidations compare visible state as a multiset, preserving duplicate CPUs.
+        Snapshot-local IDs, list order and observation time alone do not produce a CPU event.
+        First snapshots, session changes, truncation changes and visible state changes do.
       parameters:
         - {name: Last-Event-ID, in: header, schema: {$ref: '#/components/schemas/Quantity'}}
       responses:
@@ -711,6 +714,7 @@ components:
     CPU:
       type: object
       additionalProperties: false
+      description: IDs identify entries within this snapshot, not stable hardware across snapshots. Names and array positions are not unique hardware identities either.
       required: [id, name, busy, storage, coprocessors]
       properties:
         id: {$ref: '#/components/schemas/ID'}
@@ -722,6 +726,7 @@ components:
         output_unavailable: {type: string, maxLength: 256}
     CPUView:
       type: object
+      description: Returns the latest accepted snapshot, including its IDs, order and observation time, even when unchanged visible state produced no CPU event.
       required: [session_id, cpus, truncated]
       properties:
         session_id: {type: string}

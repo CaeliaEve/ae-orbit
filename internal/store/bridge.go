@@ -252,9 +252,20 @@ func (s *Store) saveCPUs(ctx context.Context, tx pgx.Tx, networkID string, p pro
 	if string(encoded) == "null" {
 		encoded = []byte("[]")
 	}
-	var changed bool
-	if err := tx.QueryRow(ctx, `SELECT NOT EXISTS(SELECT 1 FROM cpu_snapshots WHERE network_id=$1 AND session_id=$2 AND cpus=$3::jsonb AND truncated=$4)`, networkID, p.SessionID, encoded, p.CPUsTruncated).Scan(&changed); err != nil {
+	var previousSession string
+	var previousJSON []byte
+	var previousTruncated bool
+	err := tx.QueryRow(ctx, "SELECT session_id,cpus,truncated FROM cpu_snapshots WHERE network_id=$1", networkID).Scan(&previousSession, &previousJSON, &previousTruncated)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return err
+	}
+	changed := true
+	if err == nil && previousSession == p.SessionID && previousTruncated == p.CPUsTruncated {
+		var previous []protocol.CPU
+		if err = json.Unmarshal(previousJSON, &previous); err != nil {
+			return err
+		}
+		changed = !sameCPUState(previous, *p.CPUs)
 	}
 	if _, err := tx.Exec(ctx, `INSERT INTO cpu_snapshots(network_id,session_id,cpus,truncated) VALUES($1,$2,$3,$4)
         ON CONFLICT(network_id) DO UPDATE SET session_id=excluded.session_id,cpus=excluded.cpus,truncated=excluded.truncated,observed_at=now()`, networkID, p.SessionID, encoded, p.CPUsTruncated); err != nil {
@@ -264,6 +275,32 @@ func (s *Store) saveCPUs(ctx context.Context, tx pgx.Tx, networkID string, p pro
 		return s.event(ctx, tx, networkID, "cpus")
 	}
 	return nil
+}
+
+func sameCPUState(previous, current []protocol.CPU) bool {
+	if len(previous) != len(current) {
+		return false
+	}
+	key := func(cpu protocol.CPU) string {
+		// IDs are local to a snapshot. Compare all observable state without
+		// guessing hardware identity from a name or an enumeration position.
+		cpu.ID = ""
+		encoded, _ := json.Marshal(cpu)
+		return string(encoded)
+	}
+	// The negotiated snapshot bounds this map. Counts preserve identical CPUs.
+	counts := make(map[string]int, len(previous))
+	for _, cpu := range previous {
+		counts[key(cpu)]++
+	}
+	for _, cpu := range current {
+		k := key(cpu)
+		if counts[k] == 0 {
+			return false
+		}
+		counts[k]--
+	}
+	return true
 }
 
 type CPUView struct {
