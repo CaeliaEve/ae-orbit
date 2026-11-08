@@ -35,7 +35,7 @@ return function(options)
     if path=="/bridge/v1/boot-id" then return {boot_id="inventory-fixture"} end
     return {protocol=1,session_id="s",inventory_ack="0",poll_ack="0",
       limits={batch_items=options.batch_items or 32,batch_bytes=self.request_bytes,response_bytes=4096,cpus=16,poll_millis=1000,
-        diagnostic_samples=options.diagnostic_samples}}
+        diagnostic_samples=options.diagnostic_samples,sync_telemetry=options.sync_telemetry}}
   end
   function client:send(path,body)
     assert(#body<=self.request_bytes,"wire request exceeded the negotiated byte limit")

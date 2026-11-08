@@ -141,6 +141,7 @@ func (s *Store) Ingest(ctx context.Context, d Device, b protocol.InventoryBatch)
 		}
 		if err = tx.QueryRow(ctx, `UPDATE networks SET last_seen=now(),
             last_inventory=CASE WHEN $2::int>0 THEN now() ELSE last_inventory END,
+            first_scan=CASE WHEN $3 AND last_scan IS NULL THEN now() ELSE first_scan END,
             last_scan=CASE WHEN $3 THEN now() ELSE last_scan END,
             revision=revision+CASE WHEN $4 THEN 1 ELSE 0 END,
             catalog_revision=catalog_revision+CASE WHEN $5 THEN 1 ELSE 0 END,

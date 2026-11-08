@@ -136,6 +136,11 @@ func (p Poll) Validate(maxCPUs, maxReports int) error {
 		if v := p.Health.Inventory; v != nil && (v.Batches < 0 || v.Updates < 0 || v.Bytes < 0 || v.CreditsUsed < 0 || v.CollectMillis < 0) {
 			return fmt.Errorf("invalid inventory telemetry")
 		}
+		if p.Health.Sync != nil {
+			if err := p.Health.Sync.Validate(); err != nil {
+				return err
+			}
+		}
 		if samples := p.Health.ReadFailures; samples != nil {
 			if len(*samples) > MaxReadFailureSamples {
 				return fmt.Errorf("too many read failure samples")

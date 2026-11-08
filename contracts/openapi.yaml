@@ -667,6 +667,8 @@ components:
         last_seen: {type: string, format: date-time}
         last_inventory: {type: string, format: date-time}
         last_scan: {type: string, format: date-time}
+        first_scan: {type: string, format: date-time, description: First scan-completed marker accepted in the current session. Unknown for sessions already scanned before this field was deployed.}
+        session_started_at: {type: string, format: date-time, description: Backend creation time of the current bridge session. Not the OC sampling clock.}
         capabilities: {$ref: '#/components/schemas/Capabilities'}
         health: {type: object}
         online: {type: boolean}
@@ -794,6 +796,9 @@ components:
           minimum: 0
           maximum: 4
           description: Optional read_failures support. Omitted or zero disables the new field on OC.
+        sync_telemetry:
+          type: boolean
+          description: Enables optional sparse health.sync snapshots. Missing or false disables OC timing collection and transmission.
     Welcome:
       type: object
       required: [protocol, network_id, session_id, inventory_ack, poll_ack, limits]
@@ -861,6 +866,7 @@ components:
       properties:
         free_memory: {$ref: '#/components/schemas/Quantity'}
         inventory: {$ref: '#/components/schemas/InventoryTelemetry'}
+        sync: {$ref: '#/components/schemas/SyncTelemetry'}
         read_failures:
           type: array
           maxItems: 4
@@ -902,6 +908,44 @@ components:
         bytes: {$ref: '#/components/schemas/Quantity'}
         credits_used: {$ref: '#/components/schemas/Quantity'}
         collect_millis: {$ref: '#/components/schemas/Quantity'}
+    SyncTelemetry:
+      type: object
+      additionalProperties: false
+      required: [captured_millis, stages]
+      description: Fixed-size cumulative timing on the OC monotonic clock. Omit to retain this session's last snapshot. New sessions clear it. OC sends at most once per 30 seconds after successful confirmation, subject to memory and request space.
+      properties:
+        captured_millis: {$ref: '#/components/schemas/Quantity'}
+        first_scan_ack_millis:
+          allOf: [{$ref: '#/components/schemas/Quantity'}]
+          description: Milliseconds from runner.start, including handshake, until the first completed-scan batch has a valid ACK. Must not exceed captured_millis.
+        stages:
+          type: object
+          additionalProperties: false
+          properties:
+            event_queue: {$ref: '#/components/schemas/LatencyHistogram'}
+            recheck_queue: {$ref: '#/components/schemas/LatencyHistogram'}
+            priority_queue: {$ref: '#/components/schemas/LatencyHistogram'}
+            collection: {$ref: '#/components/schemas/LatencyHistogram'}
+            inventory_http: {$ref: '#/components/schemas/LatencyHistogram'}
+            control_http: {$ref: '#/components/schemas/LatencyHistogram'}
+            batch_ack: {$ref: '#/components/schemas/LatencyHistogram'}
+            scan: {$ref: '#/components/schemas/LatencyHistogram'}
+    LatencyHistogram:
+      type: object
+      additionalProperties: false
+      required: [samples, errors, total_millis, max_millis, buckets]
+      description: Disjoint bucket counts sum to samples. Missing phase means no sample. Errors cannot exceed samples; max_millis cannot exceed total_millis. OC counters saturate within the exact Lua 5.2 integer range.
+      properties:
+        samples: {$ref: '#/components/schemas/PositiveQuantity'}
+        errors: {$ref: '#/components/schemas/Quantity'}
+        total_millis: {$ref: '#/components/schemas/Quantity'}
+        max_millis: {$ref: '#/components/schemas/Quantity'}
+        buckets:
+          type: array
+          minItems: 8
+          maxItems: 8
+          description: Disjoint upper bounds in milliseconds are 10, 50, 100, 250, 1000, 5000, 30000 and infinity. Quantiles are bucket ranges, not exact durations.
+          items: {$ref: '#/components/schemas/Quantity'}
     Poll:
       type: object
       additionalProperties: false

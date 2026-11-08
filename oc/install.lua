@@ -38,6 +38,7 @@ local files = {
   {"lib/aeorbit/tracker.lua", "/lib/aeorbit/tracker.lua"},
   {"lib/aeorbit/runner.lua", "/lib/aeorbit/runner.lua"},
   {"lib/aeorbit/read_diagnostics.lua", "/lib/aeorbit/read_diagnostics.lua"},
+  {"lib/aeorbit/latency.lua", "/lib/aeorbit/latency.lua"},
   {"bin/ae-orbit.lua", "/bin/ae-orbit.lua"},
   {"config.example.lua", "/etc/ae-orbit.cfg.example"},
   {"install.lua", "/bin/ae-orbit-install.lua"},

@@ -67,13 +67,14 @@ type Hello struct {
 }
 
 type Limits struct {
-	BatchBytes        int `json:"batch_bytes"`
-	BatchItems        int `json:"batch_items"`
-	ResponseBytes     int `json:"response_bytes"`
-	Commands          int `json:"commands"`
-	CPUs              int `json:"cpus"`
-	PollMillis        int `json:"poll_millis"`
-	DiagnosticSamples int `json:"diagnostic_samples,omitempty"`
+	BatchBytes        int  `json:"batch_bytes"`
+	BatchItems        int  `json:"batch_items"`
+	ResponseBytes     int  `json:"response_bytes"`
+	Commands          int  `json:"commands"`
+	CPUs              int  `json:"cpus"`
+	PollMillis        int  `json:"poll_millis"`
+	DiagnosticSamples int  `json:"diagnostic_samples,omitempty"`
+	SyncTelemetry     bool `json:"sync_telemetry,omitempty"`
 }
 
 type Welcome struct {
@@ -206,6 +207,7 @@ type Health struct {
 	Diagnostics  []Diagnostic        `json:"diagnostics"`
 	Inventory    *InventoryTelemetry `json:"inventory,omitempty"`
 	ReadFailures *[]ReadFailure      `json:"read_failures,omitempty"`
+	Sync         *SyncTelemetry      `json:"sync,omitempty"`
 }
 
 const MaxReadFailureSamples = 4
@@ -294,19 +296,21 @@ type Order struct {
 }
 
 type Network struct {
-	ID            string          `json:"id"`
-	Name          string          `json:"name"`
-	ServerGroup   string          `json:"server_group"`
-	Source        string          `json:"source"`
-	SessionID     string          `json:"session_id,omitempty"`
-	Revision      Quantity        `json:"revision"`
-	LastSeen      *time.Time      `json:"last_seen,omitempty"`
-	LastInventory *time.Time      `json:"last_inventory,omitempty"`
-	LastScan      *time.Time      `json:"last_scan,omitempty"`
-	Capabilities  Capabilities    `json:"capabilities"`
-	Health        json.RawMessage `json:"health,omitempty"`
-	Online        bool            `json:"online"`
-	Quality       string          `json:"quality"`
+	ID               string          `json:"id"`
+	Name             string          `json:"name"`
+	ServerGroup      string          `json:"server_group"`
+	Source           string          `json:"source"`
+	SessionID        string          `json:"session_id,omitempty"`
+	Revision         Quantity        `json:"revision"`
+	LastSeen         *time.Time      `json:"last_seen,omitempty"`
+	LastInventory    *time.Time      `json:"last_inventory,omitempty"`
+	LastScan         *time.Time      `json:"last_scan,omitempty"`
+	FirstScan        *time.Time      `json:"first_scan,omitempty"`
+	SessionStartedAt *time.Time      `json:"session_started_at,omitempty"`
+	Capabilities     Capabilities    `json:"capabilities"`
+	Health           json.RawMessage `json:"health,omitempty"`
+	Online           bool            `json:"online"`
+	Quality          string          `json:"quality"`
 }
 
 type Member struct {

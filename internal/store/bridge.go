@@ -77,12 +77,14 @@ func (s *Store) Poll(ctx context.Context, d Device, p protocol.Poll) (protocol.P
 		}
 		if p.Health != nil {
 			health, _ := json.Marshal(p.Health)
-			// Sparse diagnostic snapshots avoid resending unchanged details.
-			// Retain only this field; ordinary health always reflects this poll.
-			if _, err = tx.Exec(ctx, `UPDATE networks SET health=CASE
-				WHEN health ? 'read_failures' AND NOT ($2::jsonb ? 'read_failures')
-				THEN $2::jsonb || jsonb_build_object('read_failures',health->'read_failures')
-				ELSE $2::jsonb END WHERE id=$1`, d.NetworkID, health); err != nil {
+			// Only the negotiated sparse snapshots survive an omitted field.
+			// Ordinary health still reflects the current acknowledged poll.
+			if _, err = tx.Exec(ctx, `UPDATE networks SET health=$2::jsonb
+				|| CASE WHEN health ? 'read_failures' AND NOT ($2::jsonb ? 'read_failures')
+				THEN jsonb_build_object('read_failures',health->'read_failures') ELSE '{}'::jsonb END
+				|| CASE WHEN health ? 'sync' AND NOT ($2::jsonb ? 'sync')
+				THEN jsonb_build_object('sync',health->'sync') ELSE '{}'::jsonb END
+				WHERE id=$1`, d.NetworkID, health); err != nil {
 				return err
 			}
 		}

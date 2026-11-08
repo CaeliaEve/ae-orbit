@@ -3,6 +3,7 @@ local quantity = require("aeorbit.quantity")
 local cache = require("aeorbit.cache")
 local tracker = require("aeorbit.tracker")
 local read_diagnostics = require("aeorbit.read_diagnostics")
+local latency = require("aeorbit.latency")
 local M = {}
 local function collect_step(amount)
   -- OC manages collection in its host; ordinary Lua also allows explicit steps.
@@ -48,6 +49,7 @@ function M.new(config,deps)
     self.read_diagnostics:record(code,source,raw,raw.diagnostic_item_id or (known and known.value.id),error_value)
   end
   function self:start()
+    self.started_at=deps.now()
     local nonce=self.client:post("/bridge/v1/boot-id",{})
     if type(nonce.boot_id)~="string" or #nonce.boot_id<1 then fatal("invalid_boot_identity") end
     local free=deps.free_memory()
@@ -61,6 +63,7 @@ function M.new(config,deps)
       type(w.limits.cpus)~="number" or w.limits.cpus<1 or w.limits.cpus>64 or w.limits.cpus%1~=0 or
       type(w.limits.response_bytes)~="number" or w.limits.response_bytes>response then fatal("invalid_device_limits") end
     self.session=w.session_id;self.limits=w.limits
+    if w.limits.sync_telemetry==true then self.latency=latency.new(deps.now,self.started_at) end
     self.read_diagnostics=read_diagnostics.new(deps.now)
     local sample_limit=w.limits.diagnostic_samples
     self.diagnostic_samples=type(sample_limit)=="number" and sample_limit>=1 and sample_limit<=4 and sample_limit%1==0 and sample_limit or 0
@@ -78,8 +81,15 @@ function M.new(config,deps)
     local ok,descriptor=pcall(self.adapter.descriptor,self.adapter,raw)
     if not ok then self:diagnose("event_identity_unavailable");return end
     local key=self.adapter:key(descriptor)
-    local previous=self.dirty:get(key)
-    descriptor.verify_craftable=verify_craftable==true or (previous and previous.verify_craftable) or nil
+    local previous=self.dirty.entries[key]
+    if previous then
+      -- Keep the first hint's queue position and bounded identity. Repeated
+      -- changes must not postpone the item; the read supplies fresh metadata.
+      previous.value.verify_craftable=verify_craftable==true or previous.value.verify_craftable or nil
+      return
+    end
+    descriptor.verify_craftable=verify_craftable==true or nil
+    if self.latency then descriptor.queued_at=deps.now() end
     local cost=#key*2+#(descriptor.tag or "")+#(descriptor.label or "")+256
     if not self.dirty.entries[key] and (self.dirty.count>=self.dirty_entries or self.dirty.bytes+cost>self.dirty_bytes) then self:diagnose("dirty_queue_evicted") end
     if not self.dirty:put(key,descriptor,cost) then self:diagnose("dirty_entry_too_large") end
@@ -91,6 +101,17 @@ function M.new(config,deps)
     local inventory={}
     for name,value in pairs(self.statistics) do inventory[name]=quantity.from_number(value) end
     return {free_memory=quantity.from_number(deps.free_memory()),diagnostics=diagnostics,inventory=inventory}
+  end
+  function self:_send(path,body,phase)
+    if not self.latency then return self.client:send(path,body) end
+    local started=deps.now()
+    local ok,result=pcall(self.client.send,self.client,path,body)
+    self.latency:observe(phase,deps.now()-started,not ok)
+    if not ok then error(result,0) end
+    return result
+  end
+  function self:_wait(phase,entry)
+    if self.latency and entry.queued_at then self.latency:observe(phase,deps.now()-entry.queued_at) end
   end
   function self:_queue_recheck(raw)
     local key=self.adapter:key(raw)
@@ -104,6 +125,7 @@ function M.new(config,deps)
     if self.rechecks.count>=16 or self.rechecks.bytes+cost>self.verification_bytes then
       self:diagnose("recheck_queue_full");return
     end
+    if self.latency then raw.queued_at=deps.now() end
     self.rechecks:put(key,raw,cost)
   end
   function self:_queue_verification(raw,token)
@@ -118,6 +140,7 @@ function M.new(config,deps)
       self:diagnose("verification_queue_full");return
     end
     raw.verification=token
+    if self.latency then raw.queued_at=deps.now() end
     self.verifications:put(key,raw,cost)
   end
   function self:_control()
@@ -157,10 +180,16 @@ function M.new(config,deps)
         while #samples>0 and not pcall(json.encode,body,limit) do samples[#samples]=nil end
         if #samples==0 then body.health.read_failures=nil;diagnostic_token=nil end
       end
-      self.pending_poll={body=json.encode(body,limit),sequence=body.sequence,reports=body.reports,diagnostic_token=diagnostic_token}
+      local sync_snapshot=false
+      if self.latency and self.latency:due() and deps.free_memory()>=32768 then
+        body.health.sync=self.latency:snapshot()
+        if pcall(json.encode,body,limit) then sync_snapshot=true
+        else body.health.sync=nil;self.latency:defer() end
+      end
+      self.pending_poll={body=json.encode(body,limit),sequence=body.sequence,reports=body.reports,diagnostic_token=diagnostic_token,sync_snapshot=sync_snapshot}
     end
     local pending=self.pending_poll
-    local ack=self.client:send("/bridge/v1/poll",pending.body)
+    local ack=self:_send("/bridge/v1/poll",pending.body,"control_http")
     if ack.ack~=pending.sequence or type(ack.commands)~="table" or #ack.commands>16 or type(ack.verify)~="table" or #ack.verify>16 or
       type(ack.scan_budget)~="number" or ack.scan_budget<0 or ack.scan_budget>512 or ack.scan_budget%1~=0 or
       type(ack.poll_millis)~="number" or ack.poll_millis<1 or ack.poll_millis>30000 then fatal("invalid_poll_confirmation") end
@@ -181,6 +210,7 @@ function M.new(config,deps)
     end
     self.poll_seq=ack.ack;self.pending_poll=nil;self.credits=ack.scan_budget;self.poll_delay=ack.poll_millis/1000
     if pending.diagnostic_token then self.read_diagnostics:ack(pending.diagnostic_token) end
+    if pending.sync_snapshot then self.latency:defer() end
   end
   function self:_next_raw()
     local scan_ready=self.iterator~=nil or deps.now()>=self.next_scan
@@ -189,6 +219,7 @@ function M.new(config,deps)
       (not self.regular_turn or not regular_ready) then
       self.regular_turn=true;self.next_recipe_check=deps.now()+5
       local key,detail=self.verifications:pop()
+      self:_wait("priority_queue",detail)
       local ok,value=pcall(self.adapter.read,self.adapter,detail)
       if not ok then
         self:_read_failure("exact_lookup_failed","priority",key,detail,value);self:_queue_verification(detail,detail.verification);return nil,1
@@ -217,6 +248,7 @@ function M.new(config,deps)
     if lane==0 or lane==1 then
       local queue=lane==0 and self.dirty or self.rechecks
       local key,dirty=queue:pop()
+      self:_wait(lane==0 and "event_queue" or "recheck_queue",dirty)
       local ok,value=pcall(self.adapter.read,self.adapter,dirty)
       if not ok then self:_read_failure("exact_lookup_failed",lane==0 and "event" or "recheck",key,dirty,value);return nil,1 end
       local cost=1
@@ -238,12 +270,13 @@ function M.new(config,deps)
     if lane==nil then return nil,0 end
     if not self.iterator then
       if deps.now()<self.next_scan then return nil,0 end
+      local started=deps.now()
       local ok,iterator=pcall(self.adapter.iterator,self.adapter)
       if not ok then self:diagnose("scan_unavailable");self.next_scan=deps.now()+10;return nil,1 end
-      self.iterator=iterator
+      self.iterator=iterator;self.scan_started_at=started
     end
     local ok,raw=pcall(self.iterator)
-    if not ok then self:diagnose("scan_failed");self.iterator=nil;self.next_scan=deps.now()+10;return nil,1 end
+    if not ok then self:diagnose("scan_failed");self.iterator=nil;self.scan_started_at=nil;self.next_scan=deps.now()+10;return nil,1 end
     if raw==nil then
       self.iterator=nil;self.scan_completed=true;self.next_scan=deps.now()+(config.scan_interval or 60)
       collect_step(16)
@@ -262,12 +295,13 @@ function M.new(config,deps)
     if known and known.label==(raw.label or raw.name) and (known.tag or "")== (raw.tag or "") then value.id=known.id else value.item=self.adapter:definition(raw) end
     -- Only full definitions need their representation retained until binding.
     -- Short-ID rows must not hide a large raw tag behind a tiny wire record.
-    return {key=key,label=raw.label or raw.name,tag=value.item and raw.tag or nil,item=value.item~=nil,verification=raw.verification,encoded=json.encode(value,self.client.request_bytes)}
+    return {key=key,label=raw.label or raw.name,tag=value.item and raw.tag or nil,item=value.item~=nil,verification=raw.verification,
+      sampled_at=self.latency and deps.now() or nil,encoded=json.encode(value,self.client.request_bytes)}
   end
   function self:_flush()
     local pending=self.pending_inventory
     if not pending then return end
-    local ack=self.client:send("/bridge/v1/inventory",pending.body)
+    local ack=self:_send("/bridge/v1/inventory",pending.body,"inventory_http")
     if ack.ack~=pending.sequence or type(ack.bindings)~="table" then fatal("invalid_inventory_confirmation") end
     local seen={}
     for _,binding in ipairs(ack.bindings) do
@@ -284,6 +318,10 @@ function M.new(config,deps)
       if entry.verification and queued and queued.value.verification==entry.verification then self.verifications:remove(entry.key) end
     end
     account(self,"batches",1);account(self,"updates",#pending.entries);account(self,"bytes",#pending.body)
+    if self.latency then
+      if pending.sampled_at then self.latency:observe("batch_ack",deps.now()-pending.sampled_at) end
+      if pending.scan_completed then self.latency:complete_scan(pending.scan_started_at) end
+    end
     if pending.scan_completed then self.first_scan_acked=true end
     self.inventory_seq=ack.ack;self.uploaded=self.uploaded+#pending.entries;self.pending_inventory=nil
   end
@@ -305,7 +343,9 @@ function M.new(config,deps)
     if completed then body=body..',"scan_completed":true' end
     body=body.."}";self.scan_completed=false
     for _,entry in ipairs(batch.entries) do entry.encoded=nil end
-    self.pending_inventory={body=body,sequence=seq,entries=batch.entries,scan_completed=completed}
+    self.pending_inventory={body=body,sequence=seq,entries=batch.entries,scan_completed=completed,
+      sampled_at=batch.sampled_at,scan_started_at=completed and self.scan_started_at or nil}
+    if completed then self.scan_started_at=nil end
     self.staged_inventory=nil
     self:_flush()
     return true
@@ -339,6 +379,7 @@ function M.new(config,deps)
         local raw,cost=self:_next_raw();self.credits=self.credits-cost
         account(self,"credits_used",cost)
         account(self,"collect_millis",math.max(0,math.floor((deps.now()-before)*1000+0.5)))
+        if self.latency and cost>0 then self.latency:observe("collection",deps.now()-before) end
         if raw then
           local ok,value=pcall(self._candidate,self,raw)
           if ok then candidate=value else self:diagnose("item_unrepresentable") end
@@ -349,6 +390,7 @@ function M.new(config,deps)
         elseif batch.size+#candidate.encoded+1>batch.limit then self.carry=candidate;send=true
         else
           batch.entries[#batch.entries+1]=candidate;batch.encoded[#batch.encoded+1]=candidate.encoded
+          if not batch.sampled_at then batch.sampled_at=candidate.sampled_at end
           batch.size=batch.size+#candidate.encoded+1
           send=candidate.verification~=nil
         end

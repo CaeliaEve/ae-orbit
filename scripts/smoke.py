@@ -174,7 +174,8 @@ def main():
             globals_.FIXTURE_URL = origin
             globals_.FIXTURE_TOKEN = created_lua["device_token"]
             globals_.FIXTURE_JOURNAL = (directory / ("lua-" + version)).as_posix()
-            globals_.fixture_now = time.monotonic
+            clock_offset = [0.0]
+            globals_.fixture_now = lambda offset=clock_offset: time.monotonic() + offset[0]
             globals_.fixture_sleep = time.sleep
 
             def card_request(url, body, headers):
@@ -228,6 +229,18 @@ def main():
             checks.append(f"Lua {version}: real HTTP with continued slices, stock 10+64=74 without change events or periodic rechecks, exact int64, CPU output, one craft invocation")
             print("PASS " + checks[-1], flush=True)
             checks.append(f"Lua {version}: bounded read failure details survive a sparse health poll without changing stock")
+            print("PASS " + checks[-1], flush=True)
+            clock_offset[0] += 31
+            globals_.fixture_tick()
+            timing = request("GET", lua_base)
+            sync = timing["health"]["sync"]
+            assert int(sync["captured_millis"]) >= 31000 and int(sync["first_scan_ack_millis"]) < 31000
+            assert int(sync["stages"]["collection"]["samples"]) > 0
+            assert int(sync["stages"]["inventory_http"]["samples"]) > 0
+            assert timing["first_scan"] and timing["session_started_at"]
+            globals_.fixture_tick()
+            assert request("GET", lua_base)["health"]["sync"] == sync, "sparse timing was erased or resent immediately"
+            checks.append(f"Lua {version}: bounded timing crosses real HTTP, keeps the first scan and survives an omitted snapshot")
             print("PASS " + checks[-1], flush=True)
 
         stop(backend)

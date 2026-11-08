@@ -12,7 +12,8 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-const networkColumns = `n.id,n.name,n.server_group,n.source,n.current_session,n.revision,n.last_seen,n.last_inventory,n.last_scan,n.capabilities,n.health`
+const networkColumns = `n.id,n.name,n.server_group,n.source,n.current_session,n.revision,n.last_seen,n.last_inventory,n.last_scan,n.capabilities,n.health,
+    n.first_scan,(SELECT created_at FROM bridge_sessions bs WHERE bs.id=n.current_session)`
 
 func (s *Store) CreateNetwork(ctx context.Context, adminID, name, group, source string) (protocol.Network, string, error) {
 	n := protocol.Network{ID: newID(), Name: strings.TrimSpace(name), ServerGroup: strings.TrimSpace(group), Source: source}
@@ -58,7 +59,7 @@ func (s *Store) RotateDeviceToken(ctx context.Context, adminID, networkID string
 			return err
 		}
 		if _, err := tx.Exec(ctx, `UPDATE networks SET device_hash=$2,current_session='',capabilities='{}',health='{}',
-			last_seen=NULL,last_scan=NULL,revision=revision+1,catalog_revision=catalog_revision+1 WHERE id=$1`, networkID, hash[:]); err != nil {
+			last_seen=NULL,last_scan=NULL,first_scan=NULL,revision=revision+1,catalog_revision=catalog_revision+1 WHERE id=$1`, networkID, hash[:]); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(ctx, "DELETE FROM cpu_snapshots WHERE network_id=$1", networkID); err != nil {
@@ -77,7 +78,7 @@ type scanner interface{ Scan(...any) error }
 func (s *Store) scanNetwork(row scanner) (protocol.Network, error) {
 	var n protocol.Network
 	var caps []byte
-	err := row.Scan(&n.ID, &n.Name, &n.ServerGroup, &n.Source, &n.SessionID, &n.Revision, &n.LastSeen, &n.LastInventory, &n.LastScan, &caps, &n.Health)
+	err := row.Scan(&n.ID, &n.Name, &n.ServerGroup, &n.Source, &n.SessionID, &n.Revision, &n.LastSeen, &n.LastInventory, &n.LastScan, &caps, &n.Health, &n.FirstScan, &n.SessionStartedAt)
 	if err != nil {
 		return n, notFound(err)
 	}
@@ -145,6 +146,7 @@ func (s *Store) negotiatedLimits(responseBytes int) protocol.Limits {
 	l.ResponseBytes = min(responseBytes, l.ResponseBytes)
 	l.BatchItems = min(l.BatchItems, l.ResponseBytes/96)
 	l.DiagnosticSamples = protocol.MaxReadFailureSamples
+	l.SyncTelemetry = true
 	return l
 }
 
@@ -185,7 +187,7 @@ func (s *Store) Hello(ctx context.Context, d Device, h protocol.Hello) (protocol
 			if _, err = tx.Exec(ctx, "INSERT INTO bridge_sessions(id,network_id,boot_id,capabilities,response_bytes) VALUES($1,$2,$3,$4,$5)", w.SessionID, d.NetworkID, h.BootID, caps, w.Limits.ResponseBytes); err != nil {
 				return err
 			}
-			if _, err = tx.Exec(ctx, "UPDATE networks SET current_session=$2,capabilities=$3,health='{}',revision=revision+1,catalog_revision=catalog_revision+1,last_scan=NULL WHERE id=$1", d.NetworkID, w.SessionID, caps); err != nil {
+			if _, err = tx.Exec(ctx, "UPDATE networks SET current_session=$2,capabilities=$3,health='{}',revision=revision+1,catalog_revision=catalog_revision+1,last_scan=NULL,first_scan=NULL WHERE id=$1", d.NetworkID, w.SessionID, caps); err != nil {
 				return err
 			}
 			if _, err = tx.Exec(ctx, "DELETE FROM cpu_snapshots WHERE network_id=$1", d.NetworkID); err != nil {
