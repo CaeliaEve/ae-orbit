@@ -189,6 +189,7 @@ function M.new(config,deps)
       self.pending_poll={body=json.encode(body,limit),sequence=body.sequence,reports=body.reports,diagnostic_token=diagnostic_token,sync_snapshot=sync_snapshot}
     end
     local pending=self.pending_poll
+    local started=deps.now()
     local ack=self:_send("/bridge/v1/poll",pending.body,"control_http")
     if ack.ack~=pending.sequence or type(ack.commands)~="table" or #ack.commands>16 or type(ack.verify)~="table" or #ack.verify>16 or
       type(ack.scan_budget)~="number" or ack.scan_budget<0 or ack.scan_budget>512 or ack.scan_budget%1~=0 or
@@ -211,6 +212,7 @@ function M.new(config,deps)
     self.poll_seq=ack.ack;self.pending_poll=nil;self.credits=ack.scan_budget;self.poll_delay=ack.poll_millis/1000
     if pending.diagnostic_token then self.read_diagnostics:ack(pending.diagnostic_token) end
     if pending.sync_snapshot then self.latency:defer() end
+    return started
   end
   function self:_next_raw()
     local scan_ready=self.iterator~=nil or deps.now()>=self.next_scan
@@ -421,14 +423,16 @@ function M.new(config,deps)
     self.tracker:pump()
     -- Grants span processing slices, but expire before the next control cycle.
     self.credits=0
-    local control_ok,control_error=pcall(self._control,self)
-    if not control_ok and not transient(control_error) then error(control_error,0) end
+    local control_started_at=deps.now()
+    local control_ok,control_result=pcall(self._control,self)
+    if not control_ok and not transient(control_result) then error(control_result,0) end
+    if control_ok then control_started_at=control_result end
     local control_completed_at=deps.now()
     local inventory_ok,inventory_result=pcall(self._inventory,self)
     if not inventory_ok and not transient(inventory_result) then error(inventory_result,0) end
     if not control_ok then self:diagnose("control_transport_failed") end
     if not inventory_ok then self:diagnose("inventory_transport_failed") end
-    return {control_ok=control_ok,inventory_ok=inventory_ok,control_completed_at=control_completed_at,
+    return {control_ok=control_ok,inventory_ok=inventory_ok,control_started_at=control_started_at,control_completed_at=control_completed_at,
       inventory_work=control_ok and inventory_ok and inventory_result==true}
   end
   return self

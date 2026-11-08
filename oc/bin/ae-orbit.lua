@@ -66,10 +66,16 @@ local function run()
     local status=bridge:tick()
     if status.control_ok then backoff=1 else backoff=math.min(backoff*2,30) end
     -- Reuse the remaining grant in bounded slices until the next control poll.
-    -- Anchor the delay after control completes so retries retain their backoff.
-    local next_poll=status.control_completed_at+math.max(bridge.poll_delay,backoff)*(1+math.random()*0.2)
+    -- Successful requests consume their polling interval instead of extending
+    -- it. Failed requests still get a full backoff after they return.
+    local anchor=status.control_ok and status.control_started_at or status.control_completed_at
+    local delay=math.max(bridge.poll_delay,backoff)*(1+math.random()*0.2)
+    local next_poll=anchor+delay
+    -- Keep the previous bounded work window when a slow request consumed the
+    -- interval. Poll early only once available inventory work has finished.
+    local work_deadline=status.control_completed_at+delay
     local more=status.inventory_work
-    while more and computer.uptime()<next_poll do
+    while more and computer.uptime()<work_deadline do
       more=bridge:continue_inventory()
       if more then os.sleep(0) end
     end

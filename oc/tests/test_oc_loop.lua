@@ -1,21 +1,23 @@
 local entry=assert(loadfile(TEST_ROOT.."/oc/bin/ae-orbit.lua"))
 
-local function run_case(fail_first_poll,first_control_seconds,work_seconds)
+local function run_case(fail_first_poll,first_control_seconds,work_seconds,jitter,poll_delay,steady_slow)
   first_control_seconds=first_control_seconds or 0.1
   work_seconds=work_seconds or 0.1
+  jitter=jitter or 0
+  poll_delay=poll_delay or 1
   local clock,remaining=0,0
   local starts,work_polls={},{}
-  local bridge={session="test-session",poll_delay=1,uploaded=0,ids={count=0},dirty={count=0}}
+  local bridge={session="test-session",poll_delay=poll_delay,uploaded=0,ids={count=0},dirty={count=0}}
   function bridge:start() end
   function bridge:diagnose() end
   function bridge:tick()
     if #starts==3 then error({code="test_stop",fatal=true}) end
     starts[#starts+1]=clock
-    clock=clock+(#starts==1 and first_control_seconds or 0.1)
+    clock=clock+((#starts==1 or steady_slow) and first_control_seconds or 0.1)
     local completed=clock
     clock=clock+0.1;remaining=3
     local ok=not (fail_first_poll and #starts==1)
-    return {control_ok=ok,inventory_ok=true,inventory_work=ok,control_completed_at=completed}
+    return {control_ok=ok,inventory_ok=true,inventory_work=ok,control_started_at=starts[#starts],control_completed_at=completed}
   end
   function bridge:continue_inventory()
     assert(remaining>0,"the application kept polling an empty work queue")
@@ -42,7 +44,7 @@ local function run_case(fail_first_poll,first_control_seconds,work_seconds)
     return function() return {me_address="test-me",url="http://127.0.0.1:18080",token="test-token"} end
   end
   os.sleep=function(delay) assert(delay>=0);clock=clock+delay end
-  math.random=function() return 0 end
+  math.random=function() return jitter end
   print=function() end
   local stopped
   io.stderr={write=function(_,message) stopped=message end}
@@ -51,23 +53,32 @@ local function run_case(fail_first_poll,first_control_seconds,work_seconds)
   for name in pairs(modules) do package.loaded[name]=saved[name] end
   assert(ok,err)
   assert(stopped=="AE Orbit stopped: test_stop\n","the application did not shut down at the fixture boundary")
+  local interval=math.max(poll_delay,1)*(1+jitter*0.2)
   if work_seconds>0.1 then
     assert(#work_polls>0 and #work_polls<9,"inventory work ignored the control deadline")
-    assert(starts[2]<=1.1+work_seconds,"inventory work overran more than one bounded slice")
+    assert(starts[2]<=first_control_seconds+interval+work_seconds,"inventory work overran more than one bounded slice")
   elseif fail_first_poll then
-    assert(math.abs(starts[2]-first_control_seconds-2)<0.000001,"poll backoff was not measured from the completed request")
+    local retry_delay=math.max(poll_delay,2)*(1+jitter*0.2)
+    assert(math.abs(starts[2]-first_control_seconds-retry_delay)<0.000001,"poll backoff was not measured from the completed request")
     assert(#work_polls==6,"the application continued acquisition during poll backoff")
     for _,poll in ipairs(work_polls) do assert(poll~=1) end
   else
-    assert(math.abs(starts[2]-1.1)<0.000001,"the application slept a full interval after doing work")
-    assert(#work_polls==9,"the application left inventory work idle between control polls")
+    assert(math.abs(starts[2]-math.max(interval,first_control_seconds+0.4))<0.000001,"successful control latency was added to the interval or stole granted inventory work")
+    assert(#work_polls==9,"a slow successful request starved its remaining inventory work")
   end
   if work_seconds==0.1 then
-    assert(math.abs(starts[3]-starts[2]-1.1)<0.000001,"inventory work delayed the next control poll")
+    local expected=steady_slow and math.max(interval,first_control_seconds+0.4) or interval
+    assert(math.abs(starts[3]-starts[2]-expected)<0.000001,"control scheduling drifted or sent catch-up polls")
   end
 end
 
 run_case(false)
+run_case(false,0.35)
+run_case(false,3)
+run_case(false,3,0.1,0,1,true)
+run_case(false,0.35,0.1,0.5)
+run_case(false,0.35,0.1,0.5,5)
 run_case(true)
 run_case(true,3)
+run_case(true,3,0.1,0.5)
 run_case(false,0.1,0.6)

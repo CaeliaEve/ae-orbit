@@ -8,6 +8,7 @@ local journal = require("aeorbit.journal")
 local runner = require("aeorbit.runner")
 
 fixture_stock, fixture_requests, fixture_continuations = 10, 0, 0
+fixture_framed_requests, fixture_framed_eof_reads = 0, 0
 local job
 local bridge
 local function raw(index)
@@ -69,14 +70,24 @@ function me.getCpus()
 end
 local internet={}
 function internet.request(url,body,headers)
-  local status,text=fixture_http(url,body,headers)
+  local status,text,response_headers=fixture_http(url,body,headers)
+  local framed=false
+  for name,values in pairs(response_headers or {}) do
+    if name:lower()=="content-length" then
+      assert(#values==1 and tonumber(values[1])==#text,"real HTTP length disagreed with its received bytes")
+      framed=true;fixture_framed_requests=fixture_framed_requests+1
+    end
+  end
   local offset,closed=1,false
   return proxy.new({
     finishConnect=function() return true end,
-    response=function() return status end,
+    response=function() return status,nil,response_headers end,
     read=function(size)
       assert(not closed)
-      if offset>#text then return nil end
+      if offset>#text then
+        if framed then fixture_framed_eof_reads=fixture_framed_eof_reads+1 end
+        return nil
+      end
       local part=text:sub(offset,offset+size-1);offset=offset+#part;return part
     end,
     close=function() closed=true end

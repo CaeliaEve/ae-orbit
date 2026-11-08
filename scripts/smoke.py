@@ -48,6 +48,7 @@ def main():
     parser.add_argument("--psql", default=shutil.which("psql") or str(ROOT / ".tools/pgsql/bin/psql.exe"))
     parser.add_argument("--server", default=str(ROOT / ("dist/ae-orbit.exe" if os.name == "nt" else "dist/ae-orbit")))
     parser.add_argument("--simulator", default=str(ROOT / ("dist/simulator.exe" if os.name == "nt" else "dist/simulator")))
+    parser.add_argument("--output", default=str(ROOT / ".local"), help="directory for owned test artifacts")
     args = parser.parse_args()
     dsn = os.environ.get("AE_TEST_DATABASE_URL", "").strip()
     if not dsn:
@@ -57,7 +58,7 @@ def main():
             raise SystemExit(f"Missing executable: {path}")
 
     schema = "smoke_" + uuid.uuid4().hex
-    directory = ROOT / ".local" / schema
+    directory = pathlib.Path(args.output) / schema
     directory.mkdir(parents=True)
     parsed = urllib.parse.urlsplit(dsn)
     query = dict(urllib.parse.parse_qsl(parsed.query))
@@ -107,16 +108,19 @@ def main():
         until(ready)
         return process
 
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
     def raw_request(url, body=None, headers=None, method=None):
         request_object = urllib.request.Request(url, data=body, headers=headers or {}, method=method)
         try:
-            response = urllib.request.urlopen(request_object, timeout=5)
+            response = opener.open(request_object, timeout=5)
         except urllib.error.HTTPError as error:
             response = error
         with response:
             data = response.read(4 * 1024 * 1024 + 1)
             assert len(data) <= 4 * 1024 * 1024, "smoke response exceeds its test budget"
-            return response.status, data.decode("utf-8")
+            response_headers = {name: response.headers.get_all(name) for name in response.headers.keys()}
+            return response.status, data.decode("utf-8"), response_headers
 
     def request(method, path, body=None, expected=200):
         headers = {"Authorization": "Bearer " + admin}
@@ -124,7 +128,7 @@ def main():
         if body is not None:
             encoded = json.dumps(body, separators=(",", ":")).encode()
             headers["Content-Type"] = "application/json"
-        status, data = raw_request(origin + path, encoded, headers, method)
+        status, data, _ = raw_request(origin + path, encoded, headers, method)
         if status != expected:
             raise AssertionError(f"{method} {path}: HTTP {status}, expected {expected}")
         return json.loads(data) if data else None
@@ -178,9 +182,12 @@ def main():
             globals_.fixture_now = lambda offset=clock_offset: time.monotonic() + offset[0]
             globals_.fixture_sleep = time.sleep
 
-            def card_request(url, body, headers):
+            def card_request(url, body, headers, lua_runtime=runtime):
                 assert url.startswith(origin + "/bridge/v1/")
-                return raw_request(url, body.encode(), dict(headers.items()), "POST")
+                status, text, response_headers = raw_request(url, body.encode(), dict(headers.items()), "POST")
+                return status, text, lua_runtime.table_from({
+                    name: lua_runtime.table_from(values) for name, values in response_headers.items()
+                })
 
             globals_.fixture_http = card_request
             runtime.execute("package.path = TEST_ROOT .. '/oc/lib/?.lua;' .. TEST_ROOT .. '/oc/tests/?.lua;' .. package.path")
@@ -242,6 +249,10 @@ def main():
             assert request("GET", lua_base)["health"]["sync"] == sync, "sparse timing was erased or resent immediately"
             checks.append(f"Lua {version}: bounded timing crosses real HTTP, keeps the first scan and survives an omitted snapshot")
             print("PASS " + checks[-1], flush=True)
+            assert globals_.fixture_framed_requests > 0, "real HTTP never exercised Content-Length"
+            assert globals_.fixture_framed_eof_reads == 0, "complete framed responses made extra native EOF reads"
+            checks.append(f"Lua {version}: real HTTP lengths stop bounded native reads at the complete response")
+            print("PASS " + checks[-1], flush=True)
 
         stop(backend)
         backend = start_server()
@@ -250,7 +261,7 @@ def main():
         checks.append("Backend process restart preserves inventory and completed orders")
         print("PASS " + checks[-1], flush=True)
         summary = {"checks": checks, "simulator": stats, "game_validation": False}
-        (ROOT / ".local/smoke-result.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+        (pathlib.Path(args.output) / "smoke-result.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
     finally:
         for process in reversed(processes):
             stop(process)

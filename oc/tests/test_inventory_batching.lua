@@ -96,3 +96,31 @@ local s,r=fixture({grant=2,config={scan_slice_seconds=0}})
 local status=r:tick()
 assert(s.reads==1 and status.inventory_work,"an empty processing slice never started acquisition")
 assert(not r:continue_inventory() and s.reads==2 and s.items["test:cold_2"])
+
+-- Scheduling timestamps cover control only; an upload in the same tick must
+-- not become part of the next successful poll's starting point.
+do
+  local s,r=fixture({grant=1,http_delay=0.35})
+  local status=r:tick()
+  assert(status.control_started_at==0 and status.control_completed_at==0.35,"control timing did not bracket its request")
+  assert(s.clock>status.control_completed_at,"fixture did not include inventory work after control")
+end
+
+do
+  local s,r=fixture({grant=0})
+  r.client.send=function()
+    s.clock=s.clock+3
+    error({code="transport_failed",fatal=false})
+  end
+  local status=r:tick()
+  assert(not status.control_ok and status.control_started_at==0 and status.control_completed_at==3,"failed control timing lost the completion boundary for backoff")
+end
+
+-- CPU discovery can be slow. Its preparation time is not the HTTP request's
+-- start: otherwise a short next poll could arrive before the server grant is due.
+do
+  local s,r=fixture({grant=1,http_delay=0.35})
+  r.adapter.cpus=function() s.clock=s.clock+2;return {},false end
+  local status=r:tick()
+  assert(status.control_started_at==2 and status.control_completed_at==2.35,"control preparation was counted as network request time")
+end
