@@ -9,6 +9,20 @@ import (
 	"github.com/CaeliaEve/ae-orbit/internal/store"
 )
 
+func (s *Server) refreshItems(w http.ResponseWriter, r *http.Request, member protocol.Member) {
+	var input protocol.ItemRefreshInput
+	if err := readJSON(w, r, &input, 2048); err != nil {
+		fail(w, err)
+		return
+	}
+	result, err := s.db.RequestItemRefresh(r.Context(), member.ID, r.PathValue("network"), input.IDs)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	respond(w, http.StatusAccepted, result)
+}
+
 func (s *Server) lookupItems(w http.ResponseWriter, r *http.Request, member protocol.Member) {
 	values := r.URL.Query()["ids"]
 	if len(values) != 1 || len(values[0]) == 0 || len(values[0]) > 3999 {

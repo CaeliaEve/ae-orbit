@@ -85,11 +85,12 @@ def main():
         for key, value in urllib.parse.parse_qsl(parsed.query):
             if key in ("sslmode", "sslcert", "sslkey", "sslrootcert", "options"):
                 pg_env["PG" + key.upper()] = value
-        result = subprocess.run([args.psql, "-X", "-q", "-v", "ON_ERROR_STOP=1", "-f", "-"],
+        result = subprocess.run([args.psql, "-X", "-q", "-t", "-A", "-v", "ON_ERROR_STOP=1", "-f", "-"],
                                 input=statement, text=True, capture_output=True, env=pg_env,
                                 creationflags=NO_WINDOW, timeout=15)
         if result.returncode:
             raise RuntimeError("isolated test schema operation failed: " + result.stderr[-1000:])
+        return result.stdout.strip()
 
     def start_server():
         log = (directory / f"server-{len(processes)}.log").open("wb")
@@ -236,6 +237,65 @@ def main():
             checks.append(f"Lua {version}: real HTTP with continued slices, stock 10+64=74 without change events or periodic rechecks, exact int64, CPU output, one craft invocation")
             print("PASS " + checks[-1], flush=True)
             checks.append(f"Lua {version}: bounded read failure details survive a sparse health poll without changing stock")
+            print("PASS " + checks[-1], flush=True)
+
+            lookup_path = lua_base + "/items/lookup?ids=" + target["id"]
+            before_refresh = request("GET", lookup_path)
+            recipe_observed = before_refresh["items"][0]["craftable_observed_at"]
+            craft_requests = globals_.fixture_requests
+            globals_.fixture_stock = 91
+            pending = request("POST", lua_base + "/items/refresh", {"ids": [target["id"], target["id"]]}, 202)
+            assert len(pending["items"]) == 1 and pending["items"][0]["quantity"] == "74", "refresh admission replaced cached stock"
+            assert len(pending["refreshes"]) == 1 and pending["refreshes"][0]["state"] == "pending"
+            generation = pending["refreshes"][0]
+            assert generation["id"] == target["id"] and len(generation["request_id"]) == 32
+            assert generation["requested_at"] < generation["expires_at"] and not generation.get("confirmed_at")
+            duplicate = request("POST", lua_base + "/items/refresh", {"ids": [target["id"]]}, 202)
+            assert duplicate["refreshes"] == pending["refreshes"], "duplicate refresh changed its generation or deadline"
+            assert duplicate["items"] == before_refresh["items"], "refresh admission changed inventory evidence"
+
+            def refresh_confirmed(quantity, token):
+                view = request("GET", lookup_path)
+                refresh = view["refreshes"][0]
+                if refresh["state"] != "confirmed":
+                    return False
+                assert refresh["request_id"] == token and refresh.get("confirmed_at"), "wrong refresh receipt confirmed"
+                assert view["items"][0]["quantity"] == quantity, "confirmed refresh retained stale stock"
+                assert view["items"][0]["craftable"] is True
+                assert view["items"][0]["craftable_observed_at"] == recipe_observed, "count refresh changed recipe evidence"
+                assert globals_.fixture_requests == craft_requests, "count refresh invoked crafting"
+                return view
+
+            tick_until(lambda: refresh_confirmed("91", generation["request_id"]))
+            checks.append(f"Lua {version}: duplicate HTTP refresh returns cached stock immediately, then confirms fresh count without recipe changes or crafting")
+            print("PASS " + checks[-1], flush=True)
+
+            unchanged_before = request("GET", lookup_path)
+            event_cursor = sql(f'SELECT coalesce(max(id),0) FROM "{schema}".network_events;')
+            unchanged = request("POST", lua_base + "/items/refresh", {"ids": [target["id"]]}, 202)["refreshes"][0]
+            assert unchanged["state"] == "pending" and unchanged["request_id"] != generation["request_id"]
+            tick_until(lambda: refresh_confirmed("91", unchanged["request_id"]))
+            unchanged_after = request("GET", lookup_path)
+            assert unchanged_after["items"][0]["observed_at"] > unchanged_before["items"][0]["observed_at"]
+            assert unchanged_after["revision"] == unchanged_before["revision"], "unchanged count invalidated inventory"
+            confirmation_events = sql(f"""SELECT count(*) FROM "{schema}".network_events
+                WHERE network_id='{created_lua["network"]["id"]}' AND id>{event_cursor} AND kind='inventory';""")
+            assert confirmation_events == "1", "unchanged refresh did not emit exactly one committed inventory notification"
+            checks.append(f"Lua {version}: unchanged quantity confirms a new generation and emits one inventory notification without a revision change")
+            print("PASS " + checks[-1], flush=True)
+
+            globals_.fixture_stock = 103
+            globals_.fixture_fail_lookup(True, False)
+            lookup_failures = globals_.fixture_lookup_failures
+            failed = request("POST", lua_base + "/items/refresh", {"ids": [target["id"]]}, 202)["refreshes"][0]
+            tick_until(lambda: globals_.fixture_lookup_failures > lookup_failures)
+            retained = request("GET", lookup_path)
+            assert retained["items"][0]["quantity"] == "91", "failed native refresh invented stock"
+            assert retained["refreshes"][0]["state"] == "pending", "failed native refresh was confirmed"
+            assert retained["refreshes"][0]["request_id"] == failed["request_id"]
+            globals_.fixture_fail_lookup(False)
+            tick_until(lambda: refresh_confirmed("103", failed["request_id"]))
+            checks.append(f"Lua {version}: failed native refresh retains cached stock and pending generation until recovery confirms it")
             print("PASS " + checks[-1], flush=True)
             clock_offset[0] += 31
             globals_.fixture_tick()

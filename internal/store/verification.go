@@ -14,7 +14,7 @@ import (
 //go:embed verification_candidates.sql
 var verificationCandidates string
 
-func (s *Store) verifications(ctx context.Context, tx pgx.Tx, networkID string, responseBytes, slots, queueBytes int, ack *protocol.PollAck) error {
+func (s *Store) verifications(ctx context.Context, tx pgx.Tx, networkID string, responseBytes, slots, queueBytes int, ack *protocol.PollAck, afterPriority func() error) error {
 	window := 0
 	if slots > 0 {
 		// Rotate a bounded window even when recent observations satisfy every
@@ -39,7 +39,16 @@ func (s *Store) verifications(ctx context.Context, tx pgx.Tx, networkID string, 
 		return err
 	}
 	var ordinary, shortRetry, priority []int64
+	refreshDispatched := false
 	for _, v := range candidates {
+		// Commands and order confirmations get first choice of response space.
+		// On-demand quantity reads precede the potentially endless cold catalog.
+		if v.Token == "" && !refreshDispatched {
+			if err = afterPriority(); err != nil {
+				return err
+			}
+			refreshDispatched = true
+		}
 		// Bound both published raw-tag FIFO keys and the new digest keys while
 		// devices update. DecodedLen conservatively includes base64 padding.
 		tagKeyBytes := 0
@@ -69,6 +78,11 @@ func (s *Store) verifications(ctx context.Context, tx pgx.Tx, networkID string, 
 			priority = append(priority, int64(v.ID))
 		} else {
 			queueBytes -= cost
+		}
+	}
+	if !refreshDispatched {
+		if err = afterPriority(); err != nil {
+			return err
 		}
 	}
 	if len(ordinary) > 0 {

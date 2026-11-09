@@ -51,6 +51,7 @@ type Definition struct {
 
 type Capabilities struct {
 	Inventory        bool     `json:"inventory"`
+	QuantityRefresh  bool     `json:"quantity_refresh,omitempty"`
 	Craft            bool     `json:"craft"`
 	CPUOutput        bool     `json:"cpu_output"`
 	ExactQuantities  bool     `json:"exact_quantities"`
@@ -75,6 +76,7 @@ type Limits struct {
 	PollMillis        int  `json:"poll_millis"`
 	DiagnosticSamples int  `json:"diagnostic_samples,omitempty"`
 	SyncTelemetry     bool `json:"sync_telemetry,omitempty"`
+	QuantityRefresh   bool `json:"quantity_refresh,omitempty"`
 }
 
 type Welcome struct {
@@ -93,6 +95,7 @@ type Update struct {
 	Observation  Quantity    `json:"observation"`
 	Craftable    *bool       `json:"craftable"`
 	Verification string      `json:"verification,omitempty"`
+	Refresh      string      `json:"refresh,omitempty"`
 }
 
 func (u *Update) UnmarshalJSON(data []byte) error {
@@ -103,6 +106,7 @@ func (u *Update) UnmarshalJSON(data []byte) error {
 		Observation  Quantity        `json:"observation"`
 		Craftable    json.RawMessage `json:"craftable"`
 		Verification string          `json:"verification,omitempty"`
+		Refresh      string          `json:"refresh,omitempty"`
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
@@ -116,7 +120,7 @@ func (u *Update) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(wire.Craftable, &craftable); err != nil {
 		return err
 	}
-	*u = Update{ID: wire.ID, Item: wire.Item, Quantity: *wire.Quantity, Observation: wire.Observation, Craftable: craftable, Verification: wire.Verification}
+	*u = Update{ID: wire.ID, Item: wire.Item, Quantity: *wire.Quantity, Observation: wire.Observation, Craftable: craftable, Verification: wire.Verification, Refresh: wire.Refresh}
 	return nil
 }
 
@@ -169,9 +173,23 @@ type ItemQuery struct {
 }
 
 type ItemLookup struct {
-	Items      []Item     `json:"items"`
-	MissingIDs []Quantity `json:"missing_ids"`
-	Revision   Quantity   `json:"revision"`
+	Items      []Item        `json:"items"`
+	MissingIDs []Quantity    `json:"missing_ids"`
+	Revision   Quantity      `json:"revision"`
+	Refreshes  []ItemRefresh `json:"refreshes,omitempty"`
+}
+
+type ItemRefreshInput struct {
+	IDs []Quantity `json:"ids"`
+}
+
+type ItemRefresh struct {
+	ID          Quantity   `json:"id"`
+	RequestID   string     `json:"request_id"`
+	State       string     `json:"state"`
+	RequestedAt time.Time  `json:"requested_at"`
+	ExpiresAt   time.Time  `json:"expires_at"`
+	ConfirmedAt *time.Time `json:"confirmed_at,omitempty"`
 }
 
 type Stack struct {
@@ -248,6 +266,8 @@ type Poll struct {
 	Health        *Health  `json:"health,omitempty"`
 	RecheckSlots  *int     `json:"recheck_slots,omitempty"`
 	RecheckBytes  *int     `json:"recheck_bytes,omitempty"`
+	RefreshSlots  *int     `json:"refresh_slots,omitempty"`
+	RefreshBytes  *int     `json:"refresh_bytes,omitempty"`
 }
 
 type Command struct {
@@ -267,11 +287,19 @@ type Verification struct {
 }
 
 type PollAck struct {
-	Ack        Quantity       `json:"ack"`
-	Commands   []Command      `json:"commands"`
-	Verify     []Verification `json:"verify"`
-	PollMillis int            `json:"poll_millis"`
-	ScanBudget int            `json:"scan_budget"`
+	Ack        Quantity          `json:"ack"`
+	Commands   []Command         `json:"commands"`
+	Verify     []Verification    `json:"verify"`
+	PollMillis int               `json:"poll_millis"`
+	ScanBudget int               `json:"scan_budget"`
+	Refresh    []QuantityRefresh `json:"refresh,omitempty"`
+}
+
+type QuantityRefresh struct {
+	ID        Quantity   `json:"id"`
+	Item      Definition `json:"item"`
+	Token     string     `json:"token"`
+	TTLMillis int        `json:"ttl_millis"`
 }
 
 type OrderInput struct {

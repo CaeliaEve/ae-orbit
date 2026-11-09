@@ -71,6 +71,9 @@ func (b InventoryBatch) Validate(maxItems int) error {
 		if u.Verification != "" && (len(u.Verification) != 32 || strings.Trim(u.Verification, "0123456789abcdef") != "") {
 			return fmt.Errorf("invalid inventory verification")
 		}
+		if u.Refresh != "" && (len(u.Refresh) != 32 || strings.Trim(u.Refresh, "0123456789abcdef") != "") {
+			return fmt.Errorf("invalid inventory refresh receipt")
+		}
 		if u.Item != nil {
 			if err := u.Item.Validate(); err != nil {
 				return err
@@ -103,6 +106,10 @@ func (p Poll) Validate(maxCPUs, maxReports int) error {
 	if (p.RecheckSlots != nil && (*p.RecheckSlots < 0 || *p.RecheckSlots > 16)) ||
 		(p.RecheckBytes != nil && (*p.RecheckBytes < 0 || *p.RecheckBytes > 16384)) {
 		return fmt.Errorf("invalid recheck capacity")
+	}
+	if (p.RefreshSlots != nil && (*p.RefreshSlots < 0 || *p.RefreshSlots > 8)) ||
+		(p.RefreshBytes != nil && (*p.RefreshBytes < 0 || *p.RefreshBytes > 16384)) {
+		return fmt.Errorf("invalid refresh capacity")
 	}
 	for _, r := range p.Reports {
 		if !textOK(r.OrderID, 1, 128) || !textOK(r.AttemptID, 1, 128) || !textOK(r.Reason, 0, 1024) || !ReportState(r.State) {
@@ -165,7 +172,7 @@ func (p Poll) Validate(maxCPUs, maxReports int) error {
 
 func (d ReadFailure) Validate() error {
 	if (d.Code != "exact_lookup_failed" && d.Code != "recipe_lookup_failed") ||
-		(d.Source != "event" && d.Source != "recheck" && d.Source != "priority") ||
+		(d.Source != "event" && d.Source != "recheck" && d.Source != "priority" && d.Source != "refresh") ||
 		!textOK(d.Name, 1, 256) || !textOK(d.Message, 1, 160) ||
 		strings.ContainsFunc(d.Name, unicode.IsControl) || strings.ContainsFunc(d.Message, unicode.IsControl) ||
 		d.Damage < 0 || d.Damage > 2147483647 || d.NBTBytes < 0 || d.NBTBytes > 16384 ||

@@ -25,6 +25,8 @@ type inventoryRow struct {
 	CraftableObservation    protocol.Quantity `json:"craftable_observation"`
 	Verification            string            `json:"verification,omitempty"`
 	VerificationObservation protocol.Quantity `json:"verification_observation,omitempty"`
+	Refresh                 string            `json:"refresh,omitempty"`
+	RefreshObservation      protocol.Quantity `json:"refresh_observation,omitempty"`
 	Label                   *string           `json:"label"`
 	NBT                     *string           `json:"nbt"`
 }
@@ -81,6 +83,9 @@ func (s *Store) Ingest(ctx context.Context, d Device, b protocol.InventoryBatch)
 		merged := map[protocol.Quantity]inventoryRow{}
 		for i, u := range b.Updates {
 			row := inventoryRow{ID: ids[i], Quantity: u.Quantity, Observation: u.Observation, Craftable: u.Craftable}
+			if u.Refresh != "" {
+				row.Refresh, row.RefreshObservation = u.Refresh, u.Observation
+			}
 			if u.Craftable != nil {
 				row.CraftableObservation = u.Observation
 				if u.Verification != "" {
@@ -117,11 +122,19 @@ func (s *Store) Ingest(ctx context.Context, d Device, b protocol.InventoryBatch)
 				if row.VerificationObservation > confirmedAt {
 					confirmation, confirmedAt = row.Verification, row.VerificationObservation
 				}
+				refresh, refreshedAt := previous.Refresh, previous.RefreshObservation
+				if row.RefreshObservation == refreshedAt && row.Refresh != "" && refresh != "" && row.Refresh != refresh {
+					return ErrConflict
+				}
+				if row.RefreshObservation > refreshedAt {
+					refresh, refreshedAt = row.Refresh, row.RefreshObservation
+				}
 				if row.Observation <= previous.Observation {
 					row = previous
 				}
 				row.Craftable, row.CraftableObservation = flag, observation
 				row.Verification, row.VerificationObservation = confirmation, confirmedAt
+				row.Refresh, row.RefreshObservation = refresh, refreshedAt
 			}
 			merged[row.ID] = row
 		}
@@ -131,10 +144,10 @@ func (s *Store) Ingest(ctx context.Context, d Device, b protocol.InventoryBatch)
 		}
 		sort.Slice(input, func(i, j int) bool { return input[i].ID < input[j].ID })
 		var accepted int
-		var changed, catalogChanged, recipeChanged bool
+		var changed, catalogChanged, recipeChanged, refreshConfirmed bool
 		if len(input) > 0 {
 			encoded, _ := json.Marshal(input)
-			err = tx.QueryRow(ctx, inventoryUpsert, d.NetworkID, encoded, b.SessionID, s.options.RecheckAfter.Seconds()).Scan(&accepted, &changed, &catalogChanged, &recipeChanged)
+			err = tx.QueryRow(ctx, inventoryUpsert, d.NetworkID, encoded, b.SessionID, s.options.RecheckAfter.Seconds()).Scan(&accepted, &changed, &catalogChanged, &recipeChanged, &refreshConfirmed)
 			if err != nil {
 				return err
 			}
@@ -157,7 +170,7 @@ func (s *Store) Ingest(ctx context.Context, d Device, b protocol.InventoryBatch)
 		if _, err = tx.Exec(ctx, "UPDATE bridge_sessions SET inventory_seq=$2,inventory_hash=$3,inventory_response=$4 WHERE id=$1", b.SessionID, int64(b.Sequence), hash[:], encoded); err != nil {
 			return err
 		}
-		if changed || b.ScanCompleted {
+		if changed || b.ScanCompleted || refreshConfirmed {
 			return s.event(ctx, tx, d.NetworkID, "inventory")
 		}
 		return nil

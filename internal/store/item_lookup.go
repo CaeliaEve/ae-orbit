@@ -61,12 +61,19 @@ func (s *Store) ItemsByID(ctx context.Context, userID, networkID string, ids []p
 	if err = rows.Err(); err != nil {
 		return result, err
 	}
+	refreshes, err := itemRefreshes(ctx, tx, networkID, unique)
+	if err != nil {
+		return result, err
+	}
 	for _, value := range unique {
 		id := protocol.Quantity(value)
 		if item, found := items[id]; found {
 			result.Items = append(result.Items, item)
 		} else {
 			result.MissingIDs = append(result.MissingIDs, id)
+		}
+		if refresh, found := refreshes[id]; found {
+			result.Refreshes = append(result.Refreshes, refresh)
 		}
 	}
 	return result, tx.Commit(ctx)

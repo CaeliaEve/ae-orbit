@@ -8,6 +8,7 @@ local journal = require("aeorbit.journal")
 local runner = require("aeorbit.runner")
 
 fixture_stock, fixture_requests, fixture_continuations = 10, 0, 0
+fixture_lookup_failures = 0
 fixture_framed_requests, fixture_framed_eof_reads = 0, 0
 local job
 local bridge
@@ -23,7 +24,10 @@ function me.allItems()
   return proxy.callback(function() index=index+1;if index<=2 then return raw(index) end end)
 end
 function me.getItemInNetwork(detail)
-  if fixture_lookup_failure then error("fixture lookup failed",0) end
+  if fixture_lookup_failure then
+    fixture_lookup_failures=fixture_lookup_failures+1
+    error("fixture lookup failed",0)
+  end
   if detail.name=="fixture:craftable" then
     local value=raw(1);value.isCraftable=false;return value
   end
@@ -116,9 +120,9 @@ bridge=runner.new({
   now=fixture_now,free_memory=function() return 131072 end,yield=function() end
 })
 bridge:start()
-function fixture_fail_lookup(value)
+function fixture_fail_lookup(value,emit_event)
   fixture_lookup_failure=value
-  if value then bridge:on_item_changed(raw(1)) end
+  if value and emit_event~=false then bridge:on_item_changed(raw(1)) end
 end
 function fixture_tick()
   local status=bridge:tick()

@@ -114,7 +114,13 @@ func (s *Store) Poll(ctx context.Context, d Device, p protocol.Poll) (protocol.P
 			if queueBytes == 0 {
 				slots = 0
 			}
-			if err = s.verifications(ctx, tx, d.NetworkID, responseBytes, slots, queueBytes, &ack); err != nil {
+			afterPriority := func() error {
+				if caps.QuantityRefresh && p.RefreshSlots != nil && p.RefreshBytes != nil {
+					return s.quantityRefreshes(ctx, tx, d.NetworkID, p.SessionID, responseBytes, *p.RefreshSlots, *p.RefreshBytes, &ack)
+				}
+				return nil
+			}
+			if err = s.verifications(ctx, tx, d.NetworkID, responseBytes, slots, queueBytes, &ack, afterPriority); err != nil {
 				return err
 			}
 		}

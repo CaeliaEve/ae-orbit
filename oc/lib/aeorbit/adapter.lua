@@ -19,7 +19,7 @@ function M.new(me,config)
     nbt_cache=cache.new(64,32768)}
   function adapter:capabilities()
     return {inventory=true,craft=M.has_method(me,"getCraftable"),cpu_output=M.has_method(me,"getCpus"),
-      exact_quantities=true,max_craft_quantity=quantity.maximum(),enumeration="volatile_iterator"}
+      exact_quantities=true,quantity_refresh=true,max_craft_quantity=quantity.maximum(),enumeration="volatile_iterator"}
   end
   function adapter:key(raw)
     assert(type(raw)=="table" and type(raw.name)=="string" and #raw.name>0 and #raw.name<=256,"adapter: invalid registry name")

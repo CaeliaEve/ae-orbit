@@ -13,7 +13,9 @@ import (
 // This lets migration tests exercise cached data, ACKs and pending work together.
 func restoreLegacyInventory(t *testing.T, s *store.Store) {
 	t.Helper()
-	_, err := s.Pool().Exec(ctx, `ALTER TABLE inventory ADD COLUMN next_verify_at timestamptz;
+	_, err := s.Pool().Exec(ctx, `DROP TABLE inventory_refreshes;
+        DELETE FROM schema_versions WHERE version='migrations/008_item_refreshes.sql';
+        ALTER TABLE inventory ADD COLUMN next_verify_at timestamptz;
         UPDATE inventory i SET next_verify_at=q.next_verify_at FROM inventory_schedule q
         WHERE i.network_id=q.network_id AND i.item_id=q.item_id;
         ALTER TABLE inventory ALTER COLUMN next_verify_at SET NOT NULL, ALTER COLUMN observed_at SET DEFAULT now(),

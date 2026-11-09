@@ -30,6 +30,7 @@ function M.new(config,deps)
   local self={config=config,deps=deps,client=deps.client,adapter=deps.adapter,diagnostics={},diagnostic_samples=0,
     ids=cache.new(config.cache_entries or 256,id_bytes),dirty=cache.new(dirty_entries,dirty_bytes),
     verifications=cache.new(16,verification_bytes),verification_bytes=verification_bytes,
+    refreshes=cache.new(8,verification_bytes),refresh_bytes=verification_bytes,refresh_reads=0,
     rechecks=cache.new(16,verification_bytes),batch_delay=batch_delay,ordinary_turn=0,
     statistics={batches=0,updates=0,bytes=0,credits_used=0,collect_millis=0},
     dirty_bytes=dirty_bytes,dirty_entries=dirty_entries,inventory_seq="0",poll_seq="0",observation="0",
@@ -143,7 +144,34 @@ function M.new(config,deps)
     if self.latency then raw.queued_at=deps.now() end
     self.verifications:put(key,raw,cost)
   end
+  function self:_expire_refreshes()
+    local entry=self.refreshes.last
+    while entry do
+      local previous=entry.previous
+      if deps.now()>=entry.value.expires_at then self.refreshes:remove(entry.key) end
+      entry=previous
+    end
+  end
+  function self:_queue_refresh(raw,token,ttl_millis)
+    local key=self.adapter:key(raw)
+    local previous=self.refreshes.entries[key]
+    if previous then
+      if previous.value.refresh~=token then
+        previous.value.refresh=token;previous.value.in_flight=nil
+        previous.value.expires_at=deps.now()+ttl_millis/1000
+      end
+      return
+    end
+    local cost=#key*2+#(raw.tag or "")+#(raw.label or "")+#token+256
+    if self.refreshes.count>=8 or self.refreshes.bytes+cost>self.refresh_bytes then
+      self:diagnose("refresh_queue_full");return
+    end
+    raw.refresh=token
+    raw.expires_at=deps.now()+ttl_millis/1000
+    self.refreshes:put(key,raw,cost)
+  end
   function self:_control()
+    self:_expire_refreshes()
     if not self.pending_poll then
       -- An inherited catalog is already covered by initial discovery. Keep a
       -- small ordinary reread trickle until the completed scan is acknowledged;
@@ -156,6 +184,10 @@ function M.new(config,deps)
       end
       local body={session_id=self.session,sequence=quantity.increment(self.poll_seq),reports=json.array({}),health=self:_health(),
         recheck_slots=math.max(0,recheck_limit-self.rechecks.count),recheck_bytes=self.verification_bytes-self.rechecks.bytes}
+      if self.limits.quantity_refresh==true then
+        body.refresh_slots=8-self.refreshes.count
+        body.refresh_bytes=self.refresh_bytes-self.refreshes.bytes
+      end
       local limit=self.client.request_bytes
       local reports=self.tracker:reports()
       for _,report in ipairs(reports) do
@@ -209,12 +241,32 @@ function M.new(config,deps)
         else raw.verify_craftable=verification.craftable;self:_queue_recheck(raw) end
       else self:diagnose("verification_identity_unavailable") end
     end
+    if self.limits.quantity_refresh==true and ack.refresh~=nil then
+      if type(ack.refresh)~="table" or #ack.refresh>4 then fatal("invalid_refresh_confirmation") end
+      for _,refresh in ipairs(ack.refresh) do
+        local token=refresh.token
+        if type(token)~="string" or #token~=32 or token:find("[^0-9a-f]") then fatal("invalid_refresh_token") end
+        local ttl=refresh.ttl_millis
+        if type(ttl)~="number" or ttl<1 or ttl>60000 or ttl%1~=0 then fatal("invalid_refresh_ttl") end
+        quantity.validate(refresh.id)
+        if refresh.id=="0" then fatal("invalid_refresh_identity") end
+        local ok,raw=pcall(self.adapter.from_definition,self.adapter,refresh.item)
+        if ok then
+          raw.diagnostic_item_id=refresh.id
+          local key=self.adapter:key(raw)
+          self.ids:put(key,{id=refresh.id,label=raw.label,tag=raw.tag},#key+#refresh.id+#(raw.tag or "")+#(raw.label or "")+160)
+          self:_queue_refresh(raw,token,ttl)
+        else self:diagnose("refresh_identity_unavailable") end
+      end
+    end
     self.poll_seq=ack.ack;self.pending_poll=nil;self.credits=ack.scan_budget;self.poll_delay=ack.poll_millis/1000
+    self.refresh_reads=0
     if pending.diagnostic_token then self.read_diagnostics:ack(pending.diagnostic_token) end
     if pending.sync_snapshot then self.latency:defer() end
     return started
   end
   function self:_next_raw()
+    self:_expire_refreshes()
     local scan_ready=self.iterator~=nil or deps.now()>=self.next_scan
     local regular_ready=self.dirty.count>0 or self.rechecks.count>0 or scan_ready
     if self.verifications.count>0 and self.credits>=4 and deps.now()>=self.next_recipe_check and
@@ -237,6 +289,34 @@ function M.new(config,deps)
       end
       return value,4
     end
+    local refresh=self.refreshes.entries[self.refresh_cursor] or self.refreshes.last
+    local remaining=self.refreshes.count
+    while refresh and remaining>0 and (refresh.value.in_flight or deps.now()<(refresh.value.retry_at or 0)) do
+      refresh=refresh.previous or self.refreshes.last;remaining=remaining-1
+    end
+    if remaining==0 then refresh=nil end
+    if refresh and self.refresh_reads<2 and (not self.refresh_turn or not regular_ready) then
+      self.refresh_turn=true;self.refresh_reads=self.refresh_reads+1
+      -- Advance independently of admission order, including after failures.
+      -- Permanently failing oldest entries must not monopolize small grants.
+      self.refresh_cursor=(refresh.previous or self.refreshes.last).key
+      local detail=refresh.value
+      local ok,value=pcall(function()
+        local result=self.adapter:read(detail)
+        self.adapter:count(result)
+        return result
+      end)
+      if not ok then
+        detail.retry_at=deps.now()+2
+        self:_read_failure("exact_lookup_failed","refresh",refresh.key,detail,value)
+        return nil,1
+      end
+      detail.in_flight=detail.refresh
+      value.refresh=detail.refresh
+      value.isCraftable=nil
+      return value,1
+    end
+    self.refresh_turn=false
     self.regular_turn=false
     -- Retain round-robin position across slices and even one-credit grants.
     -- Hot hints, admitted cold reads and discovery each receive a turn.
@@ -292,12 +372,12 @@ function M.new(config,deps)
     local craftable=raw.isCraftable
     assert(craftable==nil or type(craftable)=="boolean","adapter: invalid recipe observation")
     if craftable==nil then craftable=json.null end
-    local value={quantity=count,observation=self.observation,craftable=craftable,verification=raw.verification}
+    local value={quantity=count,observation=self.observation,craftable=craftable,verification=raw.verification,refresh=raw.refresh}
     local known=self.ids:get(key)
     if known and known.label==(raw.label or raw.name) and (known.tag or "")== (raw.tag or "") then value.id=known.id else value.item=self.adapter:definition(raw) end
     -- Only full definitions need their representation retained until binding.
     -- Short-ID rows must not hide a large raw tag behind a tiny wire record.
-    return {key=key,label=raw.label or raw.name,tag=value.item and raw.tag or nil,item=value.item~=nil,verification=raw.verification,
+    return {key=key,label=raw.label or raw.name,tag=value.item and raw.tag or nil,item=value.item~=nil,verification=raw.verification,refresh=raw.refresh,
       sampled_at=self.latency and deps.now() or nil,encoded=json.encode(value,self.client.request_bytes)}
   end
   function self:_flush()
@@ -318,6 +398,8 @@ function M.new(config,deps)
       if entry.item and not seen[index] then fatal("missing_short_id_binding") end
       local queued=self.verifications.entries[entry.key]
       if entry.verification and queued and queued.value.verification==entry.verification then self.verifications:remove(entry.key) end
+      local refreshed=self.refreshes.entries[entry.key]
+      if entry.refresh and refreshed and refreshed.value.refresh==entry.refresh then self.refreshes:remove(entry.key) end
     end
     account(self,"batches",1);account(self,"updates",#pending.entries);account(self,"bytes",#pending.body)
     if self.latency then
@@ -384,17 +466,27 @@ function M.new(config,deps)
         if self.latency and cost>0 then self.latency:observe("collection",deps.now()-before) end
         if raw then
           local ok,value=pcall(self._candidate,self,raw)
-          if ok then candidate=value else self:diagnose("item_unrepresentable") end
+          if ok then candidate=value
+          else
+            self:diagnose("item_unrepresentable")
+            if raw.refresh then
+              local queued=self.refreshes.entries[self.adapter:key(raw)]
+              if queued and queued.value.refresh==raw.refresh then queued.value.in_flight=nil;queued.value.retry_at=deps.now()+2 end
+            end
+          end
         elseif cost==0 or self.scan_completed then idle=true end
       end
       if candidate then
-        if #candidate.encoded+256>limit then self:diagnose("entry_exceeds_batch_budget")
+        if #candidate.encoded+256>limit then
+          self:diagnose("entry_exceeds_batch_budget")
+          local queued=self.refreshes.entries[candidate.key]
+          if candidate.refresh and queued and queued.value.refresh==candidate.refresh then queued.value.in_flight=nil;queued.value.retry_at=deps.now()+2 end
         elseif batch.size+#candidate.encoded+1>batch.limit then self.carry=candidate;send=true
         else
           batch.entries[#batch.entries+1]=candidate;batch.encoded[#batch.encoded+1]=candidate.encoded
           if not batch.sampled_at then batch.sampled_at=candidate.sampled_at end
           batch.size=batch.size+#candidate.encoded+1
-          send=candidate.verification~=nil
+          send=candidate.verification~=nil or candidate.refresh~=nil
         end
       end
       send=send or idle or #batch.entries>=self.limits.batch_items or deps.now()>=batch.deadline or (self.credits<=0 and not self.carry)

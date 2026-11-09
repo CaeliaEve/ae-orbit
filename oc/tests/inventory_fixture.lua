@@ -35,7 +35,7 @@ return function(options)
     if path=="/bridge/v1/boot-id" then return {boot_id="inventory-fixture"} end
     return {protocol=1,session_id="s",inventory_ack="0",poll_ack="0",
       limits={batch_items=options.batch_items or 32,batch_bytes=self.request_bytes,response_bytes=4096,cpus=16,poll_millis=1000,
-        diagnostic_samples=options.diagnostic_samples,sync_telemetry=options.sync_telemetry}}
+        diagnostic_samples=options.diagnostic_samples,sync_telemetry=options.sync_telemetry,quantity_refresh=options.quantity_refresh}}
   end
   function client:send(path,body)
     assert(#body<=self.request_bytes,"wire request exceeded the negotiated byte limit")
@@ -45,7 +45,9 @@ return function(options)
       if s.on_poll then s.on_poll(body,value) end
       s.polls[#s.polls+1]=value
       local verify=s.verify or {};s.verify=nil
-      return {ack=value.sequence,scan_budget=s.grant,poll_millis=1000,commands=json.array({}),verify=json.array(verify)}
+      local refresh=s.refresh;s.refresh=nil
+      return {ack=value.sequence,scan_budget=s.grant,poll_millis=1000,commands=json.array({}),verify=json.array(verify),
+        refresh=refresh and json.array(refresh) or nil}
     end
     assert(path=="/bridge/v1/inventory")
     s.requests[#s.requests+1]={body=body,at=s.clock,value=value}
@@ -67,6 +69,7 @@ return function(options)
     local ack={ack=value.sequence,bindings=bindings}
     s.acknowledged[value.sequence]={body=body,ack=ack}
     s.accepted_batches=s.accepted_batches+1;s.accepted_updates=s.accepted_updates+#value.updates;s.accepted_bytes=s.accepted_bytes+#body
+    if s.on_upload then s.on_upload(value) end
     if s.fail_upload then s.fail_upload=false;error({fatal=false,code="transport_failed"}) end
     return ack
   end

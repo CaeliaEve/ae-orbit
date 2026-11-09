@@ -104,6 +104,7 @@ func (s *Server) routes() {
 		respondInventory(w, r, value)
 	}))
 	s.mux.HandleFunc("GET /api/v1/networks/{network}/items/lookup", s.user(s.lookupItems))
+	s.mux.HandleFunc("POST /api/v1/networks/{network}/items/refresh", s.user(s.refreshItems))
 	s.mux.HandleFunc("GET /api/v1/networks/{network}/inventory-stats", s.user(func(w http.ResponseWriter, r *http.Request, m protocol.Member) {
 		value, err := s.db.InventoryStats(r.Context(), m.ID, r.PathValue("network"))
 		if err != nil {

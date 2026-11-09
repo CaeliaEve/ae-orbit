@@ -147,6 +147,7 @@ func (s *Store) negotiatedLimits(responseBytes int) protocol.Limits {
 	l.BatchItems = min(l.BatchItems, l.ResponseBytes/96)
 	l.DiagnosticSamples = protocol.MaxReadFailureSamples
 	l.SyncTelemetry = true
+	l.QuantityRefresh = true
 	return l
 }
 
