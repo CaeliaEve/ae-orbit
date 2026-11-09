@@ -5,7 +5,11 @@ local proxy = require("component_proxy")
 local adapter = require("aeorbit.adapter")
 local client = require("aeorbit.client")
 local journal = require("aeorbit.journal")
-local runner = require("aeorbit.runner")
+local mode=FIXTURE_BRIDGE_MODE or "single"
+local role=FIXTURE_ROLE or "primary"
+assert(role~="quantity_worker" or mode=="cooperative","worker fixture requires cooperative mode")
+local worker=role=="quantity_worker"
+local runner = require(mode=="cooperative" and "aeorbit.cooperative" or "aeorbit.runner")
 
 fixture_stock, fixture_requests, fixture_continuations = 10, 0, 0
 fixture_lookup_failures = 0
@@ -20,6 +24,7 @@ local function raw(index)
 end
 local me = {}
 function me.allItems()
+  assert(not worker,"worker enumerated inventory")
   local index=0
   return proxy.callback(function() index=index+1;if index<=2 then return raw(index) end end)
 end
@@ -35,11 +40,13 @@ function me.getItemInNetwork(detail)
 end
 function me.getItemsInNetwork() error("full-array fallback is forbidden") end
 function me.getCraftable(detail,kind)
+  assert(not worker,"worker queried recipe")
   assert(detail.name=="fixture:craftable" and kind=="item")
   -- Real AE exact lookups omit its crafting inventory.
   return nil
 end
 function me.getCraftables(filter)
+  assert(not worker,"worker queried recipes")
   assert(filter.name=="fixture:craftable" and filter.damage==0 and filter.hasTag==false)
   assert(filter.label==nil and filter.tag==nil and filter.size==nil)
   return {proxy.new({
@@ -65,6 +72,7 @@ function me.getCraftables(filter)
   })}
 end
 function me.getCpus()
+  assert(not worker,"worker queried CPUs")
   local busy=job~=nil and not job.done
   return {{name="Fixture CPU",storage=65536,coprocessors=4,busy=busy,cpu=proxy.new({
     finalOutput=function()
@@ -108,16 +116,17 @@ function fs.write(path,text)
   assert(file:write(text));assert(file:flush());assert(file:close());return true
 end
 bridge=runner.new({
+  bridge_mode=mode,role=role,
   source="simulator",max_batch_bytes=2048,max_response_bytes=4096,
   cache_entries=2,dirty_entries=2,cache_bytes=1024,dirty_bytes=1024,
   -- One read per slice ensures the real HTTP checks exercise continuation.
   scan_interval=60,cpu_interval=0,scan_slice_seconds=0
 },{
-  adapter=adapter.new(proxy.new(me)),
+  adapter=adapter.new(proxy.new(me),{role=role}),
   client=client.new(proxy.new(internet),{url=FIXTURE_URL,token=FIXTURE_TOKEN,response_bytes=4096,request_bytes=2048,timeout=5},
     {now=fixture_now,sleep=fixture_sleep}),
   journal=journal.new(fs,FIXTURE_JOURNAL,32768),
-  now=fixture_now,free_memory=function() return 131072 end,yield=function() end
+  now=fixture_now,free_memory=function() return FIXTURE_FREE_MEMORY or 131072 end,yield=function() end
 })
 bridge:start()
 function fixture_fail_lookup(value,emit_event)

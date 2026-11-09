@@ -34,7 +34,7 @@ function M.new(internet,config,clock)
   assert(type(config.token)=="string" and #config.token>=32 and #config.token<=256,"client: invalid token")
   local client={response_bytes=config.response_bytes or 16384,request_bytes=config.request_bytes or 16384,timeout=config.timeout or 10}
   function client:send(path,body)
-    assert(type(path)=="string" and path:match("^/bridge/v1/[a-z%-]+$"),"client: invalid path")
+    assert(type(path)=="string" and path:match("^/bridge/v[12]/[a-z%-]+$"),"client: invalid path")
     assert(type(body)=="string" and #body<=self.request_bytes,"client: request budget exceeded")
     local handle
     local ok,result=pcall(function()

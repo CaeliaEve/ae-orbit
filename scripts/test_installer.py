@@ -20,7 +20,7 @@ SERVICE = "https://ae.example.test"
 DESTINATIONS = {
     **{f"lib/aeorbit/{name}.lua": f"/lib/aeorbit/{name}.lua" for name in (
         "quantity", "json", "base64", "cache", "bitops", "sha256", "gzip", "nbt",
-        "journal", "client", "adapter", "tracker", "runner", "read_diagnostics", "latency")},
+        "journal", "client", "adapter", "tracker", "runner", "cooperative", "read_diagnostics", "latency")},
     "bin/ae-orbit.lua": "/bin/ae-orbit.lua",
     "config.example.lua": "/etc/ae-orbit.cfg.example",
     "install.lua": "/bin/ae-orbit-install.lua",
@@ -192,18 +192,20 @@ class OpenOS:
         self.write("/etc/ae-orbit.cfg", "return {token='keep-device-token'}\n")
         self.write("/var/lib/ae-orbit/journal.0", "keep execution history exactly")
 
-    def run_bridge(self, callable_subscription=False, subscription_error=False):
+    def run_bridge(self, callable_subscription=False, subscription_error=False, worker=False):
         """Exercise the real entry point and journal with a bounded runner harness."""
         for source, destination in DESTINATIONS.items():
             self.write(destination, self.sources[source])
-        self.write("/etc/ae-orbit.cfg", 'return {me_address="test-me",state_dir="/var/lib/ae-orbit"}\n')
+        mode = ',bridge_mode="cooperative",role="quantity_worker"' if worker else ""
+        self.write("/etc/ae-orbit.cfg", 'return {me_address="test-me",state_dir="/var/lib/ae-orbit"' + mode + '}\n')
         self.lua.globals().TEST_ROOT = (ROOT / "oc").as_posix()
         self.lua.globals().callable_subscription = callable_subscription
         self.lua.globals().subscription_error = subscription_error
+        self.lua.globals().worker = worker
         self.lua.execute('''
             package.path = TEST_ROOT .. "/lib/?.lua;" .. package.path
             local me = {
-                allItems = function() return function() end end,
+                allItems = not worker and function() return function() end end or nil,
                 getItemInNetwork = function() return nil end
             }
             subscription_calls, bridge_diagnostics = {}, {}
@@ -214,19 +216,31 @@ class OpenOS:
                 end})
             end
             test_component.proxy = function() return me end
-            package.loaded.event = {listen = function() end, ignore = function() end}
+            package.loaded.event = {
+                listen = function() assert(not worker, "worker subscribed to events") end,
+                ignore = function() assert(not worker, "worker unsubscribed shared events") end
+            }
             package.loaded["aeorbit.client"] = {new = function() return {} end}
-            package.loaded["aeorbit.runner"] = {new = function(_, dependencies)
+            local runtime = {new = function(_, dependencies)
                 return {
                     session = "test-session", diagnose = function(_, code)
                         bridge_diagnostics[#bridge_diagnostics + 1] = code
                     end,
                     start = function()
-                        dependencies.journal:save({attempts={},completed={},boot_id="test-boot"})
+                        if worker then
+                            assert(dependencies.journal == nil, "worker opened the execution journal")
+                        else
+                            dependencies.journal:save({attempts={},completed={},boot_id="test-boot"})
+                        end
                     end,
                     tick = function() error("test finished", 0) end
                 }
             end}
+            package.loaded["aeorbit.runner"] = {new = function(...)
+                assert(not worker, "worker silently selected legacy runner")
+                return runtime.new(...)
+            end}
+            package.loaded["aeorbit.cooperative"] = runtime
             io.stderr = {write = function(_, text) capture_print(text) end}
             assert(loadfile("/bin/ae-orbit.lua"))()
         ''')
@@ -252,6 +266,12 @@ class InstallerTests(unittest.TestCase):
         globals_ = self.oc.lua.globals()
         self.assertEqual(list(globals_.subscription_calls.values()), [True, False])
         self.assertNotIn("subscription_unavailable", list(globals_.bridge_diagnostics.values()))
+
+    def test_worker_entrypoint_never_touches_shared_event_subscription(self):
+        self.oc.run_bridge(worker=True, callable_subscription=True)
+        self.assertEqual(list(self.oc.lua.globals().subscription_calls.values()), [])
+        self.assertTrue(any("AE Orbit connected." in message for message in self.oc.messages))
+        self.assertTrue(any("test finished" in message for message in self.oc.messages))
 
     def test_bridge_reports_failed_subscription_without_stopping(self):
         self.oc.run_bridge(callable_subscription=True, subscription_error=True)

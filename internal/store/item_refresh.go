@@ -31,14 +31,26 @@ func (s *Store) RequestItemRefresh(ctx context.Context, userID, networkID string
 		var encoded []byte
 		// The same lock serializes admission against device mutations and other
 		// members, so capacity checks and generation replacement stay atomic.
-		if err := tx.QueryRow(ctx, "SELECT capabilities FROM networks WHERE id=$1 FOR UPDATE", networkID).Scan(&encoded); err != nil {
+		var mode string
+		if err := tx.QueryRow(ctx, "SELECT capabilities,bridge_mode FROM networks WHERE id=$1 FOR UPDATE", networkID).Scan(&encoded, &mode); err != nil {
 			return notFound(err)
 		}
 		var caps protocol.Capabilities
 		if err := json.Unmarshal(encoded, &caps); err != nil {
 			return err
 		}
-		if !caps.Inventory || !caps.QuantityRefresh {
+		if mode == "cooperative" {
+			var supported bool
+			if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM devices d
+				JOIN bridge_sessions bs ON bs.id=d.current_session AND bs.device_id=d.id AND NOT bs.retired AND bs.protocol=2
+				WHERE d.network_id=$1 AND NOT d.revoked AND bs.capabilities->>'inventory'='true'
+				AND bs.capabilities->>'exact_quantities'='true')`, networkID).Scan(&supported); err != nil {
+				return err
+			}
+			if !supported {
+				return ErrCapability
+			}
+		} else if !caps.Inventory || !caps.QuantityRefresh {
 			return ErrCapability
 		}
 		rows, err := tx.Query(ctx, `SELECT DISTINCT i.item_id,d.kind,d.exact FROM item_definitions requested

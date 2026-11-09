@@ -53,6 +53,8 @@ type Store struct {
 	performance   databaseMetrics
 }
 type Device struct {
+	ID        string
+	Role      string
 	NetworkID string
 	TokenHash [32]byte
 }

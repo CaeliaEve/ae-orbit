@@ -15,7 +15,7 @@
 | 库存 | 迭代采集、事件提示后精确重读、后台复核、短 ID、分批提交、重复上传去重、观察时间、搜索、实时名称分页及按 ID 批量读取 |
 | 订单 | 指定额外合成数量、成员与网络权限、幂等下单、执行窗口、排队取消、断线待核对、状态审计、完成后定点复核 |
 | CPU | CPU 概览、忙闲状态、可用的最终产物、观察时间及截断标记 |
-| 多网络 | 每网络一个活跃桥接器；同游戏服务器共享采集和合成规划预算 |
+| 多网络 | 默认单机，支持显式启用一主多助手协作；同游戏服务器共享采集和合成规划预算 |
 | HTTP | 成员/设备令牌隔离、浏览器会话与 CSRF、请求容量限制、SSE 失效通知 |
 | 运行维护 | 自动迁移、健康检查、管理指标、设备令牌轮换、OC 安装文件、容器配置 |
 
@@ -119,7 +119,7 @@ Invoke-RestMethod -Uri "$origin/api/v1/networks/$networkId/cpus" -Headers $heade
 
 先创建 `source=oc` 网络，保存返回的 `device_token`。同一个 MC 服务器上的网络使用相同 `server_group`，不同服务器分组。
 
-游戏内准备 OpenOS 电脑、因特网卡、持久磁盘，以及可通过 OC 组件网络访问的 AE 控制器或完整 ME 接口。每个逻辑网络运行一个桥接器。重新接到不同 AE 网络时创建新的逻辑网络。
+游戏内准备 OpenOS 电脑、因特网卡、持久磁盘，以及可通过 OC 组件网络访问的 AE 控制器或完整 ME 接口。默认每个逻辑网络运行一个主桥接器；协作模式可增加独立数量助手，配置见下文。重新接到不同 AE 网络时创建新的逻辑网络。
 
 **适配目标为最新 GTNH 版 OpenComputers；截至 2026-11-06 为 1.13.0-GTNH，并需要与它配套的 AE2 和 GTNH 模组组合。** 当前桥接器依赖 `allItems()` 逐项迭代、接受物品描述表和 NBT 的 `getItemInNetwork(detail)`，以及 `getCraftable(detail, "item")`。仅更新本项目的 Lua 脚本不能补齐模组接口。安装模组时以游戏实际使用的目录为准；启用版本隔离的启动器通常使用 `versions/<实例>/mods`。建议使用匹配的完整 GTNH 实例。程序不会退回全库存数组采集。
 
@@ -174,6 +174,52 @@ return {
 
 首次连接、实际接口兼容性、事件订阅和区块卸载后的恢复需要游戏内验证。
 
+### 双 OC 协作
+
+默认 `bridge_mode="single"`、`role="primary"` 保持旧 `/bridge/v1/*` 行为。
+协作模式使用 `/bridge/v2/*`：主设备 A 独占目录发现、事件提示、配方、CPU 和合成；
+数量助手 B 只领取已知物品的数量任务，并直接向后端上传。第一版每网络最多八台未撤销设备，
+不提供自动主设备接替。两台必须人工确认接在同一 AE 网格，并保持供电和区块加载。
+
+升级时先备份数据库、升级后端并保持 single，准备两台新版程序及各自配置，确认没有
+`assigned/computing/running` 订单后，再由管理员操作：
+
+~~~powershell
+$worker = Invoke-RestMethod -Method Post -Uri "$origin/api/v1/networks/$networkId/devices" -Headers $headers -ContentType 'application/json' -Body '{"name":"数量助手 B"}'
+Invoke-RestMethod -Method Post -Uri "$origin/api/v1/networks/$networkId/cooperation" -Headers $headers -ContentType 'application/json' -Body '{}'
+~~~
+
+助手令牌只在创建时返回一次，使用 `$worker.device_token`；不要复制 A 的配置和令牌。
+原网络令牌继续属于 A。分别在两台配置中填写自己的 ME 地址和设备令牌：
+
+~~~lua
+-- A
+bridge_mode = "cooperative",
+role = "primary",
+-- B
+bridge_mode = "cooperative",
+role = "quantity_worker",
+~~~
+
+以上是各自配置表中的字段，不是在同一配置中同时填写。停止旧程序后以新 boot 启动 A、B。
+启用会退休旧会话，保留库存历史、排队/待核对订单及逻辑刷新请求。启用后 v1 写入口返回 409；
+第一版不能热切回 single，回退须按升级前数据库备份恢复，不能只换回旧二进制。
+
+`GET /api/v1/networks/{network}/devices` 查看独立状态；
+`POST .../devices/{device}/token` 仅轮换指定设备，`DELETE .../devices/{device}` 撤销助手。
+原 `/device-token` 仍只轮换 A。助手重启或撤销不影响 A 的执行句柄、CPU 或配方证据。
+网络 `online`、`session_id` 继续表示 A，`services` 单独提供数量读取设备数及发现、配方、合成可用性；
+A 失联时 B 可继续更新已知数量，但不能恢复 A 的合成状态。
+物品的 `current_session`、`craftable_current_session` 分别表示数量和配方来源会话是否仍有效，
+不能代替 `observed_at`、`craftable_observed_at` 的数据年龄判断。
+
+协作读取按字段租约派工，默认 30 秒；过期任务或延迟扫描不能覆盖已核验的值。
+一次性刷新仍沿用原 request_id 与 60 秒期限，重派不续期。两台共用整组额度，不按设备数倍增；
+同组包含旧单机时也共用同一账本。四额度单位先在网络间轮转，再在网络内设备间轮转，
+新意愿从下一轮参与，零接收容量不预留后续份额。请保持 `AE_SCAN_ITEMS` 至少为 4。
+第一阶段未实现持续关注或前端，不承诺两倍速度或全库同时最新；双 OC 的实际吞吐与 TPS
+仍须在同一存档、相同整组额度下实测。
+
 ## 权限与恢复
 
 管理员通过 `POST /api/v1/members` 创建普通成员：
@@ -218,7 +264,7 @@ return {
 | AE_OFFLINE_SECONDS | 90 | 15–3600 秒离线阈值 |
 | AE_RECHECK_SECONDS | 300 | 5–86400 秒重新具备复核资格的间隔 |
 
-OC 默认请求/响应各 16 KiB，按空闲内存继续缩小。ID 缓存默认 256 条，脏条目队列 128 条，同时受字节预算约束；采集时间片默认 50 ms。CPU 默认每 10 秒采样，保留最多 16 个。未用完的读取额度不会累积，多个桥接器通过抖动分摊机会，当前没有严格公平队列。
+OC 默认请求/响应各 16 KiB，按空闲内存继续缩小。ID 缓存默认 256 条，单机脏条目队列 128 条，同时受字节预算约束；采集时间片默认 50 ms。CPU 默认每 10 秒采样，保留最多 16 个。未用完的读取额度不会累积。仅有 single 网络的组保留原先先到先得的授权；同组启用 cooperative 后使用上述公平轮转。协作设备的当前任务与发现候选合计最多 16 项，提示最多 16 项，各自受动态字节预算限制。
 
 普通库存跨时间片合批，`batch_interval_seconds` 默认 0.25 秒、范围 0–1，0 表示每个时间片及时发送。满批、期限到达、额度用尽或扫描结束会发送尾批；订单复核观察立即发送。网络和原生接口的阻塞时间不计入主动合批等待保证。普通后台补查另用最多 16 项、估算最多 16 KiB 的队列，向后端反馈剩余条目和字节容量，防止热事件把冷物品补查挤掉。
 

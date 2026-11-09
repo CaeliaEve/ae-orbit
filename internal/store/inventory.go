@@ -162,6 +162,10 @@ func (s *Store) Ingest(ctx context.Context, d Device, b protocol.InventoryBatch)
             WHERE id=$1 RETURNING revision`, d.NetworkID, accepted, b.ScanCompleted, changed, catalogChanged, recipeChanged).Scan(&ack.Revision); err != nil {
 			return err
 		}
+		if _, err = tx.Exec(ctx, `UPDATE devices SET last_seen=now(),
+			last_inventory=CASE WHEN $2::int>0 THEN now() ELSE last_inventory END WHERE id=$1`, d.ID, accepted); err != nil {
+			return err
+		}
 		ack.Ack = b.Sequence
 		encoded, _ := json.Marshal(ack)
 		if len(encoded) > responseBytes {

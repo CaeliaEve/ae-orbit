@@ -13,11 +13,17 @@ function M.has_method(proxy,name)
 end
 function M.new(me,config)
   config=config or {}
-  assert(M.has_method(me,"allItems"),"adapter: missing allItems; select an AE controller or full ME interface")
+  local worker=config.role=="quantity_worker"
+  if not worker then
+    assert(M.has_method(me,"allItems"),"adapter: missing allItems; select an AE controller or full ME interface")
+  end
   assert(M.has_method(me,"getItemInNetwork"),"adapter: missing getItemInNetwork; requires OC 1.12.47-GTNH+ (table/NBT API)")
   local adapter={me=me,identity_bytes=config.identity_bytes or 4096,cpu_limit=config.cpu_limit or 16,cpu_generation="0",
     nbt_cache=cache.new(64,32768)}
   function adapter:capabilities()
+    if worker then
+      return {inventory=true,craft=false,cpu_output=false,exact_quantities=true,quantity_refresh=true}
+    end
     return {inventory=true,craft=M.has_method(me,"getCraftable"),cpu_output=M.has_method(me,"getCpus"),
       exact_quantities=true,quantity_refresh=true,max_craft_quantity=quantity.maximum(),enumeration="volatile_iterator"}
   end

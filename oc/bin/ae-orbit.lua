@@ -5,12 +5,18 @@ local filesystem = require("filesystem")
 local adapter = require("aeorbit.adapter")
 local client = require("aeorbit.client")
 local journal = require("aeorbit.journal")
-local runner = require("aeorbit.runner")
 
 local args={...}
 local config_path=args[1] or "/etc/ae-orbit.cfg"
 local config=assert(loadfile(config_path),"Cannot open "..config_path)()
 assert(type(config)=="table","Configuration must return a table")
+local mode=config.bridge_mode or "single"
+local role=config.role or "primary"
+assert(mode=="single" or mode=="cooperative","Configure bridge_mode as single or cooperative")
+assert(role=="primary" or role=="quantity_worker","Configure role as primary or quantity_worker")
+assert(role~="quantity_worker" or mode=="cooperative","quantity_worker requires cooperative mode")
+local primary=role=="primary"
+local runner=require(mode=="cooperative" and "aeorbit.cooperative" or "aeorbit.runner")
 assert(type(config.me_address)=="string","Configure me_address explicitly")
 local me=component.proxy(config.me_address)
 local internet=config.internet_address and component.proxy(config.internet_address) or component.getPrimary("internet")
@@ -34,10 +40,10 @@ function fs.write(path,text)
   assert(ok~=false and err==nil,err or "close failed")
   return true
 end
-local store=journal.new(fs,state_dir.."/journal",32768)
+local store=primary and journal.new(fs,state_dir.."/journal",32768) or nil
 local clock={now=computer.uptime,sleep=os.sleep}
 local bridge=runner.new(config,{
-  adapter=adapter.new(me,{identity_bytes=config.identity_bytes or 4096,cpu_limit=config.cpu_limit or 16}),
+  adapter=adapter.new(me,{identity_bytes=config.identity_bytes or 4096,cpu_limit=config.cpu_limit or 16,role=role}),
   client=client.new(internet,{url=config.url,token=config.token,timeout=config.http_timeout or 10,
     response_bytes=config.max_response_bytes or 16384,request_bytes=config.max_batch_bytes or 16384},clock),
   journal=store,now=computer.uptime,free_memory=computer.freeMemory,yield=function() os.sleep(0) end
@@ -54,12 +60,14 @@ end
 local subscribed=false
 local function run()
   bridge:start()
-  event.listen("network_item_changed",changed)
-  if adapter.has_method(me,"setItemEventSubscription") then
-    local ok=pcall(me.setItemEventSubscription,true)
-    subscribed=ok
-    if not ok then bridge:diagnose("subscription_unavailable") end
-  else bridge:diagnose("subscription_unavailable") end
+  if primary then
+    event.listen("network_item_changed",changed)
+    if adapter.has_method(me,"setItemEventSubscription") then
+      local ok=pcall(me.setItemEventSubscription,true)
+      subscribed=ok
+      if not ok then bridge:diagnose("subscription_unavailable") end
+    else bridge:diagnose("subscription_unavailable") end
+  end
   print("AE Orbit connected. Session: "..bridge.session)
   local next_status,backoff=0,1
   while true do
@@ -87,7 +95,7 @@ local function run()
   end
 end
 local ok,err=xpcall(run,function(value) return value end)
-event.ignore("network_item_changed",changed)
+if primary then event.ignore("network_item_changed",changed) end
 if subscribed then pcall(me.setItemEventSubscription,false) end
 if not ok then
   local message=type(err)=="table" and (err.code or "bridge_error") or tostring(err)

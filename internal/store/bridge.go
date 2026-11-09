@@ -51,8 +51,7 @@ func (s *Store) Poll(ctx context.Context, d Device, p protocol.Poll) (protocol.P
 				}
 			}
 			ack.Commands = live
-			_, err = tx.Exec(ctx, "UPDATE networks SET last_seen=now() WHERE id=$1", d.NetworkID)
-			return err
+			return touchDevice(ctx, tx, d, nil)
 		}
 		if p.Sequence != last+1 {
 			return ErrSequence
@@ -90,12 +89,9 @@ func (s *Store) Poll(ctx context.Context, d Device, p protocol.Poll) (protocol.P
 		}
 		ack.Ack = p.Sequence
 		if caps.Inventory {
-			tag, err := tx.Exec(ctx, "UPDATE server_groups SET next_scan_at=now()+$2::double precision*interval '1 millisecond' WHERE name=$1 AND next_scan_at<=now()", group, s.options.Limits.PollMillis)
+			ack.ScanBudget, _, _, err = s.acquisitionGrant(ctx, tx, d, p.SessionID, group, 16, 16384, 1)
 			if err != nil {
 				return err
-			}
-			if tag.RowsAffected() > 0 {
-				ack.ScanBudget = s.options.ScanItems
 			}
 		}
 		if caps.Craft {
@@ -131,8 +127,7 @@ func (s *Store) Poll(ctx context.Context, d Device, p protocol.Poll) (protocol.P
 		if _, err = tx.Exec(ctx, "UPDATE bridge_sessions SET poll_seq=$2,poll_hash=$3,poll_response=$4 WHERE id=$1", p.SessionID, int64(p.Sequence), hash[:], encoded); err != nil {
 			return err
 		}
-		_, err = tx.Exec(ctx, "UPDATE networks SET last_seen=now() WHERE id=$1", d.NetworkID)
-		return err
+		return touchDevice(ctx, tx, d, p.Health)
 	})
 	return ack, err
 }

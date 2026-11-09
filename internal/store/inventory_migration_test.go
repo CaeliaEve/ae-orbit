@@ -13,7 +13,13 @@ import (
 // This lets migration tests exercise cached data, ACKs and pending work together.
 func restoreLegacyInventory(t *testing.T, s *store.Store) {
 	t.Helper()
-	_, err := s.Pool().Exec(ctx, `DROP TABLE inventory_refreshes;
+	_, err := s.Pool().Exec(ctx, `ALTER TABLE bridge_sessions DROP COLUMN observation_watermark;
+        DELETE FROM schema_versions WHERE version='migrations/011_observation_watermark.sql';
+        DROP TABLE cooperative_read_fields,cooperative_rotation,cooperative_secrets,acquisition_intents,acquisition_rounds;
+        ALTER TABLE item_definitions DROP COLUMN discovery_session_id,DROP COLUMN discovery_observation;
+        ALTER TABLE inventory DROP COLUMN craftable_session_id,DROP COLUMN quantity_generation,DROP COLUMN craftable_generation;
+        DELETE FROM schema_versions WHERE version='migrations/010_cooperative_reads.sql';
+        DROP TABLE inventory_refreshes;
         DELETE FROM schema_versions WHERE version='migrations/008_item_refreshes.sql';
         ALTER TABLE inventory ADD COLUMN next_verify_at timestamptz;
         UPDATE inventory i SET next_verify_at=q.next_verify_at FROM inventory_schedule q
@@ -57,7 +63,7 @@ func TestInventoryStorageMigrationPreservesCachedDataAndRetry(t *testing.T) {
 		}
 	}
 	page, err := s.Items(ctx, admin.ID, n.ID, protocol.ItemQuery{})
-	if err != nil || len(page.Items) != 1 || page.Items[0].Quantity != 9007199254740993 || !page.Items[0].Craftable || !page.Items[0].CurrentSession || !page.Items[0].ObservedAt.Equal(oldTime) || page.Revision != ack.Revision {
+	if err != nil || len(page.Items) != 1 || page.Items[0].Quantity != 9007199254740993 || !page.Items[0].Craftable || !page.Items[0].CurrentSession || !page.Items[0].CraftableCurrentSession || !page.Items[0].ObservedAt.Equal(oldTime) || page.Revision != ack.Revision {
 		t.Fatal("migration changed cached values or count evidence", page, err)
 	}
 	_, recipeTime := itemEvidence(t, page.Items[0])

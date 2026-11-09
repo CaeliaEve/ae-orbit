@@ -19,23 +19,26 @@ WITH input AS (
         CASE WHEN accept_quantity THEN now() ELSE previous_time END AS observed_at,
         CASE WHEN accept_recipe THEN craftable_observation WHEN previous_session=$3 THEN previous_recipe_observation ELSE 0 END AS craftable_observation,
         CASE WHEN accept_recipe THEN now() WHEN previous_session=$3 THEN previous_recipe_time ELSE NULL END AS craftable_observed_at,
+        CASE WHEN accept_recipe THEN $3 WHEN previous_session=$3 THEN $3 ELSE '' END AS craftable_session_id,
         CASE WHEN accept_quantity THEN label ELSE NULL END AS label,
         CASE WHEN accept_quantity THEN nbt ELSE NULL END AS nbt,
         verification,verification_observation,refresh,refresh_observation,previous_quantity,previous_craftable,
         previous_session,previous_observation,previous_label
     FROM previous WHERE accept_quantity OR accept_recipe
 ), values_written AS (
-    INSERT INTO inventory(network_id,item_id,quantity,craftable,session_id,observation,observed_at,craftable_observation,craftable_observed_at)
-    SELECT $1,id,quantity,craftable,$3,observation,observed_at,craftable_observation,craftable_observed_at FROM eligible
+    INSERT INTO inventory(network_id,item_id,quantity,craftable,session_id,observation,observed_at,craftable_observation,craftable_observed_at,craftable_session_id)
+    SELECT $1,id,quantity,craftable,$3,observation,observed_at,craftable_observation,craftable_observed_at,craftable_session_id FROM eligible
     WHERE previous_quantity IS DISTINCT FROM quantity OR previous_craftable IS DISTINCT FROM craftable
        OR previous_session IS DISTINCT FROM $3
     ON CONFLICT(network_id,item_id) DO UPDATE SET quantity=excluded.quantity,craftable=excluded.craftable,
         session_id=excluded.session_id,observation=excluded.observation,observed_at=excluded.observed_at,
-        craftable_observation=excluded.craftable_observation,craftable_observed_at=excluded.craftable_observed_at
+        craftable_observation=excluded.craftable_observation,craftable_observed_at=excluded.craftable_observed_at,
+        craftable_session_id=excluded.craftable_session_id
     RETURNING item_id
 ), evidence_written AS (
     UPDATE inventory i SET observation=e.observation,observed_at=e.observed_at,
-        craftable_observation=e.craftable_observation,craftable_observed_at=e.craftable_observed_at
+        craftable_observation=e.craftable_observation,craftable_observed_at=e.craftable_observed_at,
+        craftable_session_id=e.craftable_session_id
     FROM eligible e WHERE i.network_id=$1 AND i.item_id=e.id
       AND e.previous_quantity IS NOT DISTINCT FROM e.quantity
       AND e.previous_craftable IS NOT DISTINCT FROM e.craftable AND e.previous_session=$3

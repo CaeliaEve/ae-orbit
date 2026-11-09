@@ -2,6 +2,8 @@
 
 本文定义实现中的同步、一致性、调度和恢复语义。所有路由及 JSON 结构见 [openapi.yaml](openapi.yaml)。协议版本为 1。
 
+v1 只允许 `single` 模式网络的主设备，包括 `boot-id` 入口；助手或已启用协作模式的网络返回 409。Hello 不接受 `protocol:2`，Poll 不接受 v2 的 `read_slots`、`read_bytes`、`hints`，库存不接受 `assignment_id`。协作设备必须使用 [protocol-v2.md](protocol-v2.md) 所述的独立 v2 入口。
+
 ## 传输与身份
 
 成员使用管理员发放的 Bearer 令牌，或由成员令牌换取的浏览器会话。设备使用绑定到单个网络的独立 Bearer 令牌。凭据以摘要保存在数据库，创建/轮换时返回一次明文。

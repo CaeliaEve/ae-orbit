@@ -39,7 +39,7 @@ func (s *Store) AuthDevice(ctx context.Context, token string) (Device, error) {
 	if len(token) < 32 || len(token) > 256 {
 		return d, ErrUnauthorized
 	}
-	err := s.pool.QueryRow(ctx, "SELECT id FROM networks WHERE device_hash=$1", d.TokenHash[:]).Scan(&d.NetworkID)
+	err := s.pool.QueryRow(ctx, "SELECT id,network_id,role FROM devices WHERE token_hash=$1 AND NOT revoked", d.TokenHash[:]).Scan(&d.ID, &d.NetworkID, &d.Role)
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = ErrUnauthorized
 	}

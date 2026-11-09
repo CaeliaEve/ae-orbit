@@ -25,6 +25,20 @@ type pageCursor struct {
 	Quantity          protocol.Quantity `json:"quantity"`
 }
 
+const quantityCurrentSessionSQL = `EXISTS(SELECT 1 FROM bridge_sessions source
+	JOIN devices owner ON owner.id=source.device_id AND owner.current_session=source.id AND NOT owner.revoked
+	JOIN networks source_network ON source_network.id=owner.network_id
+	WHERE source.id=i.session_id AND source.network_id=i.network_id AND NOT source.retired
+	AND source.protocol=CASE source_network.bridge_mode WHEN 'single' THEN 1 ELSE 2 END
+	AND (source_network.bridge_mode<>'single' OR source.id=$2))`
+
+const recipeCurrentSessionSQL = `EXISTS(SELECT 1 FROM bridge_sessions source
+	JOIN devices owner ON owner.id=source.device_id AND owner.current_session=source.id AND NOT owner.revoked
+	JOIN networks source_network ON source_network.id=owner.network_id
+	WHERE source.id=i.craftable_session_id AND source.network_id=i.network_id AND NOT source.retired
+	AND source.protocol=CASE source_network.bridge_mode WHEN 'single' THEN 1 ELSE 2 END
+	AND owner.role='primary' AND (source_network.bridge_mode<>'single' OR source.id=$2))`
+
 func (s *Store) encodeCursor(c pageCursor) string {
 	data, _ := json.Marshal(c)
 	mac := hmac.New(sha256.New, s.cursorKey[:])
@@ -138,7 +152,7 @@ func (s *Store) Items(ctx context.Context, userID, networkID string, q protocol.
 		}
 	}
 	limit := param(q.Limit + 1)
-	rows, err := tx.Query(ctx, `SELECT d.id,d.kind,d.name,d.damage,d.label,d.exact,i.quantity,i.craftable,i.observed_at,i.craftable_observed_at,i.session_id=$2,lower(d.label)
+	rows, err := tx.Query(ctx, `SELECT d.id,d.kind,d.name,d.damage,d.label,d.exact,i.quantity,i.craftable,i.observed_at,i.craftable_observed_at,`+quantityCurrentSessionSQL+`,`+recipeCurrentSessionSQL+`,lower(d.label)
         FROM item_definitions d JOIN inventory i ON i.network_id=d.network_id AND i.item_id=d.id WHERE `+strings.Join(conditions, " AND ")+" ORDER BY "+order+" LIMIT "+limit, args...)
 	if err != nil {
 		return page, err
@@ -147,7 +161,7 @@ func (s *Store) Items(ctx context.Context, userID, networkID string, q protocol.
 	for rows.Next() {
 		var item protocol.Item
 		var name string
-		if err = rows.Scan(&item.ID, &item.Kind, &item.Name, &item.Damage, &item.Label, &item.Exact, &item.Quantity, &item.Craftable, &item.ObservedAt, &item.CraftableObservedAt, &item.CurrentSession, &name); err != nil {
+		if err = rows.Scan(&item.ID, &item.Kind, &item.Name, &item.Damage, &item.Label, &item.Exact, &item.Quantity, &item.Craftable, &item.ObservedAt, &item.CraftableObservedAt, &item.CurrentSession, &item.CraftableCurrentSession, &name); err != nil {
 			rows.Close()
 			return page, err
 		}

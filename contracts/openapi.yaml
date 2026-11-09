@@ -233,6 +233,82 @@ paths:
                 required: [device_token]
                 properties: {device_token: {$ref: '#/components/schemas/Token'}}
         default: {$ref: '#/components/responses/Error'}
+  /api/v1/networks/{network}/devices:
+    parameters: [{$ref: '#/components/parameters/NetworkID'}]
+    get:
+      operationId: listDevices
+      tags: [Networks]
+      description: Requires network viewing access. Returns device status without credentials or token hashes.
+      responses:
+        '200': {description: Registered devices, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/DeviceView'}}}}}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: createDevice
+      tags: [Networks]
+      description: Admin only. Creates a quantity_worker; at most eight unrevoked devices per network. The independent token is returned once.
+      parameters: [{$ref: '#/components/parameters/CSRF'}, {$ref: '#/components/parameters/Origin'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name]
+              properties: {name: {type: string, minLength: 1, maxLength: 128}}
+      responses:
+        '201':
+          description: New reader and one-time credential
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [device, device_token]
+                properties: {device: {$ref: '#/components/schemas/DeviceView'}, device_token: {$ref: '#/components/schemas/Token'}}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/networks/{network}/devices/{device}/token:
+    parameters: [{$ref: '#/components/parameters/NetworkID'}, {$ref: '#/components/parameters/DeviceID'}]
+    post:
+      operationId: rotateIndividualDeviceToken
+      tags: [Networks]
+      description: Admin only. Invalidates only this device credential, session and outstanding read assignments. Requires a new boot.
+      parameters: [{$ref: '#/components/parameters/CSRF'}, {$ref: '#/components/parameters/Origin'}]
+      requestBody: {$ref: '#/components/requestBodies/Empty'}
+      responses:
+        '200':
+          description: Replacement credential, returned once
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [device_token]
+                properties: {device_token: {$ref: '#/components/schemas/Token'}}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/networks/{network}/devices/{device}:
+    parameters: [{$ref: '#/components/parameters/NetworkID'}, {$ref: '#/components/parameters/DeviceID'}]
+    delete:
+      operationId: revokeDevice
+      tags: [Networks]
+      description: Admin only. Revokes a quantity_worker without deleting inventory or historical evidence. Primary revocation is forbidden.
+      parameters: [{$ref: '#/components/parameters/CSRF'}, {$ref: '#/components/parameters/Origin'}]
+      responses:
+        '204': {description: Reader revoked}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/networks/{network}/cooperation:
+    parameters: [{$ref: '#/components/parameters/NetworkID'}]
+    post:
+      operationId: enableCooperation
+      tags: [Networks]
+      description: |
+        Admin only. Idempotently enables cooperative mode. Returns 409 while any order is assigned,
+        computing or running. Retires sessions and read grants, clears primary CPU/health/scan
+        views, and preserves inventory, evidence times, queued/needs_review orders and logical refreshes.
+        Both devices require a new protocol-2 boot. There is no hot downgrade endpoint.
+      parameters: [{$ref: '#/components/parameters/CSRF'}, {$ref: '#/components/parameters/Origin'}]
+      requestBody: {$ref: '#/components/requestBodies/Empty'}
+      responses:
+        '200': {description: Current network status, content: {application/json: {schema: {$ref: '#/components/schemas/Network'}}}}
+        default: {$ref: '#/components/responses/Error'}
   /api/v1/networks/{network}/items:
     parameters: [{$ref: '#/components/parameters/NetworkID'}]
     get:
@@ -580,13 +656,71 @@ paths:
       responses:
         '200': {description: Control acknowledgement, content: {application/json: {schema: {$ref: '#/components/schemas/PollAck'}}}}
         default: {$ref: '#/components/responses/Error'}
+  /bridge/v2/boot-id:
+    post:
+      operationId: deviceBootIDV2
+      tags: [Bridge]
+      security: [{deviceBearer: []}]
+      description: Cooperative devices only. Single-mode credentials return 409; workers cannot use v1 endpoints.
+      requestBody: {$ref: '#/components/requestBodies/Empty'}
+      responses:
+        '200':
+          description: Random boot identity
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [boot_id]
+                properties: {boot_id: {type: string, pattern: '^[0-9a-f]{32}$'}}
+        default: {$ref: '#/components/responses/Error'}
+  /bridge/v2/hello:
+    post:
+      operationId: deviceHelloV2
+      tags: [Bridge]
+      security: [{deviceBearer: []}]
+      description: Independent per-device session; role and device ID come only from credentials. Retired boots cannot resume.
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/HelloV2'}}}}
+      responses:
+        '200': {description: Cooperative session and bounds, content: {application/json: {schema: {$ref: '#/components/schemas/WelcomeV2'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /bridge/v2/poll:
+    post:
+      operationId: devicePollV2
+      tags: [Bridge]
+      security: [{deviceBearer: []}]
+      description: |
+        Independent sequence and ACK per device. Both read capacities must be positive to dispatch.
+        Workers cannot submit CPU snapshots, order reports or discovery hints. No legacy read lanes.
+        Same server_group shares acquisition credits with v1 networks. Replays cannot mint grants or
+        renew TTL; expired and superseded assignments are filtered. Deduct HTTP round-trip duration
+        from grant TTL and do not reset remaining credits on repeated grant IDs.
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/PollV2'}}}}
+      responses:
+        '200': {description: Device control ACK and bounded read assignments, content: {application/json: {schema: {$ref: '#/components/schemas/PollAckV2'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /bridge/v2/inventory:
+    post:
+      operationId: uploadInventoryV2
+      tags: [Bridge]
+      security: [{deviceBearer: []}]
+      description: |
+        Inventory and transport ACK commit atomically. Immutable retries preserve sequence/body.
+        Worker updates require a known canonical ID, quantity-only assignment and craftable:null;
+        workers cannot define items or mark scans complete. Quantity_recipe requires primary and
+        boolean craftable. Expired or superseded but structurally valid receipts may be transport
+        ACKed without changing inventory, evidence times or logical request state.
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/InventoryBatchV2'}}}}
+      responses:
+        '200': {description: Committed device checkpoint, content: {application/json: {schema: {$ref: '#/components/schemas/InventoryAck'}}}}
+        default: {$ref: '#/components/responses/Error'}
 components:
   securitySchemes:
     memberBearer: {type: http, scheme: bearer, description: 'Admin/member token, never an OC device token'}
-    deviceBearer: {type: http, scheme: bearer, description: 'Network-specific device token, never a member token'}
+    deviceBearer: {type: http, scheme: bearer, description: 'Independent device token, never a member token'}
     browserCookie: {type: apiKey, in: cookie, name: ac_session, description: Mutations also require matching Origin and X-CSRF-Token}
   parameters:
     NetworkID: {name: network, in: path, required: true, schema: {$ref: '#/components/schemas/ID'}}
+    DeviceID: {name: device, in: path, required: true, schema: {$ref: '#/components/schemas/ID'}}
     MemberID: {name: member, in: path, required: true, schema: {$ref: '#/components/schemas/ID'}}
     OrderID: {name: order, in: path, required: true, schema: {$ref: '#/components/schemas/ID'}}
     CSRF: {name: X-CSRF-Token, in: header, description: Required for cookie-authenticated mutations, schema: {type: string}}
@@ -699,7 +833,7 @@ components:
         enumeration: {type: string, maxLength: 64}
     Network:
       type: object
-      required: [id, name, server_group, source, revision, capabilities, online, quality]
+      required: [id, name, server_group, source, revision, capabilities, online, quality, bridge_mode]
       properties:
         id: {$ref: '#/components/schemas/ID'}
         name: {type: string}
@@ -716,9 +850,36 @@ components:
         health: {type: object}
         online: {type: boolean}
         quality: {type: string, enum: [unverified, degraded], description: Never an atomic-snapshot guarantee}
+        bridge_mode: {type: string, enum: [single, cooperative]}
+        services: {$ref: '#/components/schemas/NetworkServices'}
+    NetworkServices:
+      type: object
+      required: [quantity_readers, discovery, recipes, craft]
+      properties:
+        quantity_readers: {type: integer, minimum: 0, maximum: 8}
+        discovery: {type: boolean}
+        recipes: {type: boolean}
+        craft: {type: boolean}
+        cpu_observed_at: {type: string, format: date-time}
+    DeviceView:
+      type: object
+      additionalProperties: false
+      required: [id, network_id, name, role, capabilities, online, revoked]
+      properties:
+        id: {$ref: '#/components/schemas/ID'}
+        network_id: {$ref: '#/components/schemas/ID'}
+        name: {type: string}
+        role: {type: string, enum: [primary, quantity_worker]}
+        session_id: {$ref: '#/components/schemas/ID'}
+        capabilities: {$ref: '#/components/schemas/Capabilities'}
+        health: {type: object}
+        last_seen: {type: string, format: date-time}
+        last_inventory: {type: string, format: date-time}
+        online: {type: boolean}
+        revoked: {type: boolean}
     Item:
       type: object
-      required: [id, kind, name, damage, label, exact, quantity, craftable, observed_at, current_session]
+      required: [id, kind, name, damage, label, exact, quantity, craftable, observed_at, current_session, craftable_current_session]
       properties:
         id: {$ref: '#/components/schemas/PositiveQuantity'}
         canonical_id: {allOf: [{$ref: '#/components/schemas/PositiveQuantity'}], description: 'Present only when an ID lookup used a legacy alias. Stock belongs to this canonical item; aliases must not be added together.'}
@@ -731,7 +892,8 @@ components:
         craftable: {type: boolean}
         observed_at: {type: string, format: date-time, description: Server acceptance time of the latest quantity observation.}
         craftable_observed_at: {type: string, format: date-time, description: Server acceptance time of the latest recipe observation. Omitted when unknown; quantity-only readings do not refresh this time.}
-        current_session: {type: boolean}
+        current_session: {type: boolean, description: Quantity source is still its owning device's current valid session; independent of primary availability and age.}
+        craftable_current_session: {type: boolean, description: Recipe source is still its owning device's current valid session.}
     ItemPage:
       type: object
       required: [items, revision]
@@ -858,6 +1020,8 @@ components:
         quantity_refresh:
           type: boolean
           description: Enables refresh capacity and quantity-only receipts on a capable device. Upgrade the backend before the OC bridge.
+        read_slots: {type: integer, minimum: 0, maximum: 16}
+        read_bytes: {type: integer, minimum: 0, maximum: 16384}
     Welcome:
       type: object
       required: [protocol, network_id, session_id, inventory_ack, poll_ack, limits]
@@ -1063,3 +1227,95 @@ components:
         item: {$ref: '#/components/schemas/Definition'}
         token: {type: string, pattern: '^[0-9a-f]{32}$'}
         ttl_millis: {type: integer, minimum: 1, maximum: 60000, description: Remaining backend lifetime at dispatch. OC expires local work on its monotonic clock; retries of the same generation cannot extend that deadline.}
+    HelloV2:
+      type: object
+      additionalProperties: false
+      required: [protocol, boot_id, source, capabilities, max_response_bytes]
+      properties:
+        protocol: {const: 2}
+        boot_id: {$ref: '#/components/schemas/ID'}
+        source: {type: string, enum: [oc, simulator]}
+        capabilities: {$ref: '#/components/schemas/Capabilities'}
+        max_response_bytes: {type: integer, minimum: 2048, maximum: 131072}
+    WelcomeV2:
+      type: object
+      required: [protocol, network_id, device_id, role, session_id, inventory_ack, poll_ack, limits]
+      properties:
+        protocol: {const: 2}
+        network_id: {$ref: '#/components/schemas/ID'}
+        device_id: {$ref: '#/components/schemas/ID'}
+        role: {type: string, enum: [primary, quantity_worker]}
+        session_id: {$ref: '#/components/schemas/ID'}
+        inventory_ack: {$ref: '#/components/schemas/Quantity'}
+        poll_ack: {$ref: '#/components/schemas/Quantity'}
+        limits: {$ref: '#/components/schemas/Limits'}
+    AssignmentID: {type: string, pattern: '^[0-9a-f]{32}$'}
+    ReadHint:
+      type: object
+      additionalProperties: false
+      oneOf:
+        - {required: [id], not: {required: [item]}}
+        - {required: [item], not: {required: [id]}}
+      properties:
+        id: {$ref: '#/components/schemas/PositiveQuantity'}
+        item: {$ref: '#/components/schemas/Definition'}
+    ReadAssignment:
+      type: object
+      additionalProperties: false
+      required: [id, item, assignment_id, kind, purpose, ttl_millis]
+      properties:
+        id: {$ref: '#/components/schemas/PositiveQuantity'}
+        item: {$ref: '#/components/schemas/Definition'}
+        assignment_id: {$ref: '#/components/schemas/AssignmentID'}
+        kind: {type: string, enum: [quantity, quantity_recipe]}
+        purpose: {type: string, enum: [refresh, order, background]}
+        ttl_millis: {type: integer, minimum: 1, maximum: 30000}
+    UpdateV2:
+      type: object
+      additionalProperties: false
+      required: [quantity, observation, craftable]
+      oneOf:
+        - {required: [id], not: {required: [item]}}
+        - {required: [item], not: {required: [id]}}
+      properties:
+        id: {$ref: '#/components/schemas/PositiveQuantity'}
+        item: {$ref: '#/components/schemas/Definition'}
+        quantity: {$ref: '#/components/schemas/Quantity'}
+        observation: {$ref: '#/components/schemas/PositiveQuantity'}
+        craftable: {type: [boolean, 'null']}
+        assignment_id: {$ref: '#/components/schemas/AssignmentID'}
+    InventoryBatchV2:
+      type: object
+      additionalProperties: false
+      required: [session_id, sequence, updates]
+      properties:
+        session_id: {$ref: '#/components/schemas/ID'}
+        sequence: {$ref: '#/components/schemas/PositiveQuantity'}
+        updates: {type: array, maxItems: 512, items: {$ref: '#/components/schemas/UpdateV2'}}
+        scan_completed: {type: boolean}
+    PollV2:
+      type: object
+      additionalProperties: false
+      required: [session_id, sequence]
+      properties:
+        session_id: {$ref: '#/components/schemas/ID'}
+        sequence: {$ref: '#/components/schemas/PositiveQuantity'}
+        reports: {type: array, maxItems: 16, items: {$ref: '#/components/schemas/Report'}}
+        cpus: {type: array, maxItems: 64, items: {$ref: '#/components/schemas/CPU'}}
+        cpus_truncated: {type: boolean}
+        health: {$ref: '#/components/schemas/DeviceHealth'}
+        read_slots: {type: integer, minimum: 0, maximum: 16}
+        read_bytes: {type: integer, minimum: 0, maximum: 16384}
+        hints: {type: array, maxItems: 16, items: {$ref: '#/components/schemas/ReadHint'}}
+    PollAckV2:
+      type: object
+      additionalProperties: false
+      required: [ack, commands, reads, poll_millis, scan_budget]
+      properties:
+        ack: {$ref: '#/components/schemas/PositiveQuantity'}
+        commands: {type: array, maxItems: 16, items: {$ref: '#/components/schemas/Command'}}
+        poll_millis: {type: integer, minimum: 1, maximum: 30000}
+        scan_budget: {type: integer, minimum: 0, maximum: 32}
+        reads: {type: array, maxItems: 16, items: {$ref: '#/components/schemas/ReadAssignment'}}
+        grant_id: {$ref: '#/components/schemas/AssignmentID'}
+        grant_ttl_millis: {type: integer, minimum: 1, maximum: 30000}

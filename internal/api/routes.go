@@ -23,6 +23,15 @@ func integerQuery(r *http.Request, key string) (int, error) {
 }
 
 func (s *Server) routes() {
+	s.mux.HandleFunc("GET /api/v1/networks/{network}/devices", s.user(s.devices))
+	s.mux.HandleFunc("POST /api/v1/networks/{network}/devices", s.user(s.createDevice))
+	s.mux.HandleFunc("POST /api/v1/networks/{network}/devices/{device}/token", s.user(s.rotateDevice))
+	s.mux.HandleFunc("DELETE /api/v1/networks/{network}/devices/{device}", s.user(s.revokeDevice))
+	s.mux.HandleFunc("POST /api/v1/networks/{network}/cooperation", s.user(s.enableCooperation))
+	s.mux.HandleFunc("POST /bridge/v2/boot-id", s.device(s.bootV2))
+	s.mux.HandleFunc("POST /bridge/v2/hello", s.device(s.helloV2))
+	s.mux.HandleFunc("POST /bridge/v2/poll", s.device(s.pollV2))
+	s.mux.HandleFunc("POST /bridge/v2/inventory", s.device(s.inventoryV2))
 	s.mux.HandleFunc("GET /oc/{path...}", s.ocFile)
 	s.mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { respond(w, 200, map[string]string{"status": "ok"}) })
 	s.mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {

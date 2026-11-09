@@ -56,10 +56,24 @@ func (s *Server) device(fn func(http.ResponseWriter, *http.Request, store.Device
 			fail(w, err)
 			return
 		}
+		if strings.HasPrefix(r.URL.Path, "/bridge/v1/") && d.Role != "primary" {
+			fail(w, store.ErrConflict)
+			return
+		}
+		if r.URL.Path == "/bridge/v1/boot-id" || r.URL.Path == "/bridge/v2/boot-id" {
+			version := 1
+			if r.URL.Path == "/bridge/v2/boot-id" {
+				version = 2
+			}
+			if err := s.db.CheckDeviceProtocol(r.Context(), d, version); err != nil {
+				fail(w, err)
+				return
+			}
+		}
 		s.deviceMu.Lock()
-		count := s.deviceInFlight[d.NetworkID]
+		count := s.deviceInFlight[d.ID]
 		if count < 2 {
-			s.deviceInFlight[d.NetworkID] = count + 1
+			s.deviceInFlight[d.ID] = count + 1
 		}
 		s.deviceMu.Unlock()
 		if count >= 2 {
@@ -69,9 +83,9 @@ func (s *Server) device(fn func(http.ResponseWriter, *http.Request, store.Device
 		}
 		defer func() {
 			s.deviceMu.Lock()
-			s.deviceInFlight[d.NetworkID]--
-			if s.deviceInFlight[d.NetworkID] == 0 {
-				delete(s.deviceInFlight, d.NetworkID)
+			s.deviceInFlight[d.ID]--
+			if s.deviceInFlight[d.ID] == 0 {
+				delete(s.deviceInFlight, d.ID)
 			}
 			s.deviceMu.Unlock()
 		}()

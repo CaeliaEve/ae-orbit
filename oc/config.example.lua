@@ -1,5 +1,7 @@
 -- The installer creates /etc/ae-orbit.cfg if absent. Set these connection values.
 return {
+  bridge_mode = "single",
+  role = "primary",
   url = "https://ae.example.com",
   token = "replace-with-the-device-token-issued-by-the-backend",
   me_address = "replace-with-the-ME-controller-or-full-interface-component-address",

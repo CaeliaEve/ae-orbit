@@ -61,10 +61,26 @@ func (d Definition) Validate() error {
 }
 
 func (b InventoryBatch) Validate(maxItems int) error {
+	return b.validate(maxItems, false)
+}
+
+func (b InventoryBatch) ValidateV2(maxItems int) error {
+	return b.validate(maxItems, true)
+}
+
+func tokenOK(token string) bool {
+	return len(token) == 32 && strings.Trim(token, "0123456789abcdef") == ""
+}
+
+func (b InventoryBatch) validate(maxItems int, v2 bool) error {
 	if !textOK(b.SessionID, 1, 128) || b.Sequence < 1 || len(b.Updates) > maxItems {
 		return fmt.Errorf("invalid inventory envelope")
 	}
 	for _, u := range b.Updates {
+		if (!v2 && u.AssignmentID != "") || (v2 && (u.legacyReceipts || u.Verification != "" || u.Refresh != "")) ||
+			(u.AssignmentID != "" && !tokenOK(u.AssignmentID)) {
+			return fmt.Errorf("invalid inventory protocol fields")
+		}
 		if u.Quantity < 0 || u.Observation < 1 || (u.ID > 0) == (u.Item != nil) {
 			return fmt.Errorf("invalid inventory update")
 		}
@@ -84,7 +100,15 @@ func (b InventoryBatch) Validate(maxItems int) error {
 }
 
 func (h Hello) Validate() error {
-	if h.Protocol != 1 || !textOK(h.BootID, 1, 128) || (h.Source != "oc" && h.Source != "simulator") {
+	return h.validate(1)
+}
+
+func (h Hello) ValidateV2() error {
+	return h.validate(2)
+}
+
+func (h Hello) validate(version int) error {
+	if h.Protocol != version || !textOK(h.BootID, 1, 128) || (h.Source != "oc" && h.Source != "simulator") {
 		return fmt.Errorf("invalid hello")
 	}
 	if h.MaxResponseBytes < 2048 || h.MaxResponseBytes > 131072 {
@@ -100,6 +124,34 @@ func (h Hello) Validate() error {
 }
 
 func (p Poll) Validate(maxCPUs, maxReports int) error {
+	if p.v2ReadFields || p.ReadSlots != nil || p.ReadBytes != nil || p.Hints != nil {
+		return fmt.Errorf("v2 fields require protocol 2")
+	}
+	return p.validate(maxCPUs, maxReports)
+}
+
+func (p Poll) ValidateV2(maxCPUs, maxReports int) error {
+	if p.legacyReadFields || p.RecheckSlots != nil || p.RecheckBytes != nil || p.RefreshSlots != nil || p.RefreshBytes != nil {
+		return fmt.Errorf("legacy read capacities are not supported in protocol 2")
+	}
+	if (p.ReadSlots != nil && (*p.ReadSlots < 0 || *p.ReadSlots > 16)) ||
+		(p.ReadBytes != nil && (*p.ReadBytes < 0 || *p.ReadBytes > 16384)) || len(p.Hints) > 16 {
+		return fmt.Errorf("invalid read capacity or hints")
+	}
+	for _, hint := range p.Hints {
+		if hint.ID < 0 || (hint.ID > 0) == (hint.Item != nil) {
+			return fmt.Errorf("invalid read hint identity")
+		}
+		if hint.Item != nil {
+			if err := hint.Item.Validate(); err != nil {
+				return err
+			}
+		}
+	}
+	return p.validate(maxCPUs, maxReports)
+}
+
+func (p Poll) validate(maxCPUs, maxReports int) error {
 	if !textOK(p.SessionID, 1, 128) || p.Sequence < 1 || len(p.Reports) > maxReports {
 		return fmt.Errorf("invalid poll envelope")
 	}
@@ -168,6 +220,15 @@ func (p Poll) Validate(maxCPUs, maxReports int) error {
 		}
 	}
 	return nil
+}
+
+func (a ReadAssignment) Validate() error {
+	if a.ID < 1 || !tokenOK(a.AssignmentID) || a.TTLMillis < 1 || a.TTLMillis > 30000 ||
+		(a.Kind != "quantity" && a.Kind != "quantity_recipe") ||
+		(a.Purpose != "refresh" && a.Purpose != "order" && a.Purpose != "background") {
+		return fmt.Errorf("invalid read assignment")
+	}
+	return a.Item.Validate()
 }
 
 func (d ReadFailure) Validate() error {

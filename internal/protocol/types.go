@@ -77,6 +77,8 @@ type Limits struct {
 	DiagnosticSamples int  `json:"diagnostic_samples,omitempty"`
 	SyncTelemetry     bool `json:"sync_telemetry,omitempty"`
 	QuantityRefresh   bool `json:"quantity_refresh,omitempty"`
+	ReadSlots         int  `json:"read_slots,omitempty"`
+	ReadBytes         int  `json:"read_bytes,omitempty"`
 }
 
 type Welcome struct {
@@ -86,16 +88,20 @@ type Welcome struct {
 	InventoryAck Quantity `json:"inventory_ack"`
 	PollAck      Quantity `json:"poll_ack"`
 	Limits       Limits   `json:"limits"`
+	DeviceID     string   `json:"device_id,omitempty"`
+	Role         string   `json:"role,omitempty"`
 }
 
 type Update struct {
-	ID           Quantity    `json:"id,omitempty"`
-	Item         *Definition `json:"item,omitempty"`
-	Quantity     Quantity    `json:"quantity"`
-	Observation  Quantity    `json:"observation"`
-	Craftable    *bool       `json:"craftable"`
-	Verification string      `json:"verification,omitempty"`
-	Refresh      string      `json:"refresh,omitempty"`
+	ID             Quantity    `json:"id,omitempty"`
+	Item           *Definition `json:"item,omitempty"`
+	Quantity       Quantity    `json:"quantity"`
+	Observation    Quantity    `json:"observation"`
+	Craftable      *bool       `json:"craftable"`
+	Verification   string      `json:"verification,omitempty"`
+	Refresh        string      `json:"refresh,omitempty"`
+	AssignmentID   string      `json:"assignment_id,omitempty"`
+	legacyReceipts bool
 }
 
 func (u *Update) UnmarshalJSON(data []byte) error {
@@ -105,8 +111,9 @@ func (u *Update) UnmarshalJSON(data []byte) error {
 		Quantity     *Quantity       `json:"quantity"`
 		Observation  Quantity        `json:"observation"`
 		Craftable    json.RawMessage `json:"craftable"`
-		Verification string          `json:"verification,omitempty"`
-		Refresh      string          `json:"refresh,omitempty"`
+		Verification json.RawMessage `json:"verification,omitempty"`
+		Refresh      json.RawMessage `json:"refresh,omitempty"`
+		AssignmentID json.RawMessage `json:"assignment_id,omitempty"`
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
@@ -116,11 +123,25 @@ func (u *Update) UnmarshalJSON(data []byte) error {
 	if wire.Quantity == nil || len(wire.Craftable) == 0 {
 		return fmt.Errorf("inventory quantity and craftable must be explicit")
 	}
+	var verification, refresh, assignmentID string
+	for _, field := range []struct {
+		raw    json.RawMessage
+		target *string
+	}{{wire.Verification, &verification}, {wire.Refresh, &refresh}, {wire.AssignmentID, &assignmentID}} {
+		if len(field.raw) > 0 {
+			if err := json.Unmarshal(field.raw, field.target); err != nil {
+				return err
+			}
+		}
+	}
+	if len(wire.AssignmentID) > 0 && !tokenOK(assignmentID) {
+		return fmt.Errorf("invalid assignment ID")
+	}
 	var craftable *bool
 	if err := json.Unmarshal(wire.Craftable, &craftable); err != nil {
 		return err
 	}
-	*u = Update{ID: wire.ID, Item: wire.Item, Quantity: *wire.Quantity, Observation: wire.Observation, Craftable: craftable, Verification: wire.Verification, Refresh: wire.Refresh}
+	*u = Update{ID: wire.ID, Item: wire.Item, Quantity: *wire.Quantity, Observation: wire.Observation, Craftable: craftable, Verification: verification, Refresh: refresh, AssignmentID: assignmentID, legacyReceipts: len(wire.Verification) > 0 || len(wire.Refresh) > 0}
 	return nil
 }
 
@@ -143,18 +164,19 @@ type InventoryAck struct {
 }
 
 type Item struct {
-	ID                  Quantity   `json:"id"`
-	CanonicalID         Quantity   `json:"canonical_id,omitempty"`
-	Kind                string     `json:"kind"`
-	Name                string     `json:"name"`
-	Damage              int        `json:"damage"`
-	Label               string     `json:"label"`
-	Exact               bool       `json:"exact"`
-	Quantity            Quantity   `json:"quantity"`
-	Craftable           bool       `json:"craftable"`
-	ObservedAt          time.Time  `json:"observed_at"`
-	CraftableObservedAt *time.Time `json:"craftable_observed_at,omitempty"`
-	CurrentSession      bool       `json:"current_session"`
+	ID                      Quantity   `json:"id"`
+	CanonicalID             Quantity   `json:"canonical_id,omitempty"`
+	Kind                    string     `json:"kind"`
+	Name                    string     `json:"name"`
+	Damage                  int        `json:"damage"`
+	Label                   string     `json:"label"`
+	Exact                   bool       `json:"exact"`
+	Quantity                Quantity   `json:"quantity"`
+	Craftable               bool       `json:"craftable"`
+	ObservedAt              time.Time  `json:"observed_at"`
+	CraftableObservedAt     *time.Time `json:"craftable_observed_at,omitempty"`
+	CurrentSession          bool       `json:"current_session"`
+	CraftableCurrentSession bool       `json:"craftable_current_session"`
 }
 
 type ItemPage struct {
@@ -258,16 +280,61 @@ type InventoryTelemetry struct {
 }
 
 type Poll struct {
-	SessionID     string   `json:"session_id"`
-	Sequence      Quantity `json:"sequence"`
-	Reports       []Report `json:"reports"`
-	CPUs          *[]CPU   `json:"cpus,omitempty"`
-	CPUsTruncated bool     `json:"cpus_truncated,omitempty"`
-	Health        *Health  `json:"health,omitempty"`
-	RecheckSlots  *int     `json:"recheck_slots,omitempty"`
-	RecheckBytes  *int     `json:"recheck_bytes,omitempty"`
-	RefreshSlots  *int     `json:"refresh_slots,omitempty"`
-	RefreshBytes  *int     `json:"refresh_bytes,omitempty"`
+	SessionID        string     `json:"session_id"`
+	Sequence         Quantity   `json:"sequence"`
+	Reports          []Report   `json:"reports"`
+	CPUs             *[]CPU     `json:"cpus,omitempty"`
+	CPUsTruncated    bool       `json:"cpus_truncated,omitempty"`
+	Health           *Health    `json:"health,omitempty"`
+	RecheckSlots     *int       `json:"recheck_slots,omitempty"`
+	RecheckBytes     *int       `json:"recheck_bytes,omitempty"`
+	RefreshSlots     *int       `json:"refresh_slots,omitempty"`
+	RefreshBytes     *int       `json:"refresh_bytes,omitempty"`
+	ReadSlots        *int       `json:"read_slots,omitempty"`
+	ReadBytes        *int       `json:"read_bytes,omitempty"`
+	Hints            []ReadHint `json:"hints,omitempty"`
+	legacyReadFields bool
+	v2ReadFields     bool
+}
+
+func (p *Poll) UnmarshalJSON(data []byte) error {
+	type plain Poll
+	var wire plain
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&wire); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	for _, key := range []string{"recheck_slots", "recheck_bytes", "refresh_slots", "refresh_bytes"} {
+		if _, ok := fields[key]; ok {
+			wire.legacyReadFields = true
+		}
+	}
+	for _, key := range []string{"read_slots", "read_bytes", "hints"} {
+		if _, ok := fields[key]; ok {
+			wire.v2ReadFields = true
+		}
+	}
+	*p = Poll(wire)
+	return nil
+}
+
+type ReadHint struct {
+	ID   Quantity    `json:"id,omitempty"`
+	Item *Definition `json:"item,omitempty"`
+}
+
+type ReadAssignment struct {
+	ID           Quantity   `json:"id"`
+	Item         Definition `json:"item"`
+	AssignmentID string     `json:"assignment_id"`
+	Kind         string     `json:"kind"`
+	Purpose      string     `json:"purpose"`
+	TTLMillis    int        `json:"ttl_millis"`
 }
 
 type Command struct {
@@ -287,12 +354,36 @@ type Verification struct {
 }
 
 type PollAck struct {
-	Ack        Quantity          `json:"ack"`
-	Commands   []Command         `json:"commands"`
-	Verify     []Verification    `json:"verify"`
-	PollMillis int               `json:"poll_millis"`
-	ScanBudget int               `json:"scan_budget"`
-	Refresh    []QuantityRefresh `json:"refresh,omitempty"`
+	Ack            Quantity          `json:"ack"`
+	Commands       []Command         `json:"commands"`
+	Verify         []Verification    `json:"verify"`
+	PollMillis     int               `json:"poll_millis"`
+	ScanBudget     int               `json:"scan_budget"`
+	Refresh        []QuantityRefresh `json:"refresh,omitempty"`
+	Reads          []ReadAssignment  `json:"reads,omitempty"`
+	GrantID        string            `json:"grant_id,omitempty"`
+	GrantTTLMillis int               `json:"grant_ttl_millis,omitempty"`
+}
+
+func (p PollAck) MarshalJSON() ([]byte, error) {
+	type plain PollAck
+	// A nonnil Reads slice identifies v2, including empty cached responses.
+	if p.Reads == nil {
+		return json.Marshal(plain(p))
+	}
+	commands := p.Commands
+	if commands == nil {
+		commands = []Command{}
+	}
+	return json.Marshal(struct {
+		Ack            Quantity         `json:"ack"`
+		Commands       []Command        `json:"commands"`
+		PollMillis     int              `json:"poll_millis"`
+		ScanBudget     int              `json:"scan_budget"`
+		Reads          []ReadAssignment `json:"reads"`
+		GrantID        string           `json:"grant_id,omitempty"`
+		GrantTTLMillis int              `json:"grant_ttl_millis,omitempty"`
+	}{p.Ack, commands, p.PollMillis, p.ScanBudget, p.Reads, p.GrantID, p.GrantTTLMillis})
 }
 
 type QuantityRefresh struct {
@@ -324,21 +415,45 @@ type Order struct {
 }
 
 type Network struct {
-	ID               string          `json:"id"`
-	Name             string          `json:"name"`
-	ServerGroup      string          `json:"server_group"`
-	Source           string          `json:"source"`
-	SessionID        string          `json:"session_id,omitempty"`
-	Revision         Quantity        `json:"revision"`
-	LastSeen         *time.Time      `json:"last_seen,omitempty"`
-	LastInventory    *time.Time      `json:"last_inventory,omitempty"`
-	LastScan         *time.Time      `json:"last_scan,omitempty"`
-	FirstScan        *time.Time      `json:"first_scan,omitempty"`
-	SessionStartedAt *time.Time      `json:"session_started_at,omitempty"`
-	Capabilities     Capabilities    `json:"capabilities"`
-	Health           json.RawMessage `json:"health,omitempty"`
-	Online           bool            `json:"online"`
-	Quality          string          `json:"quality"`
+	ID               string           `json:"id"`
+	Name             string           `json:"name"`
+	ServerGroup      string           `json:"server_group"`
+	Source           string           `json:"source"`
+	SessionID        string           `json:"session_id,omitempty"`
+	Revision         Quantity         `json:"revision"`
+	LastSeen         *time.Time       `json:"last_seen,omitempty"`
+	LastInventory    *time.Time       `json:"last_inventory,omitempty"`
+	LastScan         *time.Time       `json:"last_scan,omitempty"`
+	FirstScan        *time.Time       `json:"first_scan,omitempty"`
+	SessionStartedAt *time.Time       `json:"session_started_at,omitempty"`
+	Capabilities     Capabilities     `json:"capabilities"`
+	Health           json.RawMessage  `json:"health,omitempty"`
+	Online           bool             `json:"online"`
+	Quality          string           `json:"quality"`
+	BridgeMode       string           `json:"bridge_mode"`
+	Services         *NetworkServices `json:"services,omitempty"`
+}
+
+type NetworkServices struct {
+	QuantityReaders int        `json:"quantity_readers"`
+	Discovery       bool       `json:"discovery"`
+	Recipes         bool       `json:"recipes"`
+	Craft           bool       `json:"craft"`
+	CPUObservedAt   *time.Time `json:"cpu_observed_at,omitempty"`
+}
+
+type DeviceView struct {
+	ID            string          `json:"id"`
+	NetworkID     string          `json:"network_id"`
+	Name          string          `json:"name"`
+	Role          string          `json:"role"`
+	SessionID     string          `json:"session_id,omitempty"`
+	Capabilities  Capabilities    `json:"capabilities"`
+	Health        json.RawMessage `json:"health,omitempty"`
+	LastSeen      *time.Time      `json:"last_seen,omitempty"`
+	LastInventory *time.Time      `json:"last_inventory,omitempty"`
+	Online        bool            `json:"online"`
+	Revoked       bool            `json:"revoked"`
 }
 
 type Member struct {

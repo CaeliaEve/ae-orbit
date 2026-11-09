@@ -132,6 +132,10 @@ func TestDatabaseMetricsIncludeRealNetworkLockWait(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(context.Background())
+	var blockerPID int
+	if err = tx.QueryRow(ctx, "SELECT pg_backend_pid()").Scan(&blockerPID); err != nil {
+		t.Fatal(err)
+	}
 	if _, err = tx.Exec(ctx, "SELECT id FROM networks WHERE id=$1 FOR UPDATE", f.network.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -148,7 +152,7 @@ func TestDatabaseMetricsIncludeRealNetworkLockWait(t *testing.T) {
 	// goroutine scheduling delay, before releasing the lock.
 	for {
 		var waiting bool
-		if err = f.db.Pool().QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE '%current_session,server_group,device_hash%')").Scan(&waiting); err != nil {
+		if err = f.db.Pool().QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND $1=ANY(pg_blocking_pids(pid)))", blockerPID).Scan(&waiting); err != nil {
 			t.Fatal(err)
 		}
 		if waiting {

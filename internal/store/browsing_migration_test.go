@@ -109,15 +109,16 @@ func TestItemLookupBoundsAndStaleEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(before.Items) != 1 || !before.Items[0].CurrentSession {
+	if len(before.Items) != 1 || !before.Items[0].CurrentSession || !before.Items[0].CraftableCurrentSession {
 		t.Fatal(before)
 	}
 	hello(t, s, token, "lookup-second")
 	after, err := s.ItemsByID(ctx, admin.ID, n.ID, []protocol.Quantity{id})
-	if err != nil || len(after.Items) != 1 || after.Items[0].CurrentSession || after.Items[0].Quantity != 9007199254740993 {
+	if err != nil || len(after.Items) != 1 || after.Items[0].CurrentSession || after.Items[0].CraftableCurrentSession || after.Items[0].Quantity != 9007199254740993 {
 		t.Fatal("session change discarded stale inventory or marked it current", after, err)
 	}
 	before.Items[0].CurrentSession = false
+	before.Items[0].CraftableCurrentSession = false
 	if !reflect.DeepEqual(before.Items, after.Items) {
 		t.Fatal("lookup refreshed evidence without a device observation", before, after)
 	}

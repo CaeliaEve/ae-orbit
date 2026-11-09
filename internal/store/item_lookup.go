@@ -38,7 +38,7 @@ func (s *Store) ItemsByID(ctx context.Context, userID, networkID string, ids []p
 		return result, notFound(err)
 	}
 	rows, err := tx.Query(ctx, `SELECT requested.id,CASE WHEN requested.id<>d.id THEN d.id ELSE 0 END,d.kind,d.name,d.damage,d.label,d.exact,i.quantity,i.craftable,
-        i.observed_at,i.craftable_observed_at,i.session_id=$2
+        i.observed_at,i.craftable_observed_at,`+quantityCurrentSessionSQL+`,`+recipeCurrentSessionSQL+`
         FROM item_definitions requested
         LEFT JOIN item_aliases a ON a.network_id=requested.network_id AND a.alias_id=requested.id
         JOIN item_definitions d ON d.network_id=requested.network_id AND d.id=coalesce(a.canonical_id,requested.id)
@@ -51,7 +51,7 @@ func (s *Store) ItemsByID(ctx context.Context, userID, networkID string, ids []p
 	for rows.Next() {
 		var item protocol.Item
 		if err = rows.Scan(&item.ID, &item.CanonicalID, &item.Kind, &item.Name, &item.Damage, &item.Label, &item.Exact,
-			&item.Quantity, &item.Craftable, &item.ObservedAt, &item.CraftableObservedAt, &item.CurrentSession); err != nil {
+			&item.Quantity, &item.Craftable, &item.ObservedAt, &item.CraftableObservedAt, &item.CurrentSession, &item.CraftableCurrentSession); err != nil {
 			rows.Close()
 			return result, err
 		}
