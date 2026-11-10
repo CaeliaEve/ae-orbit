@@ -10,15 +10,18 @@ local role=FIXTURE_ROLE or "primary"
 assert(role~="quantity_worker" or mode=="cooperative","worker fixture requires cooperative mode")
 local worker=role=="quantity_worker"
 local runner = require(mode=="cooperative" and "aeorbit.cooperative" or "aeorbit.runner")
+local fixture_tag=FIXTURE_TAGGED and require("aeorbit.base64").decode("H4sIAAAAAAAAA+NiYGAAAHg/+U4EAAAA") or nil
 
 fixture_stock, fixture_requests, fixture_continuations = 10, 0, 0
 fixture_lookup_failures = 0
+fixture_exact_reads, fixture_recipe_calls, fixture_recipe_failures = 0, 0, 0
 fixture_framed_requests, fixture_framed_eof_reads = 0, 0
 local job
 local bridge
 local function raw(index)
   if index == 1 then
-    return {name="fixture:craftable",damage=0,label="Fixture craftable",size=fixture_stock,hasTag=false,isCraftable=true}
+    return {name="fixture:craftable",damage=0,label="Fixture craftable",size=fixture_stock,
+      hasTag=fixture_tag~=nil,tag=fixture_tag,isCraftable=true}
   end
   return {name="fixture:exact",damage=0,label="Fixture exact int64",size="9223372036854775807",hasTag=false,isCraftable=false}
 end
@@ -29,11 +32,13 @@ function me.allItems()
   return proxy.callback(function() index=index+1;if index<=2 then return raw(index) end end)
 end
 function me.getItemInNetwork(detail)
+  fixture_exact_reads=fixture_exact_reads+1
   if fixture_lookup_failure then
     fixture_lookup_failures=fixture_lookup_failures+1
     error("fixture lookup failed",0)
   end
   if detail.name=="fixture:craftable" then
+    assert(detail.tag==fixture_tag and detail.hasTag==(fixture_tag~=nil),"exact lookup lost NBT identity")
     local value=raw(1);value.isCraftable=false;return value
   end
   if detail.name=="fixture:exact" then return raw(2) end
@@ -47,8 +52,13 @@ function me.getCraftable(detail,kind)
 end
 function me.getCraftables(filter)
   assert(not worker,"worker queried recipes")
-  assert(filter.name=="fixture:craftable" and filter.damage==0 and filter.hasTag==false)
-  assert(filter.label==nil and filter.tag==nil and filter.size==nil)
+  assert(filter.name=="fixture:craftable" and filter.damage==0 and filter.hasTag==(fixture_tag~=nil))
+  assert(filter.label==nil and filter.tag==fixture_tag and filter.size==nil)
+  fixture_recipe_calls=fixture_recipe_calls+1
+  if fixture_recipe_failure then
+    fixture_recipe_failures=fixture_recipe_failures+1
+    error("fixture recipe lookup failed",0)
+  end
   return {proxy.new({
     getStack=function() return raw(1) end,
     request=function(amount)
