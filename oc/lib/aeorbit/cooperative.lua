@@ -73,6 +73,7 @@ function M.new(config,deps)
       not integer(l.read_bytes,0,16384) or not integer(l.cpus,1,64) or
       not integer(l.poll_millis or 1000,1,30000) then fatal("invalid_device_limits") end
     self.session=w.session_id;self.device_id=w.device_id;self.limits=l
+    self.background_recipe_inconclusive=primary and l.background_recipe_inconclusive==true
     if integer(l.diagnostic_samples,1,4) then
       self.diagnostic_samples=l.diagnostic_samples
       self.read_diagnostics=read_diagnostics.new(deps.now)
@@ -271,7 +272,7 @@ function M.new(config,deps)
     if not self.grant_deadline or deps.now()>=self.grant_deadline then self.credits=0 end
     return self.credits
   end
-  function self:_candidate(raw,task)
+  function self:_candidate(raw,task,inconclusive)
     local key=self.adapter:key(raw)
     local count=self.adapter:count(raw)
     self.observation=quantity.increment(self.observation)
@@ -279,6 +280,7 @@ function M.new(config,deps)
     if task and task.kind=="quantity" then craftable=nil end
     assert(craftable==nil or type(craftable)=="boolean","invalid recipe observation")
     local value={quantity=count,observation=self.observation,craftable=craftable==nil and json.null or craftable}
+    if inconclusive then value.recipe_inconclusive=true end
     local entry={key=key,label=raw.label or raw.name,tag=raw.tag}
     if task then value.id=task.id;value.assignment_id=task.assignment_id;entry.assignment_id=task.assignment_id
     else value.item=self.adapter:definition(raw);entry.item=true end
@@ -303,10 +305,23 @@ function M.new(config,deps)
           local stage="quantity"
           local ok,result=pcall(function()
             local raw=self.adapter:read(task.raw)
-            if task.kind=="quantity_recipe" then stage="recipe";raw.isCraftable=self.adapter:recipe_status(raw) end
+            local inconclusive
+            if task.kind=="quantity_recipe" then
+              stage="recipe"
+              local recipe_ok,craftable=pcall(self.adapter.recipe_status,self.adapter,raw)
+              if recipe_ok then
+                raw.isCraftable=craftable
+              elseif self.background_recipe_inconclusive and task.purpose=="background" then
+                self:_read_failure("read_failed","recipe",read_sources[task.purpose],task.raw,task.id,craftable)
+                raw.isCraftable=nil
+                inconclusive=true
+              else
+                error(craftable,0)
+              end
+            end
             if deps.now()>=task.deadline then return nil end
             stage="candidate"
-            return self:_candidate(raw,task)
+            return self:_candidate(raw,task,inconclusive)
           end)
           if ok and result then task.in_flight=true;return result,true end
           if not ok then
