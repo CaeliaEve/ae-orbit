@@ -67,7 +67,7 @@ func (s *Store) IngestV2(ctx context.Context, d Device, b protocol.InventoryBatc
 				return ErrForbidden
 			}
 			for _, u := range b.Updates {
-				if u.Item != nil || u.Craftable != nil || u.AssignmentID == "" {
+				if u.Item != nil || u.Craftable != nil || u.RecipeInconclusive || u.AssignmentID == "" {
 					return ErrForbidden
 				}
 			}
@@ -137,17 +137,19 @@ type cooperativePrevious struct {
 }
 
 type cooperativeWrite struct {
-	ID                 protocol.Quantity `json:"id"`
-	Quantity           protocol.Quantity `json:"quantity"`
-	Observation        protocol.Quantity `json:"observation"`
-	Craftable          *bool             `json:"craftable"`
-	RecipeObservation  protocol.Quantity `json:"recipe_observation"`
-	QuantityAccepted   bool              `json:"quantity_accepted"`
-	RecipeAccepted     bool              `json:"recipe_accepted"`
-	QuantityGeneration int64             `json:"quantity_generation"`
-	RecipeGeneration   int64             `json:"recipe_generation"`
-	QuantityTask       *cooperativeField `json:"-"`
-	RecipeTask         *cooperativeField `json:"-"`
+	ID                    protocol.Quantity `json:"id"`
+	Quantity              protocol.Quantity `json:"quantity"`
+	Observation           protocol.Quantity `json:"observation"`
+	Craftable             *bool             `json:"craftable"`
+	RecipeObservation     protocol.Quantity `json:"recipe_observation"`
+	QuantityAccepted      bool              `json:"quantity_accepted"`
+	RecipeAccepted        bool              `json:"recipe_accepted"`
+	RecipeAttemptAccepted bool              `json:"recipe_attempt_accepted"`
+	RecipeInconclusive    bool              `json:"-"`
+	QuantityGeneration    int64             `json:"quantity_generation"`
+	RecipeGeneration      int64             `json:"recipe_generation"`
+	QuantityTask          *cooperativeField `json:"-"`
+	RecipeTask            *cooperativeField `json:"-"`
 }
 
 func cooperativeSigningKey(ctx context.Context, tx pgx.Tx) ([]byte, error) {
@@ -253,6 +255,7 @@ func (s *Store) acceptCooperativeInventory(ctx context.Context, tx pgx.Tx, d Dev
 	}
 	var signingKey []byte
 	writes := map[protocol.Quantity]*cooperativeWrite{}
+	jointObservations := map[protocol.Quantity]map[protocol.Quantity]protocol.Update{}
 	type metadataWrite struct {
 		ID          protocol.Quantity `json:"id"`
 		Label       string            `json:"label"`
@@ -265,9 +268,10 @@ func (s *Store) acceptCooperativeInventory(ctx context.Context, tx pgx.Tx, d Dev
 		p, existed := previous[id]
 		var qTask, rTask *cooperativeField
 		q, r := false, false
+		joint := false
 		if u.AssignmentID != "" {
 			kind := "quantity"
-			if u.Craftable != nil {
+			if u.Craftable != nil || u.RecipeInconclusive {
 				kind = "quantity_recipe"
 			}
 			if signingKey == nil {
@@ -286,9 +290,14 @@ func (s *Store) acceptCooperativeInventory(ctx context.Context, tx pgx.Tx, d Dev
 			}
 			qf, rf := fields[id]["quantity"], fields[id]["recipe"]
 			q = qualifies(qf)
-			r = u.Craftable != nil && qualifies(rf)
+			r = kind == "quantity_recipe" && qualifies(rf)
 			if kind == "quantity_recipe" && (!q || !r) {
 				q, r = false, false
+			}
+			joint = kind == "quantity_recipe" && q && r
+			if joint && u.RecipeInconclusive && (qf.Purpose != "background" || rf.Purpose != "background") {
+				err = ErrForbidden
+				return
 			}
 			if q {
 				qTask = &qf
@@ -309,7 +318,30 @@ func (s *Store) acceptCooperativeInventory(ctx context.Context, tx pgx.Tx, d Dev
 				w = &cooperativeWrite{ID: id}
 				writes[id] = w
 			}
-			if q {
+			if joint {
+				// Joint candidates compete as whole receipts, including the absence
+				// of recipe evidence. Check all ties, not only the current winner.
+				seen := jointObservations[id]
+				if seen == nil {
+					seen = map[protocol.Quantity]protocol.Update{}
+					jointObservations[id] = seen
+				}
+				if old, ok := seen[u.Observation]; ok &&
+					(old.Quantity != u.Quantity || old.RecipeInconclusive != u.RecipeInconclusive ||
+						(old.Craftable != nil && u.Craftable != nil && *old.Craftable != *u.Craftable)) {
+					err = ErrConflict
+					return
+				}
+				seen[u.Observation] = u
+				if !w.QuantityAccepted || w.QuantityTask == nil || u.Observation > w.Observation {
+					w.QuantityAccepted, w.Quantity, w.Observation, w.QuantityTask = true, u.Quantity, u.Observation, qTask
+					w.QuantityGeneration = qTask.Generation
+					w.RecipeAttemptAccepted, w.RecipeAccepted = true, !u.RecipeInconclusive
+					w.RecipeInconclusive, w.Craftable, w.RecipeObservation, w.RecipeTask = u.RecipeInconclusive, u.Craftable, u.Observation, rTask
+					w.RecipeGeneration = rTask.Generation
+				}
+			}
+			if q && !joint {
 				if w.QuantityAccepted && w.Observation == u.Observation && w.Quantity != u.Quantity {
 					err = ErrConflict
 					return
@@ -322,7 +354,7 @@ func (s *Store) acceptCooperativeInventory(ctx context.Context, tx pgx.Tx, d Dev
 					}
 				}
 			}
-			if r {
+			if r && !joint {
 				if w.RecipeAccepted && w.RecipeObservation == u.Observation && *w.Craftable != *u.Craftable {
 					err = ErrConflict
 					return
@@ -330,6 +362,7 @@ func (s *Store) acceptCooperativeInventory(ctx context.Context, tx pgx.Tx, d Dev
 				if !w.RecipeAccepted || (w.RecipeTask == nil && rTask != nil) ||
 					((w.RecipeTask == nil) == (rTask == nil) && u.Observation > w.RecipeObservation) {
 					w.RecipeAccepted, w.Craftable, w.RecipeObservation, w.RecipeTask = true, u.Craftable, u.Observation, rTask
+					w.RecipeAttemptAccepted = true
 					if rTask != nil {
 						w.RecipeGeneration = rTask.Generation
 					}
@@ -391,13 +424,13 @@ func (s *Store) acceptCooperativeInventory(ctx context.Context, tx pgx.Tx, d Dev
 		}
 		accepted = true
 		_, err = tx.Exec(ctx, `WITH x AS (
-			SELECT * FROM jsonb_to_recordset($2::jsonb) AS x(id bigint,quantity_accepted boolean,recipe_accepted boolean)
+			SELECT * FROM jsonb_to_recordset($2::jsonb) AS x(id bigint,quantity_accepted boolean,recipe_attempt_accepted boolean)
 		) INSERT INTO inventory_schedule(network_id,item_id,next_quantity_at,next_verify_at)
 			SELECT $1,id,now()+$3::double precision*interval '1 second',now()+$3::double precision*interval '1 second' FROM x
 			ON CONFLICT(network_id,item_id) DO UPDATE SET
 			next_quantity_at=CASE WHEN (SELECT quantity_accepted FROM x WHERE x.id=excluded.item_id)
 				THEN excluded.next_quantity_at ELSE inventory_schedule.next_quantity_at END,
-			next_verify_at=CASE WHEN (SELECT recipe_accepted FROM x WHERE x.id=excluded.item_id)
+			next_verify_at=CASE WHEN (SELECT recipe_attempt_accepted FROM x WHERE x.id=excluded.item_id)
 				THEN excluded.next_verify_at ELSE inventory_schedule.next_verify_at END`, d.NetworkID, data, s.options.RecheckAfter.Seconds())
 		if err != nil {
 			return
@@ -412,7 +445,7 @@ func (s *Store) acceptCooperativeInventory(ctx context.Context, tx pgx.Tx, d Dev
 					return
 				}
 			}
-			if f := w.QuantityTask; f != nil && f.Purpose == "refresh" {
+			if f := w.QuantityTask; f != nil && f.Purpose == "refresh" && !w.RecipeInconclusive {
 				tag, e := tx.Exec(ctx, `UPDATE inventory_refreshes SET confirmed_at=now()
 					WHERE network_id=$1 AND item_id=$2 AND token=$3 AND confirmed_at IS NULL AND expires_at>now()
 					AND requested_at<=$4`, d.NetworkID, int64(w.ID), f.RequestID, f.DispatchedAt)
@@ -422,7 +455,7 @@ func (s *Store) acceptCooperativeInventory(ctx context.Context, tx pgx.Tx, d Dev
 				}
 				confirmed = confirmed || tag.RowsAffected() > 0
 			}
-			if q, r := w.QuantityTask, w.RecipeTask; q != nil && r != nil && q.AssignmentID == r.AssignmentID && q.Purpose == "order" {
+			if q, r := w.QuantityTask, w.RecipeTask; q != nil && r != nil && q.AssignmentID == r.AssignmentID && q.Purpose == "order" && w.RecipeAccepted {
 				if _, err = tx.Exec(ctx, `DELETE FROM inventory_rechecks WHERE network_id=$1 AND item_id=$2 AND token=$3`,
 					d.NetworkID, int64(w.ID), q.RequestID); err != nil {
 					return

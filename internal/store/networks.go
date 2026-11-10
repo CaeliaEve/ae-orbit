@@ -231,6 +231,7 @@ func (s *Store) helloDevice(ctx context.Context, d Device, h protocol.Hello, ver
 			w.Limits.ReadSlots = 16
 			w.Limits.ReadBytes = min(w.Limits.ResponseBytes, 16384)
 		}
+		w.Limits.BackgroundRecipeInconclusive = version == 2 && d.Role == "primary"
 		return nil
 	})
 	return w, err

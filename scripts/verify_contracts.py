@@ -33,6 +33,17 @@ cases = [
     ("PollV2", {**poll, "hints": [{}]}, False),
     ("PollV2", {**poll, "refresh_slots": 1}, False),
     ("UpdateV2", update, True),
+    ("UpdateV2", {**update, "recipe_inconclusive": True}, True),
+    ("Update", {**update, "recipe_inconclusive": True}, False),
+    *[("UpdateV2", {**update, "recipe_inconclusive": value}, False)
+      for value in (False, None, 1, "true", {}, [])],
+    ("UpdateV2", {**update, "recipe_inconclusive": True, "craftable": True}, False),
+    ("UpdateV2", {**update, "recipe_inconclusive": True, "craftable": False}, False),
+    ("UpdateV2", {key: value for key, value in {**update, "recipe_inconclusive": True}.items()
+                  if key != "assignment_id"}, False),
+    ("UpdateV2", {**{key: value for key, value in update.items() if key != "id"},
+                  "item": {"kind": "item", "name": "test:item", "damage": 0, "label": "Item", "exact": True},
+                  "recipe_inconclusive": True}, False),
     ("Update", update, False),
     ("UpdateV2", {**update, "quantity": 9007199254740995}, False),
     ("UpdateV2", {**update, "assignment_id": "A" * 32}, False),

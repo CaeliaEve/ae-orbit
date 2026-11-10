@@ -1022,6 +1022,10 @@ components:
           description: Enables refresh capacity and quantity-only receipts on a capable device. Upgrade the backend before the OC bridge.
         read_slots: {type: integer, minimum: 0, maximum: 16}
         read_bytes: {type: integer, minimum: 0, maximum: 16384}
+        background_recipe_inconclusive:
+          type: boolean
+          const: true
+          description: Advertised only to protocol 2 primaries, including resumed welcomes. Only literal true enables inconclusive background joint outcomes; absent disables them.
     Welcome:
       type: object
       required: [protocol, network_id, session_id, inventory_ack, poll_ack, limits]
@@ -1277,6 +1281,13 @@ components:
       oneOf:
         - {required: [id], not: {required: [item]}}
         - {required: [item], not: {required: [id]}}
+      allOf:
+        - if: {required: [recipe_inconclusive]}
+          then:
+            required: [id, assignment_id]
+            properties:
+              craftable: {type: 'null'}
+            not: {required: [item]}
       properties:
         id: {$ref: '#/components/schemas/PositiveQuantity'}
         item: {$ref: '#/components/schemas/Definition'}
@@ -1284,6 +1295,10 @@ components:
         observation: {$ref: '#/components/schemas/PositiveQuantity'}
         craftable: {type: [boolean, 'null']}
         assignment_id: {$ref: '#/components/schemas/AssignmentID'}
+        recipe_inconclusive:
+          type: boolean
+          const: true
+          description: Only a primary's current background quantity_recipe assignment may report this outcome. Quantity is accepted and both claims complete, but every prior recipe evidence column is preserved. Authentic obsolete receipts remain transport-ACK no-ops.
     InventoryBatchV2:
       type: object
       additionalProperties: false

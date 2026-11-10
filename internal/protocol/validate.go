@@ -81,6 +81,9 @@ func (b InventoryBatch) validate(maxItems int, v2 bool) error {
 			(u.AssignmentID != "" && !tokenOK(u.AssignmentID)) {
 			return fmt.Errorf("invalid inventory protocol fields")
 		}
+		if u.RecipeInconclusive && (!v2 || u.ID < 1 || u.Item != nil || u.AssignmentID == "" || u.Craftable != nil) {
+			return fmt.Errorf("invalid inconclusive recipe outcome")
+		}
 		if u.Quantity < 0 || u.Observation < 1 || (u.ID > 0) == (u.Item != nil) {
 			return fmt.Errorf("invalid inventory update")
 		}

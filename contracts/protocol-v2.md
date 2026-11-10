@@ -13,6 +13,10 @@ control sequence. Hello uses `protocol:2`; Welcome returns server-determined
 grant a role. A live boot can resume; a retired boot returns 409. Rotation,
 revocation or mode changes invalidate affected sessions and read ownership.
 
+Only primary v2 welcomes, including resumed welcomes, advertise
+`limits.background_recipe_inconclusive:true`. V1 and worker welcomes omit it.
+Only literal true enables this behavior; absent or any other value disables it.
+
 Create workers through `/api/v1/networks/{network}/devices`; list access requires
 network viewing permission. Creation, token rotation, revocation and cooperation
 activation require admin permission and browser Origin/CSRF protection. Tokens
@@ -73,7 +77,13 @@ Retries do not renew read leases or acquisition grants.
 Update retains explicit decimal-string `quantity` and `observation`, explicit
 `craftable` and exactly one `id`/`item`. A task receipt includes
 `assignment_id`; legacy `verification` and `refresh` receipts are rejected.
-`quantity` requires `craftable:null`; `quantity_recipe` requires a boolean.
+`quantity` requires `craftable:null`; a conclusive `quantity_recipe` requires a
+boolean. A negotiated primary may instead return `recipe_inconclusive:true`,
+`craftable:null`, a known decimal-string `id`, validated quantity/observation and
+the original joint `assignment_id` for a background joint attempt. If present,
+`recipe_inconclusive` must be literal JSON true, never false, null or another
+type. V1, discovery definitions, missing assignments, workers, quantity-only
+tokens and current live order/refresh attempts cannot submit this outcome.
 Workers can only return assigned quantities for known canonical IDs. They
 cannot submit definitions, discovery hints, scan completion, CPU snapshots,
 recipe evidence, order reports or craft commands.
@@ -85,6 +95,27 @@ receive transport ACK without modifying quantities, recipe evidence, observation
 times or refresh completion. Cross-network IDs, invalid structures and forged
 permissions are rejected. Replayed PollAck filters lost ownership and never
 mints replacement reads or grants.
+
+A current inconclusive background attempt requires both live incomplete
+matching quantity and recipe claims, with matching primary/session/assignment,
+observation above both captured floors and background purposes. Its quantity is
+accepted and both ownership rows complete atomically. All prior `craftable` and
+`craftable_*` evidence remains unchanged, including timestamps and provenance.
+Both scheduling deadlines advance by configured `RecheckAfter` (default 300
+seconds). A later explicit quantity refresh can be assigned immediately; the
+unknown outcome never confirms a refresh or deletes an order recheck.
+Authentic expired, completed, superseded or below-floor joint outcomes are
+transport-ACK no-ops, including field/schedule/ownership/request state. Their
+authenticated observations still advance the session watermark. Purpose is not
+MAC-bound, so obsolete tokens are not rejected based on a reconstructed
+historical purpose.
+
+Qualifying joint outcomes compete as whole receipts by highest observation.
+Identical duplicates collapse; equal-observation differences in quantity,
+inconclusive discriminator or conclusive recipe boolean are conflicts, even if
+a higher observation would win. A losing conclusive receipt cannot leak recipe
+evidence into a winning inconclusive receipt. Assigned-over-discovery precedence
+and ordinary quantity/discovery acceptance are unchanged.
 
 Only the primary discovers identities and maintains metadata. Discovery can
 initialize genuinely missing field evidence once. Existing canonical entries,
@@ -118,7 +149,8 @@ or full NBT/exception objects. Names and reasons are sanitized and bounded;
 arbitrary string exceptions are not generally secret-redacted. They are lossy
 debugging hints, not authoritative identities or evidence of zero stock.
 Failed joint reads retain their normal backoff and do not publish partial
-receipts. Existing cumulative `read_failed`/`discovery_read_failed` counters
+receipts, except negotiated primary background recipe-stage failures may publish
+the validated inconclusive quantity outcome above. Existing cumulative `read_failed`/`discovery_read_failed` counters
 remain unchanged. `discovery_queue_full` can also record byte-budget rejection
 or memory-driven trimming; it is not the current queue length.
 

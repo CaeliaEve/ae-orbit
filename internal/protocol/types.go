@@ -68,17 +68,18 @@ type Hello struct {
 }
 
 type Limits struct {
-	BatchBytes        int  `json:"batch_bytes"`
-	BatchItems        int  `json:"batch_items"`
-	ResponseBytes     int  `json:"response_bytes"`
-	Commands          int  `json:"commands"`
-	CPUs              int  `json:"cpus"`
-	PollMillis        int  `json:"poll_millis"`
-	DiagnosticSamples int  `json:"diagnostic_samples,omitempty"`
-	SyncTelemetry     bool `json:"sync_telemetry,omitempty"`
-	QuantityRefresh   bool `json:"quantity_refresh,omitempty"`
-	ReadSlots         int  `json:"read_slots,omitempty"`
-	ReadBytes         int  `json:"read_bytes,omitempty"`
+	BatchBytes                   int  `json:"batch_bytes"`
+	BatchItems                   int  `json:"batch_items"`
+	ResponseBytes                int  `json:"response_bytes"`
+	Commands                     int  `json:"commands"`
+	CPUs                         int  `json:"cpus"`
+	PollMillis                   int  `json:"poll_millis"`
+	DiagnosticSamples            int  `json:"diagnostic_samples,omitempty"`
+	SyncTelemetry                bool `json:"sync_telemetry,omitempty"`
+	QuantityRefresh              bool `json:"quantity_refresh,omitempty"`
+	ReadSlots                    int  `json:"read_slots,omitempty"`
+	ReadBytes                    int  `json:"read_bytes,omitempty"`
+	BackgroundRecipeInconclusive bool `json:"background_recipe_inconclusive,omitempty"`
 }
 
 type Welcome struct {
@@ -93,27 +94,29 @@ type Welcome struct {
 }
 
 type Update struct {
-	ID             Quantity    `json:"id,omitempty"`
-	Item           *Definition `json:"item,omitempty"`
-	Quantity       Quantity    `json:"quantity"`
-	Observation    Quantity    `json:"observation"`
-	Craftable      *bool       `json:"craftable"`
-	Verification   string      `json:"verification,omitempty"`
-	Refresh        string      `json:"refresh,omitempty"`
-	AssignmentID   string      `json:"assignment_id,omitempty"`
-	legacyReceipts bool
+	ID                 Quantity    `json:"id,omitempty"`
+	Item               *Definition `json:"item,omitempty"`
+	Quantity           Quantity    `json:"quantity"`
+	Observation        Quantity    `json:"observation"`
+	Craftable          *bool       `json:"craftable"`
+	Verification       string      `json:"verification,omitempty"`
+	Refresh            string      `json:"refresh,omitempty"`
+	AssignmentID       string      `json:"assignment_id,omitempty"`
+	RecipeInconclusive bool        `json:"recipe_inconclusive,omitempty"`
+	legacyReceipts     bool
 }
 
 func (u *Update) UnmarshalJSON(data []byte) error {
 	var wire struct {
-		ID           Quantity        `json:"id,omitempty"`
-		Item         *Definition     `json:"item,omitempty"`
-		Quantity     *Quantity       `json:"quantity"`
-		Observation  Quantity        `json:"observation"`
-		Craftable    json.RawMessage `json:"craftable"`
-		Verification json.RawMessage `json:"verification,omitempty"`
-		Refresh      json.RawMessage `json:"refresh,omitempty"`
-		AssignmentID json.RawMessage `json:"assignment_id,omitempty"`
+		ID                 Quantity        `json:"id,omitempty"`
+		Item               *Definition     `json:"item,omitempty"`
+		Quantity           *Quantity       `json:"quantity"`
+		Observation        Quantity        `json:"observation"`
+		Craftable          json.RawMessage `json:"craftable"`
+		Verification       json.RawMessage `json:"verification,omitempty"`
+		Refresh            json.RawMessage `json:"refresh,omitempty"`
+		AssignmentID       json.RawMessage `json:"assignment_id,omitempty"`
+		RecipeInconclusive json.RawMessage `json:"recipe_inconclusive,omitempty"`
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
@@ -122,6 +125,10 @@ func (u *Update) UnmarshalJSON(data []byte) error {
 	}
 	if wire.Quantity == nil || len(wire.Craftable) == 0 {
 		return fmt.Errorf("inventory quantity and craftable must be explicit")
+	}
+	recipeInconclusive := len(wire.RecipeInconclusive) > 0
+	if recipeInconclusive && !bytes.Equal(bytes.TrimSpace(wire.RecipeInconclusive), []byte("true")) {
+		return fmt.Errorf("recipe_inconclusive must be true when present")
 	}
 	var verification, refresh, assignmentID string
 	for _, field := range []struct {
@@ -141,7 +148,7 @@ func (u *Update) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(wire.Craftable, &craftable); err != nil {
 		return err
 	}
-	*u = Update{ID: wire.ID, Item: wire.Item, Quantity: *wire.Quantity, Observation: wire.Observation, Craftable: craftable, Verification: verification, Refresh: refresh, AssignmentID: assignmentID, legacyReceipts: len(wire.Verification) > 0 || len(wire.Refresh) > 0}
+	*u = Update{ID: wire.ID, Item: wire.Item, Quantity: *wire.Quantity, Observation: wire.Observation, Craftable: craftable, Verification: verification, Refresh: refresh, AssignmentID: assignmentID, RecipeInconclusive: recipeInconclusive, legacyReceipts: len(wire.Verification) > 0 || len(wire.Refresh) > 0}
 	return nil
 }
 
