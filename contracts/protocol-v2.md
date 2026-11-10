@@ -22,6 +22,10 @@ are returned only on creation/rotation, never in device lists.
 
 Poll declares `read_slots` (0..16) and `read_bytes` (0..16384). Both must be
 positive for new reads; zero capacity does not prevent heartbeats or ACKs.
+These fields describe admission space, not execution demand: a current device
+with live, incomplete assigned quantity work remains eligible for its bounded
+server-group credit share even when either admission field is zero. Such a poll
+does not receive additional assignments.
 Legacy `recheck_*` and `refresh_*` capacities are rejected. A primary may include
 at most sixteen `hints`, each containing exactly one decimal-string `id` or
 complete `item` definition and no quantity. Hints are not inventory evidence.
@@ -31,7 +35,31 @@ PollAck dispatches at most sixteen `reads`, each with canonical decimal-string
 (`quantity` or `quantity_recipe`), `purpose` (`refresh`, `order`, `background`),
 and remaining `ttl_millis` (1..30000). At most four explicit refresh reads are
 included. Per-device outstanding reads are limited to sixteen; per-network to
-128. Joint quantity/recipe work belongs only to the primary.
+128. Each device has at most eight active outstanding `order`/`refresh` tasks
+combined; a joint task counts once, not once per field. Saturating that fast
+pool does not prevent background dispatch. Joint quantity/recipe work belongs
+only to the primary.
+
+The server estimates retained task space from the complete assignment after
+assigning its token and TTL. Its charge is at least the OC's
+`2 * ASCII-encoded JSON bytes + native identity-key bytes + 256`, including
+Unicode escapes, NBT and the assignment envelope. Charges are cumulative across
+the response; a task that does not fit receives no ownership lease. This is
+bounded queue accounting, not a measurement of total Lua heap use.
+
+The OC selects eligible assigned work using repeating `order, refresh, refresh,
+background` opportunities, preserving FIFO within each eligible lane. Backoff,
+joint-read cooldown and credit costs still apply. Discovery alternates with
+assigned work. Lossy unknown-event candidates retain at most eight slots,
+reserve one slot when negotiated capacity is positive, and use at most half the
+current queue byte budget. Memory reductions may discard these candidates,
+never assigned tasks or frozen transport bodies. Catalog iteration remains the discovery fallback;
+neither dropping a hint nor missing an enumeration implies zero stock.
+On the OC the eight-task fast bound applies to unread tasks. An already-read
+result awaiting an inventory ACK does not consume that unread allowance, but
+still consumes its full queued slot and byte accounting until acknowledged or
+its task lease expires. Expiring the queued task never changes frozen transport
+bytes.
 
 Acquisition `scan_budget` is attached to `grant_id` and `grant_ttl_millis`.
 Credits are shared across devices and networks in a server group, including v1.

@@ -3,6 +3,7 @@ local quantity=require("aeorbit.quantity")
 local cache=require("aeorbit.cache")
 local tracker=require("aeorbit.tracker")
 local M={}
+local read_cycle={"order","refresh","refresh","background"}
 local function fatal(code) error({code=code,message=code,fatal=true},0) end
 local function integer(value,minimum,maximum)
   return type(value)=="number" and value%1==0 and value>=minimum and value<=maximum
@@ -25,7 +26,7 @@ function M.new(config,deps)
     attempts=cache.new(64,16384),
     grants=cache.new(64,16384),
     task_bytes=task_bytes,inventory_seq="0",poll_seq="0",observation="0",credits=0,poll_delay=1,
-    uploaded=0,next_scan=0,next_cpu=0,next_recipe_check=0,task_turn=true}
+    uploaded=0,next_scan=0,next_cpu=0,next_recipe_check=0,task_turn=true,read_opportunity=1}
   function self:diagnose(code)
     if not self.diagnostics[code] then
       local count=0;for _ in pairs(self.diagnostics) do count=count+1 end
@@ -36,6 +37,13 @@ function M.new(config,deps)
   end
   function self:_memory_ready()
     return deps.free_memory()>=self.client.response_bytes*4+4096
+  end
+  function self:_discovery_capacity()
+    -- Lossy event hints must leave real admission room to obtain drain credits.
+    local slots=math.min(8,math.max(0,(self.limits and self.limits.read_slots or 16)-1))
+    local bytes=math.min(self.task_bytes,math.floor(deps.free_memory()/16),
+      self.limits and self.limits.read_bytes or self.task_bytes)
+    return slots,math.floor(bytes/2)
   end
   function self:start()
     local nonce=self.client:post("/bridge/v2/boot-id",{})
@@ -92,7 +100,9 @@ function M.new(config,deps)
       if self.candidates.entries[key] then return end
       local size=#json.encode(self.adapter:definition(detail))*2+#key+256
       local budget=math.min(self.task_bytes,math.floor(deps.free_memory()/16))
-      if self.tasks.count+self.candidates.count>=16 or self.tasks.bytes+self.candidates.bytes+size>budget then
+      local slots,bytes=self:_discovery_capacity()
+      if self.candidates.count>=slots or self.candidates.bytes+size>bytes or
+        self.tasks.count+self.candidates.count>=16 or self.tasks.bytes+self.candidates.bytes+size>budget then
         self:diagnose("discovery_queue_full");return
       end
       self.candidates:put(key,{raw=detail,retry_at=0,failures=0},size)
@@ -133,7 +143,7 @@ function M.new(config,deps)
     local key=self.adapter:key(raw)
     local cost=#json.encode(read)*2+#key+256
     local fast=0
-    for _,entry in pairs(self.tasks.entries) do if entry.value.purpose~="background" then fast=fast+1 end end
+    for _,entry in pairs(self.tasks.entries) do if entry.value.purpose~="background" and not entry.value.in_flight then fast=fast+1 end end
     local budget=math.min(self.task_bytes,math.floor(deps.free_memory()/16),self.limits.read_bytes)
     local candidate=self.candidates.entries[key]
     local candidate_count=self.candidates.count-(candidate and 1 or 0)
@@ -159,6 +169,13 @@ function M.new(config,deps)
     self:_expire()
     if not self.pending_poll then
       local ready=self:_memory_ready()
+      if ready then
+        local slots,bytes=self:_discovery_capacity()
+        while self.candidates.count>slots or self.candidates.bytes>bytes do
+          self.candidates:remove(self.candidates.last.key)
+          self:diagnose("discovery_queue_full")
+        end
+      end
       local remaining=math.max(0,math.min(self.task_bytes,math.floor(deps.free_memory()/16),self.limits.read_bytes)-self.tasks.bytes-self.candidates.bytes)
       local body={session_id=self.session,sequence=quantity.increment(self.poll_seq),health=self:_health(),
         read_slots=ready and math.max(0,self.limits.read_slots-self.tasks.count-self.candidates.count) or 0,read_bytes=ready and remaining or 0}
@@ -249,30 +266,34 @@ function M.new(config,deps)
   end
   function self:_read_task()
     self:_expire()
-    local entry=self.tasks.last
-    while entry do
-      local task=entry.value
-      local cost=task.kind=="quantity_recipe" and 4 or 1
-      if not task.in_flight and deps.now()>=task.retry_at and cost<=self:_available() and
-        (task.kind~="quantity_recipe" or deps.now()>=self.next_recipe_check) then
-        -- Move a failed head to the back before calling native code.
-        self.tasks:get(entry.key)
-        self.credits=self.credits-cost
-        if task.kind=="quantity_recipe" then self.next_recipe_check=deps.now()+5 end
-        local ok,result=pcall(function()
-          local raw=self.adapter:read(task.raw)
-          if task.kind=="quantity_recipe" then raw.isCraftable=self.adapter:recipe_status(raw) end
-          if deps.now()>=task.deadline then return nil end
-          return self:_candidate(raw,task)
-        end)
-        if ok and result then task.in_flight=true;return result,true end
-        if not ok then
-          self:diagnose("read_failed");task.failures=task.failures+1
-          task.retry_at=math.min(task.deadline,deps.now()+math.min(30,2^(math.min(task.failures,6)-1)))
+    for _=1,#read_cycle do
+      local purpose=read_cycle[self.read_opportunity]
+      self.read_opportunity=self.read_opportunity%#read_cycle+1
+      local entry=self.tasks.last
+      while entry do
+        local task=entry.value
+        local cost=task.kind=="quantity_recipe" and 4 or 1
+        if task.purpose==purpose and not task.in_flight and deps.now()>=task.retry_at and cost<=self:_available() and
+          (task.kind~="quantity_recipe" or deps.now()>=self.next_recipe_check) then
+          -- Rotate the lane before native work so failures cannot hold its next opportunity.
+          self.tasks:get(entry.key)
+          self.credits=self.credits-cost
+          if task.kind=="quantity_recipe" then self.next_recipe_check=deps.now()+5 end
+          local ok,result=pcall(function()
+            local raw=self.adapter:read(task.raw)
+            if task.kind=="quantity_recipe" then raw.isCraftable=self.adapter:recipe_status(raw) end
+            if deps.now()>=task.deadline then return nil end
+            return self:_candidate(raw,task)
+          end)
+          if ok and result then task.in_flight=true;return result,true end
+          if not ok then
+            self:diagnose("read_failed");task.failures=task.failures+1
+            task.retry_at=math.min(task.deadline,deps.now()+math.min(30,2^(math.min(task.failures,6)-1)))
+          end
+          return nil,true
         end
-        return nil,true
+        entry=entry.previous
       end
-      entry=entry.previous
     end
     return nil,false
   end

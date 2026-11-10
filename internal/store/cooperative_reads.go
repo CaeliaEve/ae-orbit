@@ -3,11 +3,11 @@ package store
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"strconv"
 	"time"
+	"unicode/utf8"
 
 	"github.com/CaeliaEve/ae-orbit/internal/protocol"
 	"github.com/jackc/pgx/v5"
@@ -282,13 +282,14 @@ func (s *Store) cooperativeCandidates(ctx context.Context, tx pgx.Tx, d Device, 
 }
 
 func (s *Store) cooperativeReads(ctx context.Context, tx pgx.Tx, d Device, session string, responseBytes, slots, queueBytes int, ack *protocol.PollAck) error {
-	var owned, networkActive int
-	if err := tx.QueryRow(ctx, `SELECT count(*) FILTER(WHERE f.device_id=$2),count(*)
+	var owned, fastOwned, networkActive int
+	if err := tx.QueryRow(ctx, `SELECT count(*) FILTER(WHERE f.device_id=$2),
+		count(*) FILTER(WHERE f.device_id=$2 AND f.purpose<>'background'),count(*)
 		FROM cooperative_read_fields f JOIN devices owner ON owner.id=f.device_id
 		AND owner.current_session=f.session_id AND NOT owner.revoked
 		JOIN bridge_sessions bs ON bs.id=f.session_id AND NOT bs.retired AND bs.protocol=2
 		WHERE f.network_id=$1 AND f.field='quantity' AND f.completed_at IS NULL AND f.expires_at>now()`,
-		d.NetworkID, d.ID).Scan(&owned, &networkActive); err != nil {
+		d.NetworkID, d.ID).Scan(&owned, &fastOwned, &networkActive); err != nil {
 		return err
 	}
 	slots = min(slots, 16-owned, 128-networkActive)
@@ -338,6 +339,9 @@ func (s *Store) cooperativeReads(ctx context.Context, tx pgx.Tx, d Device, sessi
 	for attempts := 0; attempts < 256 && len(ack.Reads) < slots && budget > 0; attempts++ {
 		category := cycle[opportunity%len(cycle)]
 		opportunity = (opportunity + 1) % len(cycle)
+		if category != "background" && fastOwned >= 8 {
+			queues[category] = nil
+		}
 		queue := queues[category]
 		if len(queue) == 0 || (category == "refresh" && refreshes >= 4) {
 			if len(queues["order"])+len(queues["refresh"])+len(queues["background"]) == 0 {
@@ -358,13 +362,6 @@ func (s *Store) cooperativeReads(ctx context.Context, tx pgx.Tx, d Device, sessi
 			continue
 		}
 		c.TTLMillis = min(30000, int(c.ExpiresAt.Sub(now).Milliseconds()))
-		rawBytes := base64.StdEncoding.DecodedLen(len(c.Item.NBT))
-		keyBytes := 0
-		if c.Item.NBT != "" {
-			keyBytes = 64
-		}
-		memory := 2*(len(c.Item.Name)+len(strconv.Itoa(c.Item.Damage))+2) +
-			max(2*rawBytes, 2*keyBytes+rawBytes) + len(c.Item.Label) + 512
 		if key == nil {
 			key, err = cooperativeSigningKey(ctx, tx)
 			if err != nil {
@@ -372,6 +369,10 @@ func (s *Store) cooperativeReads(ctx context.Context, tx pgx.Tx, d Device, sessi
 			}
 		}
 		c.AssignmentID, err = newAssignmentID(key, d, session, c.ID, c.Kind)
+		if err != nil {
+			return err
+		}
+		memory, err := cooperativeReadMemory(c.ReadAssignment)
 		if err != nil {
 			return err
 		}
@@ -409,6 +410,9 @@ func (s *Store) cooperativeReads(ctx context.Context, tx pgx.Tx, d Device, sessi
 		}
 		queueBytes -= memory
 		budget -= cost
+		if category != "background" {
+			fastOwned++
+		}
 		if category == "refresh" {
 			refreshes++
 		}
@@ -419,6 +423,32 @@ func (s *Store) cooperativeReads(ctx context.Context, tx pgx.Tx, d Device, sessi
 		background_turn=(background_turn+CASE WHEN $3 THEN 1 ELSE 0 END)%2 WHERE network_id=$1`,
 		d.NetworkID, opportunity, d.Role == "primary")
 	return err
+}
+
+func cooperativeReadMemory(read protocol.ReadAssignment) (int, error) {
+	encoded, err := json.Marshal(read)
+	if err != nil {
+		return 0, err
+	}
+	// Lua re-encodes the complete assignment with ASCII-only JSON. Go's HTML
+	// escaping can overestimate its cost, but UTF-8 must never underestimate it.
+	encodedBytes := len(encoded)
+	for _, r := range string(encoded) {
+		if r >= utf8.RuneSelf {
+			escapedBytes := 6
+			if r > 0xffff {
+				escapedBytes = 12
+			}
+			encodedBytes += escapedBytes - utf8.RuneLen(r)
+		}
+	}
+	// adapter:key retains registry name, NUL, decimal metadata, NUL, and an
+	// optional fixed-width canonical NBT SHA-256 hex digest.
+	keyBytes := len(read.Item.Name) + len(strconv.Itoa(read.Item.Damage)) + 2
+	if read.Item.NBT != "" {
+		keyBytes += 64
+	}
+	return 2*encodedBytes + keyBytes + 256, nil
 }
 
 func deferCooperativeCandidate(ctx context.Context, tx pgx.Tx, network string, c cooperativeCandidate) error {

@@ -9,6 +9,17 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// Full queues still need credits to drain. Keep their execution demand separate
+// from the slots and bytes advertised for admitting additional assignments.
+const acquisitionDemand = `((a.slots>0 AND a.bytes>0) OR EXISTS(
+	SELECT 1 FROM cooperative_read_fields f
+	JOIN devices owner ON owner.id=f.device_id AND owner.network_id=f.network_id
+		AND owner.current_session=f.session_id AND NOT owner.revoked
+	JOIN bridge_sessions work_session ON work_session.id=f.session_id AND work_session.device_id=f.device_id
+		AND work_session.network_id=f.network_id AND work_session.protocol=2 AND NOT work_session.retired
+	WHERE f.device_id=a.device_id AND f.session_id=a.session_id AND f.field='quantity'
+		AND f.completed_at IS NULL AND f.expires_at>now()))`
+
 // The server-group row is locked by the caller. A round allocates all shares
 // before the current intent is registered, so arrival order cannot win it.
 func (s *Store) acquisitionGrant(ctx context.Context, tx pgx.Tx, d Device, session, group string, slots, queueBytes, version int) (budget int, grantID string, ttl int, err error) {
@@ -44,12 +55,12 @@ func (s *Store) acquisitionGrant(ctx context.Context, tx pgx.Tx, d Device, sessi
 		grant_budget=CASE WHEN acquisition_intents.session_id=excluded.session_id THEN acquisition_intents.grant_budget ELSE 0 END,
 		claimed=CASE WHEN acquisition_intents.session_id=excluded.session_id THEN acquisition_intents.claimed ELSE false END`,
 		d.ID, session, slots, queueBytes)
-	if err != nil || slots <= 0 || queueBytes <= 0 {
+	if err != nil {
 		return
 	}
-	err = tx.QueryRow(ctx, `UPDATE acquisition_intents SET claimed=true WHERE device_id=$1 AND session_id=$2
-		AND NOT claimed AND grant_budget>0 AND grant_until>now()
-		RETURNING grant_budget,grant_id,greatest(0,floor(extract(epoch FROM grant_until-now())*1000))::int`, d.ID, session).Scan(&budget, &grantID, &ttl)
+	err = tx.QueryRow(ctx, `UPDATE acquisition_intents a SET claimed=true WHERE a.device_id=$1 AND a.session_id=$2
+		AND NOT a.claimed AND a.grant_budget>0 AND a.grant_until>now() AND `+acquisitionDemand+`
+		RETURNING a.grant_budget,a.grant_id,greatest(0,floor(extract(epoch FROM a.grant_until-now())*1000))::int`, d.ID, session).Scan(&budget, &grantID, &ttl)
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = nil
 	}
@@ -72,7 +83,7 @@ func (s *Store) allocateAcquisitionRound(ctx context.Context, tx pgx.Tx, group s
 		JOIN networks n ON n.id=d.network_id
 		JOIN bridge_sessions bs ON bs.id=a.session_id AND bs.device_id=d.id AND NOT bs.retired
 		LEFT JOIN cooperative_rotation r ON r.network_id=n.id
-		WHERE n.server_group=$1 AND a.slots>0 AND a.bytes>0
+		WHERE n.server_group=$1 AND `+acquisitionDemand+`
 		AND a.last_intent_at>now()-$2::double precision*interval '1 millisecond'
 		AND bs.protocol=CASE n.bridge_mode WHEN 'single' THEN 1 ELSE 2 END
 		AND (n.bridge_mode='cooperative' OR d.role='primary')
