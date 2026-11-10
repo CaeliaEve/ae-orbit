@@ -44,6 +44,22 @@ do
   assert(#limited==1 and limited[1].name=="test:item_100","receiver capacity was ignored")
 end
 
+-- Stage context shares the existing message budget without exposing objects.
+do
+  local b=diagnostics.new(function() return clock end)
+  local error_value=setmetatable({private="do not retain"},
+    {__tostring=function() error("must not stringify") end})
+  b:record("exact_lookup_failed","refresh",{name="test:stage",damage=0},"1",error_value,"candidate")
+  local sample=b:snapshot(4)[1]
+  assert(sample.message=="candidate: non-string error (table)" and sample.truncated,
+    "stage context lost the original non-string sanitization")
+  b:record("exact_lookup_failed","refresh",{name="test:unicode",damage=0},"1",
+    string.rep("\231\149\140",90),"candidate")
+  sample=b:snapshot(4)[1]
+  assert(sample.message:find("candidate: ",1,true)==1 and #sample.message<=160 and sample.truncated)
+  assert(json.decode(json.encode(sample)).message==sample.message,"stage prefix split a UTF-8 code point")
+end
+
 -- Long Unicode and invalid bytes cannot poison the next normal JSON poll.
 do
   local b=diagnostics.new(function() return clock end)

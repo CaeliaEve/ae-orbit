@@ -53,7 +53,7 @@ return function(options)
       s.hello=value
       response={protocol=2,session_id="session",device_id="device",role=options.welcome_role or s.role,
         inventory_ack="0",poll_ack="0",limits={batch_items=16,batch_bytes=4096,response_bytes=4096,
-          cpus=2,poll_millis=1000,read_slots=16,read_bytes=16384}}
+          cpus=2,poll_millis=1000,read_slots=16,read_bytes=16384,diagnostic_samples=options.diagnostic_samples}}
     elseif path=="/bridge/v2/poll" then
       s.polls[#s.polls+1]={value=value,body=body}
       s.clock=s.clock+(s.poll_rtt or 0)

@@ -1120,7 +1120,7 @@ components:
         damage: {type: integer, minimum: 0, maximum: 2147483647}
         nbt_bytes: {type: integer, minimum: 0, maximum: 16384, description: Length of the NBT prefix used for diagnostics; capped at 16384 bytes.}
         nbt_adler32: {type: string, pattern: '^[0-9a-f]{8}$', description: Optional Adler-32 of that prefix; collisions are possible and it must not identify inventory.}
-        message: {type: string, minLength: 1, maxLength: 160, description: At most 160 UTF-8 bytes. OC replaces invalid UTF-8 and control characters; non-string errors expose only their type.}
+        message: {type: string, minLength: 1, maxLength: 160, description: At most 160 UTF-8 bytes. OC replaces invalid UTF-8 and control characters; non-string errors expose only their type. Cooperative messages prefix quantity/recipe/candidate processing stages; they do not necessarily identify native-call failures.}
         occurrences: {$ref: '#/components/schemas/PositiveQuantity'}
         last_seen_millis: {$ref: '#/components/schemas/Quantity'}
         truncated: {type: boolean, description: A text field or NBT prefix was sanitized or shortened, or an exception object was reduced to its type.}

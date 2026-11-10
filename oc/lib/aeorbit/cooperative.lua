@@ -2,8 +2,10 @@ local json=require("aeorbit.json")
 local quantity=require("aeorbit.quantity")
 local cache=require("aeorbit.cache")
 local tracker=require("aeorbit.tracker")
+local read_diagnostics=require("aeorbit.read_diagnostics")
 local M={}
 local read_cycle={"order","refresh","refresh","background"}
+local read_sources={order="priority",refresh="refresh",background="recheck"}
 local function fatal(code) error({code=code,message=code,fatal=true},0) end
 local function integer(value,minimum,maximum)
   return type(value)=="number" and value%1==0 and value>=minimum and value<=maximum
@@ -20,7 +22,7 @@ function M.new(config,deps)
   local primary=role=="primary"
   local memory=deps.free_memory()
   local task_bytes=math.max(256,math.min(16384,math.floor(memory/16)))
-  local self={deps=deps,config=config,adapter=deps.adapter,client=deps.client,role=role,diagnostics={},
+  local self={deps=deps,config=config,adapter=deps.adapter,client=deps.client,role=role,diagnostics={},diagnostic_samples=0,
     ids=cache.new(config.cache_entries or 256,math.max(256,math.min(config.cache_bytes or math.floor(memory/12),math.floor(memory/8)))),
     dirty=cache.new(16,task_bytes),tasks=cache.new(16,task_bytes),candidates=cache.new(16,task_bytes),
     attempts=cache.new(64,16384),
@@ -34,6 +36,12 @@ function M.new(config,deps)
       self.diagnostics[code]="0"
     end
     self.diagnostics[code]=quantity.increment(self.diagnostics[code])
+  end
+  function self:_read_failure(counter,stage,source,raw,item_id,error_value)
+    self:diagnose(counter)
+    if self.diagnostic_samples==0 then return end
+    local code=stage=="recipe" and "recipe_lookup_failed" or "exact_lookup_failed"
+    self.read_diagnostics:record(code,source,raw,item_id,error_value,stage)
   end
   function self:_memory_ready()
     return deps.free_memory()>=self.client.response_bytes*4+4096
@@ -65,6 +73,10 @@ function M.new(config,deps)
       not integer(l.read_bytes,0,16384) or not integer(l.cpus,1,64) or
       not integer(l.poll_millis or 1000,1,30000) then fatal("invalid_device_limits") end
     self.session=w.session_id;self.device_id=w.device_id;self.limits=l
+    if integer(l.diagnostic_samples,1,4) then
+      self.diagnostic_samples=l.diagnostic_samples
+      self.read_diagnostics=read_diagnostics.new(deps.now)
+    end
     self.client.response_bytes=l.response_bytes
     self.client.request_bytes=math.min(config.max_batch_bytes or 16384,l.batch_bytes)
     self.poll_delay=(l.poll_millis or 1000)/1000
@@ -209,7 +221,15 @@ function M.new(config,deps)
           end
         end
       end
-      self.pending_poll={body=json.encode(body,self.client.request_bytes),sequence=body.sequence,reports=body.reports,hints=hints}
+      local samples,diagnostic_token
+      if self.read_diagnostics then samples,diagnostic_token=self.read_diagnostics:snapshot(self.diagnostic_samples) end
+      if samples then
+        body.health.read_failures=samples
+        while #samples>0 and not pcall(json.encode,body,self.client.request_bytes) do samples[#samples]=nil end
+        if #samples==0 then body.health.read_failures=nil;diagnostic_token=nil end
+      end
+      self.pending_poll={body=json.encode(body,self.client.request_bytes),sequence=body.sequence,
+        reports=body.reports,hints=hints,diagnostic_token=diagnostic_token}
     end
     local pending=self.pending_poll
     local started=deps.now()
@@ -244,6 +264,7 @@ function M.new(config,deps)
       end
     end
     self.poll_seq=ack.ack;self.pending_poll=nil;self.poll_delay=ack.poll_millis/1000
+    if pending.diagnostic_token then self.read_diagnostics:ack(pending.diagnostic_token) end
     return started
   end
   function self:_available()
@@ -279,15 +300,18 @@ function M.new(config,deps)
           self.tasks:get(entry.key)
           self.credits=self.credits-cost
           if task.kind=="quantity_recipe" then self.next_recipe_check=deps.now()+5 end
+          local stage="quantity"
           local ok,result=pcall(function()
             local raw=self.adapter:read(task.raw)
-            if task.kind=="quantity_recipe" then raw.isCraftable=self.adapter:recipe_status(raw) end
+            if task.kind=="quantity_recipe" then stage="recipe";raw.isCraftable=self.adapter:recipe_status(raw) end
             if deps.now()>=task.deadline then return nil end
+            stage="candidate"
             return self:_candidate(raw,task)
           end)
           if ok and result then task.in_flight=true;return result,true end
           if not ok then
-            self:diagnose("read_failed");task.failures=task.failures+1
+            self:_read_failure("read_failed",stage,read_sources[task.purpose],task.raw,task.id,result)
+            task.failures=task.failures+1
             task.retry_at=math.min(task.deadline,deps.now()+math.min(30,2^(math.min(task.failures,6)-1)))
           end
           return nil,true
@@ -307,13 +331,16 @@ function M.new(config,deps)
       self.credits=self.credits-1
       local detail=candidate.value
       self.candidates:get(candidate.key)
+      local stage="quantity"
       local ok,result=pcall(function()
-        return self:_candidate(self.adapter:read(detail.raw))
+        local raw=self.adapter:read(detail.raw)
+        stage="candidate"
+        return self:_candidate(raw)
       end)
       if ok then self.candidates:remove(candidate.key);return result,true end
       detail.failures=detail.failures+1
       detail.retry_at=deps.now()+math.min(30,2^(math.min(detail.failures,6)-1))
-      self:diagnose("discovery_read_failed")
+      self:_read_failure("discovery_read_failed",stage,"event",detail.raw,nil,result)
       return nil,true
     end
     if not scan_ready then return nil,false end

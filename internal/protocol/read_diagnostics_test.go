@@ -52,6 +52,83 @@ func TestReadDiagnosticsWirePreservesSamplesAndEmptySnapshot(t *testing.T) {
 	}
 }
 
+// Characterize existing v2 compatibility, including its shared health validator.
+func TestReadDiagnosticsV2Compatibility(t *testing.T) {
+	type diagnosticCase struct {
+		name    string
+		samples string
+		valid   bool
+	}
+	var tests []diagnosticCase
+	validSamples := []string{}
+	for _, source := range []string{"priority", "refresh", "recheck", "event"} {
+		for _, code := range []string{"exact_lookup_failed", "recipe_lookup_failed"} {
+			sample := strings.Replace(readDiagnosticFixture, `"recheck"`, `"`+source+`"`, 1)
+			sample = strings.Replace(sample, `"exact_lookup_failed"`, `"`+code+`"`, 1)
+			validSamples = append(validSamples, sample)
+			tests = append(tests, diagnosticCase{source + "/" + code, `[` + sample + `]`, true})
+		}
+	}
+	largeSample := strings.Replace(readDiagnosticFixture, "test:iron_plate", strings.Repeat("n", 256), 1)
+	largeSample = strings.Replace(largeSample, "读取失败", strings.Repeat("m", 160), 1)
+	oversize := `[` + strings.TrimSuffix(strings.Repeat(largeSample+`,`, 4), `,`) + `]`
+	if len(oversize) <= 2048 {
+		t.Fatal("fixture must exceed the diagnostic byte budget without exceeding four samples")
+	}
+	tests = append(tests, []diagnosticCase{
+		{"four samples", `[` + strings.Join(validSamples[:4], ",") + `]`, true},
+		{"empty snapshot", `[]`, true},
+		{"unknown source", `[` + strings.Replace(readDiagnosticFixture, `"recheck"`, `"background"`, 1) + `]`, false},
+		{"unknown code", `[` + strings.Replace(readDiagnosticFixture, `"exact_lookup_failed"`, `"read_failed"`, 1) + `]`, false},
+		{"too many samples", `[` + strings.Join(validSamples[:5], ",") + `]`, false},
+		{"byte budget", oversize, false},
+	}...)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			input := `{"session_id":"s","sequence":"1","reports":[],"read_slots":16,"read_bytes":16384,` +
+				`"health":{"free_memory":"131072","diagnostics":[],"read_failures":` + test.samples + `}}`
+			var p Poll
+			if err := json.Unmarshal([]byte(input), &p); err != nil {
+				t.Fatal(err)
+			}
+			err := p.ValidateV2(16, 16)
+			if !test.valid {
+				if err == nil {
+					t.Fatal("v2 accepted an invalid diagnostic snapshot")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("v2 rejected an existing diagnostic shape: %v", err)
+			}
+			encoded, err := json.Marshal(p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got struct {
+				ReadSlots *int `json:"read_slots"`
+				ReadBytes *int `json:"read_bytes"`
+				Health    struct {
+					ReadFailures json.RawMessage `json:"read_failures"`
+				} `json:"health"`
+			}
+			if err := json.Unmarshal(encoded, &got); err != nil {
+				t.Fatal(err)
+			}
+			if got.ReadSlots == nil || *got.ReadSlots != 16 || got.ReadBytes == nil || *got.ReadBytes != 16384 {
+				t.Fatalf("v2 capacities were lost: %s", encoded)
+			}
+			var want, actual any
+			if err := json.Unmarshal([]byte(test.samples), &want); err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal(got.Health.ReadFailures, &actual); err != nil || !reflect.DeepEqual(actual, want) {
+				t.Fatalf("v2 diagnostic strings or precision changed: %s: %v", encoded, err)
+			}
+		})
+	}
+}
+
 func TestReadDiagnosticsRejectsInvalidSamples(t *testing.T) {
 	for _, test := range []struct{ name, old, replacement string }{
 		{"unknown code", `"exact_lookup_failed"`, `"other"`},

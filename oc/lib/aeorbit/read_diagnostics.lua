@@ -55,12 +55,17 @@ function M.new(now)
     local entry=table.remove(entries,index)
     bytes=bytes-entry.bytes-(#entries>0 and 1 or 0)
   end
-  function self:record(code,source,raw,item_id,error_value)
+  function self:record(code,source,raw,item_id,error_value,stage)
     local name,name_changed=text(type(raw.name)=="string" and raw.name or "(unknown)",256)
     local message,message_changed
     if type(error_value)=="string" then message,message_changed=text(error_value,160)
     else message="non-string error ("..type(error_value)..")";message_changed=true end
     if #message==0 then message="(empty error)";message_changed=true end
+    if stage then
+      local stage_changed
+      message,stage_changed=text(stage..": "..message,160)
+      message_changed=message_changed or stage_changed
+    end
     if #name==0 then name="(unknown)";name_changed=true end
     local tag=type(raw.tag)=="string" and raw.tag or ""
     local length=math.min(#tag,16384)

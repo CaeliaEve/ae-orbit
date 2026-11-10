@@ -94,6 +94,34 @@ recipe evidence or complete order verification. Logical refresh IDs and original
 deadlines survive reassignment; reads already in flight before the request do
 not retroactively confirm it.
 
+## Read Diagnostics
+
+The optional negotiated `limits.diagnostic_samples` enables the existing
+`health.read_failures` shape on either role. Missing, zero or invalid limits
+disable collection and transmission. Samples remain per-device, with at most
+four entries and 2048 encoded JSON bytes. After an acknowledged snapshot,
+changed details wait at least thirty seconds; unchanged details are not resent.
+Reports, CPUs and hints use the control request budget first. Details may be
+trimmed or deferred, and frozen retries retain their original body and sample
+generation. Acknowledging an older snapshot does not discard later failures.
+
+Cooperative sources map `order` to `priority`, `refresh` to `refresh`,
+`background` to `recheck`, and unknown-event candidate reads to `event`.
+Messages prefix the failed processing stage: `quantity` for exact lookup and
+its identity checks, `recipe` for recipe lookup, or `candidate` for observation
+validation/encoding. The shared codes remain `recipe_lookup_failed` for the
+recipe stage and `exact_lookup_failed` for the other two stages. In particular,
+the latter code alone does not prove a native ME call failed.
+
+Samples include a known short item ID when available, never assignment tokens
+or full NBT/exception objects. Names and reasons are sanitized and bounded;
+arbitrary string exceptions are not generally secret-redacted. They are lossy
+debugging hints, not authoritative identities or evidence of zero stock.
+Failed joint reads retain their normal backoff and do not publish partial
+receipts. Existing cumulative `read_failed`/`discovery_read_failed` counters
+remain unchanged. `discovery_queue_full` can also record byte-budget rejection
+or memory-driven trimming; it is not the current queue length.
+
 ## Query Status
 
 Network `session_id`, `online`, capabilities and CPU state continue to describe
