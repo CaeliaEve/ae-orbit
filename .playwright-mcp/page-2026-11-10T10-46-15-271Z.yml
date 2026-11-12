@@ -1,0 +1,171 @@
+- iframe [ref=e2]:
+  - generic "AE Orbit 界面方案" [ref=f1e2]:
+    - generic [ref=f1e3]:
+      - generic [ref=f1e4]:
+        - generic [ref=f1e5]: AE Orbit
+        - generic [ref=f1e6]: 交互预览 · 示例数据
+      - group "预览设备" [ref=f1e7]:
+        - button "电脑" [pressed] [ref=f1e8] [cursor=pointer]:
+          - img [ref=f1e9]
+          - text: 电脑
+        - button "手机" [ref=f1e11] [cursor=pointer]:
+          - img [ref=f1e12]
+          - text: 手机
+    - group "AE Orbit 三套界面方案" [ref=f1e14]:
+      - group "清爽列表工作台" [ref=f1e15]:
+        - article "清爽列表工作台" [ref=f1e17]:
+          - generic [ref=f1e18]:
+            - generic [ref=f1e19]:
+              - img [ref=f1e20]
+              - generic [ref=f1e26]: AE Orbit
+            - generic [ref=f1e27]:
+              - img [ref=f1e28]
+              - generic [ref=f1e31]: 主基地
+            - generic [ref=f1e33]: 协作在线
+          - generic [ref=f1e34]:
+            - navigation "主要导航" [ref=f1e35]:
+              - button "库存" [ref=f1e36] [cursor=pointer]:
+                - img [ref=f1e37]
+                - generic [ref=f1e47]: 库存
+              - button "合成任务 2" [ref=f1e48] [cursor=pointer]:
+                - img [ref=f1e49]
+                - generic [ref=f1e52]: 合成任务
+                - generic [ref=f1e53]: "2"
+              - button "CPU" [ref=f1e54] [cursor=pointer]:
+                - img [ref=f1e55]
+                - generic [ref=f1e58]: CPU
+              - button "网络" [ref=f1e59] [cursor=pointer]:
+                - img [ref=f1e60]
+                - generic [ref=f1e65]: 网络
+              - generic [ref=f1e66]:
+                - generic [ref=f1e67]: 主基地
+                - generic [ref=f1e68]: 2 台 OC 在线
+            - main [ref=f1e69]:
+              - generic [ref=f1e70]:
+                - generic [ref=f1e71]:
+                  - heading "库存" [level=1] [ref=f1e72]
+                  - generic [ref=f1e73]: 物品
+                - generic [ref=f1e74]: 主基地
+              - generic [ref=f1e75]:
+                - generic [ref=f1e76]:
+                  - img [ref=f1e77]
+                  - searchbox "搜索物品" [ref=f1e80]
+                - button "按库存数量排序" [ref=f1e81] [cursor=pointer]:
+                  - img [ref=f1e82]
+              - generic [ref=f1e84]:
+                - group "物品筛选" [ref=f1e85]:
+                  - button "全部" [pressed] [ref=f1e86] [cursor=pointer]
+                  - button "可合成" [ref=f1e87] [cursor=pointer]
+                - generic [ref=f1e88]: 名称排序
+              - generic [ref=f1e89]:
+                - generic [ref=f1e90]:
+                  - generic [ref=f1e91]:
+                    - generic [ref=f1e92]: 物品
+                    - generic [ref=f1e93]: 库存
+                    - generic [ref=f1e94]: 核验
+                  - generic "库存物品" [ref=f1e95]:
+                    - generic [ref=f1e96]:
+                      - button "查看铁锭" [ref=f1e97] [cursor=pointer]:
+                        - generic [ref=f1e98]:
+                          - generic [ref=f1e99]: 铁锭
+                          - generic [ref=f1e100]: Minecraft
+                      - generic [ref=f1e101]: 128,640
+                      - generic [ref=f1e102]: 8秒前
+                    - generic [ref=f1e103]:
+                      - button "查看金锭" [ref=f1e104] [cursor=pointer]:
+                        - generic [ref=f1e105]:
+                          - generic [ref=f1e106]: 金锭
+                          - generic [ref=f1e107]: Minecraft
+                      - generic [ref=f1e108]: 2,048
+                      - generic [ref=f1e109]: 12秒前
+                    - generic [ref=f1e110]:
+                      - button "查看红石" [ref=f1e111] [cursor=pointer]:
+                        - generic [ref=f1e112]:
+                          - generic [ref=f1e113]: 红石
+                          - generic [ref=f1e114]: Minecraft
+                      - generic [ref=f1e115]: 32,768
+                      - generic [ref=f1e116]: 6秒前
+                    - generic [ref=f1e117]:
+                      - button "查看集成电路" [ref=f1e118] [cursor=pointer]:
+                        - generic [ref=f1e119]:
+                          - generic [ref=f1e120]: 集成电路
+                          - generic [ref=f1e121]: GregTech
+                      - generic [ref=f1e122]: "512"
+                      - generic [ref=f1e123]: 19秒前
+                    - generic [ref=f1e124]:
+                      - button "查看NAND 芯片" [ref=f1e125] [cursor=pointer]:
+                        - generic [ref=f1e126]:
+                          - generic [ref=f1e127]: NAND 芯片
+                          - generic [ref=f1e128]: GregTech
+                      - generic [ref=f1e129]: "128"
+                      - generic [ref=f1e130]: 24秒前
+                    - generic [ref=f1e131]:
+                      - button "查看钻石" [ref=f1e132] [cursor=pointer]:
+                        - generic [ref=f1e133]:
+                          - generic [ref=f1e134]: 钻石
+                          - generic [ref=f1e135]: Minecraft
+                      - generic [ref=f1e136]: "864"
+                      - generic [ref=f1e137]: 1分钟前
+                    - generic [ref=f1e138]:
+                      - button "查看绿宝石" [ref=f1e139] [cursor=pointer]:
+                        - generic [ref=f1e140]:
+                          - generic [ref=f1e141]: 绿宝石
+                          - generic [ref=f1e142]: Minecraft
+                      - generic [ref=f1e143]: "384"
+                      - generic [ref=f1e144]: 2分钟前
+                    - generic [ref=f1e145]:
+                      - button "查看青金石" [ref=f1e146] [cursor=pointer]:
+                        - generic [ref=f1e147]:
+                          - generic [ref=f1e148]: 青金石
+                          - generic [ref=f1e149]: Minecraft
+                      - generic [ref=f1e150]: 8,192
+                      - generic [ref=f1e151]: 15秒前
+                  - generic [ref=f1e152]:
+                    - generic [ref=f1e153]: 11 种物品 · 显示 8 种
+                    - generic [ref=f1e154]: 示例目录
+                - complementary "物品详情" [ref=f1e155]:
+                  - generic [ref=f1e157]:
+                    - heading "铁锭" [level=2] [ref=f1e158]
+                    - text: Minecraft
+                  - generic [ref=f1e159]:
+                    - generic [ref=f1e160]: 当前库存
+                    - generic [ref=f1e161]: 128,640
+                  - generic [ref=f1e162]: minecraft:iron_ingot
+                  - generic [ref=f1e163]:
+                    - generic [ref=f1e164]:
+                      - generic [ref=f1e165]: 数量核验
+                      - generic [ref=f1e166]: 8秒前
+                    - generic [ref=f1e167]:
+                      - generic [ref=f1e168]: 配方核验
+                      - generic [ref=f1e169]: 2分钟前
+                    - generic [ref=f1e170]:
+                      - generic [ref=f1e171]: 配方状态
+                      - generic [ref=f1e172]: 可合成
+                  - generic [ref=f1e173]:
+                    - generic [ref=f1e174]: 额外合成数量
+                    - generic [ref=f1e175]:
+                      - button "减少合成数量" [ref=f1e176] [cursor=pointer]:
+                        - img [ref=f1e177]
+                      - textbox "额外合成数量" [ref=f1e178]: "64"
+                      - button "增加合成数量" [ref=f1e179] [cursor=pointer]:
+                        - img [ref=f1e180]
+                    - button "额外制作 64 个" [ref=f1e181] [cursor=pointer]:
+                      - img [ref=f1e182]
+                      - generic [ref=f1e186]: 额外制作 64 个
+                    - status [ref=f1e187]: 成品保留在 AE 网络中
+          - generic [ref=f1e188]:
+            - generic [ref=f1e189]:
+              - generic [ref=f1e190]: 主机在线
+              - generic [ref=f1e191]: 助手在线
+            - generic [ref=f1e192]: 数量与配方分别核验
+      - generic [ref=f1e193]:
+        - button "上一方案" [ref=f1e194] [cursor=pointer]:
+          - img [ref=f1e195]
+        - group [ref=f1e197]:
+          - generic "1 / 3 清爽列表" [ref=f1e198] [cursor=pointer]:
+            - generic [ref=f1e199]: 1 / 3
+            - generic [ref=f1e200]: 清爽列表
+            - img [ref=f1e201]
+        - button "下一方案" [ref=f1e203] [cursor=pointer]:
+          - img [ref=f1e204]
+      - status [ref=f1e206]
