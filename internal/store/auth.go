@@ -103,7 +103,20 @@ func (s *Store) SetGrant(ctx context.Context, adminID, userID string, g protocol
 	if err := s.RequireAdmin(ctx, adminID); err != nil {
 		return err
 	}
-	_, err := s.pool.Exec(ctx, `INSERT INTO network_grants(member_id,network_id,can_craft) VALUES($1,$2,$3)
-        ON CONFLICT(member_id,network_id) DO UPDATE SET can_craft=excluded.can_craft`, userID, g.NetworkID, g.CanCraft)
-	return err
+	return s.transaction(ctx, func(tx pgx.Tx) error {
+		// Preacquire the FK's network lock before the exclusive member lock.
+		if _, err := tx.Exec(ctx, "SELECT id FROM networks WHERE id=$1 FOR KEY SHARE", g.NetworkID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, "SELECT id FROM members WHERE id=$1 FOR UPDATE", userID); err != nil {
+			return err
+		}
+		if !g.CanCraft {
+			if _, err := tx.Exec(ctx, `UPDATE production_job_authority_epochs SET epoch=epoch+1 WHERE member_id=$1 AND network_id=$2 AND NOT EXISTS(SELECT 1 FROM members WHERE id=$1 AND is_admin) AND EXISTS(SELECT 1 FROM network_grants WHERE member_id=$1 AND network_id=$2 AND can_craft)`, userID, g.NetworkID); err != nil {
+				return err
+			}
+		}
+		_, err := tx.Exec(ctx, `INSERT INTO network_grants(member_id,network_id,can_craft) VALUES($1,$2,$3) ON CONFLICT(member_id,network_id) DO UPDATE SET can_craft=excluded.can_craft`, userID, g.NetworkID, g.CanCraft)
+		return err
+	})
 }

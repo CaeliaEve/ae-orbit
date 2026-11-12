@@ -10,6 +10,7 @@ dist/
 coverage.out
 __pycache__/
 *.pyc
+/node_modules/
 
 # Live OC credentials and state belong outside the source tree.
 /oc/config.lua
@@ -17,3 +18,8 @@ __pycache__/
 *.cfg
 *.key
 *.pem
+
+# Reproducible, local NEI image exports.
+/web/static/assets/nei/*.png
+/web/static/assets/nei/manifest.json
+/web/static/assets/nei/audit.json

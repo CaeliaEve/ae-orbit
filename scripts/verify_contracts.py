@@ -24,6 +24,21 @@ update = {"id": "9007199254740993", "quantity": "9007199254740995",
           "observation": "2", "craftable": None, "assignment_id": "0123456789abcdef" * 2}
 poll_ack = {"ack": "1", "commands": [], "reads": [], "poll_millis": 1000, "scan_budget": 0}
 cases = [
+    ("ProductionJobInput", {"request_key": "manifest-001", "entries": [
+        {"entry_key": "source-001", "item_id": "9007199254740993", "quantity": "64"}]}, True),
+    ("ProductionJobInput", {"request_key": "manifest-001", "entries": [
+        {"entry_key": "source-001", "item_id": "1", "quantity": 64}]}, False),
+    ("ProductionJobInput", {"request_key": "manifest-001", "cpu_name": "CPU", "entries": [
+        {"entry_key": "source-001", "item_id": "1", "quantity": "64"}]}, False),
+    ("ProductionJobControlInput", {"operation_key": "operation-001", "expected_control_version": "2"}, True),
+    ("ProductionJobControlInput", {"operation_key": "operation-001", "expected_control_version": 2}, False),
+    ("ProductionJobAcceptance", {"receipt": {"job_id": "job", "manifest_digest": "a" * 64, "archived": True}}, True),
+    ("ProductionJobAcceptance", {"receipt": {"job_id": "job", "manifest_digest": "a" * 64, "archived": True}, "replayed": True}, False),
+    ("ProductionJobChangePage", {"changes": [{"revision": "5", "job_id": "job", "version": "4", "removed": True}],
+                                "next_after": "5", "has_more": False, "watermark": "5", "reset": False}, True),
+    ("ProductionJobChangePage", {"changes": [], "next_after": 5, "has_more": False, "watermark": "5", "reset": False}, False),
+    ("NetworkEvent", {"id": "1", "network_id": "network", "kind": "jobs", "revision": "0",
+                      "created_at": "2026-11-11T00:00:00Z"}, True),
     ("PollV2", poll, True),
     ("PollV2", {"session_id": "session", "sequence": "1", "read_slots": 16, "read_bytes": 16384}, True),
     ("Poll", poll, False),
@@ -62,5 +77,5 @@ for name in ("compose.yaml", "compose.https.yaml"):
     config = yaml.safe_load((root / "deploy" / name).read_text(encoding="utf-8"))
     assert isinstance(config["services"], dict)
 print(f"PASS OpenAPI schema and {len(actual)} HTTP operations; deployment YAML parses.")
-print(f"PASS {len(cases)} v1/v2 wire boundary examples.")
+print(f"PASS {len(cases)} v1/v2/job wire boundary examples.")
 print("Container builds and docker compose runtime validation require Docker.")

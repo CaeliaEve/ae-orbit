@@ -38,6 +38,7 @@ return function(options)
         diagnostic_samples=options.diagnostic_samples,sync_telemetry=options.sync_telemetry,quantity_refresh=options.quantity_refresh}}
   end
   function client:send(path,body)
+    if path=="/bridge/v1/hello" then return self:post(path,json.decode(body)) end
     assert(#body<=self.request_bytes,"wire request exceeded the negotiated byte limit")
     s.clock=s.clock+s.http_delay
     local value=json.decode(body)

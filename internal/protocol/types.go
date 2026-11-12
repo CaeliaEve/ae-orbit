@@ -54,6 +54,7 @@ type Capabilities struct {
 	QuantityRefresh  bool     `json:"quantity_refresh,omitempty"`
 	Craft            bool     `json:"craft"`
 	CPUOutput        bool     `json:"cpu_output"`
+	CPUSelection     bool     `json:"cpu_selection"`
 	ExactQuantities  bool     `json:"exact_quantities"`
 	MaxCraftQuantity Quantity `json:"max_craft_quantity"`
 	Enumeration      string   `json:"enumeration"`
@@ -351,6 +352,8 @@ type Command struct {
 	Item            Definition `json:"item"`
 	Quantity        Quantity   `json:"quantity"`
 	CurrentQuantity Quantity   `json:"current_quantity"`
+	CPUName         string     `json:"cpu_name,omitempty"`
+	WaitForCPU      bool       `json:"wait_for_cpu,omitempty"`
 }
 
 type Verification struct {
@@ -405,6 +408,9 @@ type OrderInput struct {
 	Quantity       Quantity `json:"quantity"`
 	IdempotencyKey string   `json:"idempotency_key"`
 	TTLSeconds     int      `json:"ttl_seconds,omitempty"`
+	BatchID        string   `json:"batch_id,omitempty"`
+	CPUName        string   `json:"cpu_name,omitempty"`
+	WaitForCPU     bool     `json:"wait_for_cpu,omitempty"`
 }
 
 type Order struct {
@@ -419,6 +425,7 @@ type Order struct {
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 	ExpiresAt time.Time `json:"expires_at"`
+	BatchID   string    `json:"batch_id,omitempty"`
 }
 
 type Network struct {

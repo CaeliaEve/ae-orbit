@@ -237,3 +237,57 @@ func TestAcquisitionZeroCapacityDoesNotReserveFutureShare(t *testing.T) {
 		t.Fatal("backpressured reader held a future share", aa, bb, err)
 	}
 }
+
+func TestAcquisitionRequiresWholeMillisecondLease(t *testing.T) {
+	for _, test := range []struct {
+		duration string
+		budget   int
+		ttl      int
+	}{
+		{"0 microseconds", 0, 0},
+		{"500 microseconds", 0, 0},
+		{"1000 microseconds", 16, 1},
+		{"1500 microseconds", 16, 1},
+	} {
+		t.Run(test.duration, func(t *testing.T) {
+			f := newCooperativeFixture(t)
+			slots, bytes := 16, 16384
+			p := protocol.Poll{SessionID: f.wb.SessionID, Sequence: 1, ReadSlots: &slots, ReadBytes: &bytes}
+			if _, err := f.s.PollV2(ctx, f.b, p); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := f.s.Pool().Exec(ctx, `UPDATE server_groups SET next_scan_at=now()+interval '1 hour' WHERE name=$1`,
+				f.network.ServerGroup); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := f.s.Pool().Exec(ctx, `UPDATE acquisition_intents SET
+				grant_id='0123456789abcdef0123456789abcdef',grant_budget=16,claimed=false,
+				grant_until=now()+interval '1 second' WHERE device_id=$1`, f.b.ID); err != nil {
+				t.Fatal(err)
+			}
+			// Set the deadline inside the poll transaction, whose now() is fixed.
+			// This reproduces the sub-millisecond boundary without timing sleeps.
+			if _, err := f.s.Pool().Exec(ctx, `
+				CREATE FUNCTION test_grant_deadline() RETURNS trigger LANGUAGE plpgsql AS $$
+				BEGIN
+					NEW.grant_until := now()+TG_ARGV[0]::interval;
+					RETURN NEW;
+				END $$;
+				CREATE TRIGGER test_grant_deadline BEFORE UPDATE OF slots ON acquisition_intents
+				FOR EACH ROW EXECUTE FUNCTION test_grant_deadline('`+test.duration+`')`); err != nil {
+				t.Fatal(err)
+			}
+			p.Sequence++
+			ack, err := f.s.PollV2(ctx, f.b, p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if ack.ScanBudget != test.budget || ack.GrantTTLMillis != test.ttl {
+				t.Fatalf("unusable or extended acquisition lease: %+v", ack)
+			}
+			if (ack.GrantID != "") != (test.budget > 0) {
+				t.Fatalf("grant identity did not match usable credits: %+v", ack)
+			}
+		})
+	}
+}

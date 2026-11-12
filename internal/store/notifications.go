@@ -10,7 +10,8 @@ import (
 // These hints become visible only after the database commit succeeds.
 type notifyingTx struct {
 	pgx.Tx
-	networks map[string]struct{}
+	networks       map[string]struct{}
+	productionJobs map[string]map[string]struct{}
 }
 
 type eventNotifications struct {

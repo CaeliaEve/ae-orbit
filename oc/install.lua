@@ -33,6 +33,7 @@ local files = {
   {"lib/aeorbit/gzip.lua", "/lib/aeorbit/gzip.lua"},
   {"lib/aeorbit/nbt.lua", "/lib/aeorbit/nbt.lua"},
   {"lib/aeorbit/journal.lua", "/lib/aeorbit/journal.lua"},
+  {"lib/aeorbit/cancel.lua", "/lib/aeorbit/cancel.lua"},
   {"lib/aeorbit/client.lua", "/lib/aeorbit/client.lua"},
   {"lib/aeorbit/adapter.lua", "/lib/aeorbit/adapter.lua"},
   {"lib/aeorbit/tracker.lua", "/lib/aeorbit/tracker.lua"},
@@ -40,7 +41,10 @@ local files = {
   {"lib/aeorbit/cooperative.lua", "/lib/aeorbit/cooperative.lua"},
   {"lib/aeorbit/read_diagnostics.lua", "/lib/aeorbit/read_diagnostics.lua"},
   {"lib/aeorbit/latency.lua", "/lib/aeorbit/latency.lua"},
+  {"lib/aeorbit/runtime.lua", "/lib/aeorbit/runtime.lua"},
+  {"lib/aeorbit/service.lua", "/lib/aeorbit/service.lua"},
   {"bin/ae-orbit.lua", "/bin/ae-orbit.lua"},
+  {"rc.d/ae-orbit.lua", "/etc/rc.d/ae-orbit.lua"},
   {"config.example.lua", "/etc/ae-orbit.cfg.example"},
   {"install.lua", "/bin/ae-orbit-install.lua"},
 }
@@ -244,4 +248,6 @@ for _, entry in ipairs(files) do
 end
 if not pcall(remove, lock_path) then print("Installed, but installer lock needs cleanup: " .. lock_path) end
 print("Installed. Edit /etc/ae-orbit.cfg: url, token and me_address; then run ae-orbit.")
+print("Background service: rc ae-orbit start; boot autostart: rc ae-orbit enable")
+print("After updating a previously loaded bridge, reboot OpenOS to reload cached modules.")
 print("Next update: ae-orbit-install (GitHub), or ae-orbit-install https://your-ae-service")

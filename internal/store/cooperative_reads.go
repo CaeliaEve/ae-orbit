@@ -66,6 +66,9 @@ func (s *Store) PollV2(ctx context.Context, d Device, p protocol.Poll) (protocol
 			if err = s.expireQueued(ctx, tx, d.NetworkID); err != nil {
 				return err
 			}
+			if err = s.admitProductionJobs(ctx, tx, d.NetworkID, caps); err != nil {
+				return err
+			}
 			if p.CPUs != nil {
 				if err = s.saveCPUs(ctx, tx, d.NetworkID, p); err != nil {
 					return err

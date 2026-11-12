@@ -1,0 +1,84 @@
+- generic [ref=e1]:
+  - generic [ref=e3]:
+    - navigation "主导航" [ref=e4]:
+      - link "AE Orbit" [ref=e5] [cursor=pointer]:
+        - /url: /
+        - generic [ref=e6]: AE Orbit
+      - button "工作台" [ref=e7] [cursor=pointer]:
+        - img [ref=e8]
+        - generic [ref=e13]: 工作台
+      - button "库存" [ref=e14] [cursor=pointer]:
+        - img [ref=e15]
+        - generic [ref=e25]: 库存
+      - button "合成任务" [ref=e26] [cursor=pointer]:
+        - img [ref=e27]
+        - generic [ref=e30]: 合成任务
+      - button "合成 CPU" [ref=e31] [cursor=pointer]:
+        - img [ref=e32]
+        - generic [ref=e35]: 合成 CPU
+      - button "网络" [ref=e36] [cursor=pointer]:
+        - img [ref=e37]
+        - generic [ref=e44]: 网络
+      - button "GitHub 项目介绍" [ref=e46] [cursor=pointer]:
+        - img [ref=e47]
+        - text: GitHub 项目介绍
+      - button "设置" [ref=e50] [cursor=pointer]:
+        - img [ref=e51]
+        - generic [ref=e54]: 设置
+    - generic [ref=e55]:
+      - banner [ref=e56]:
+        - combobox "选择网络" [ref=e58]:
+          - option "未连接" [selected]
+        - button "查看通知" [ref=e59] [cursor=pointer]:
+          - img [ref=e60]
+      - main [ref=e63]:
+        - generic [ref=e64]:
+          - generic [ref=e65]:
+            - generic [ref=e66]:
+              - heading "工作台" [level=1] [ref=e67]
+              - generic [ref=e68]: 集中查看网络、库存与生产任务状态
+            - generic [ref=e69]:
+              - generic [ref=e70]: 等待同步
+              - button "刷新工作台" [ref=e71] [cursor=pointer]:
+                - img [ref=e72]
+          - generic [ref=e77]:
+            - article [ref=e78]:
+              - generic [ref=e79]: 网络状态
+              - strong [ref=e80]: 未连接
+              - generic [ref=e81]: 等待登录
+            - article [ref=e82]:
+              - generic [ref=e83]: 当前页库存
+              - strong [ref=e84]: "0"
+              - generic [ref=e85]: 已加载物品
+            - article [ref=e86]:
+              - generic [ref=e87]: 未完成任务
+              - strong [ref=e88]: "0"
+              - generic [ref=e89]: 生产任务与订单
+            - article [ref=e90]:
+              - generic [ref=e91]:
+                - text: CPU 占用
+                - strong [ref=e92]: 暂无观测
+                - text: 等待 CPU 状态
+              - generic [ref=e94]: —
+          - generic [ref=e95]:
+            - generic [ref=e97]:
+              - generic [ref=e98]:
+                - heading "系统概览" [level=2] [ref=e99]
+                - generic [ref=e100]: 当前网络的实时状态
+              - img [ref=e101]
+            - generic [ref=e105]:
+              - generic [ref=e106]:
+                - heading "最近活动" [level=2] [ref=e107]
+                - generic [ref=e108]: 最近一次同步与设备观测
+              - button "查看全部" [ref=e109] [cursor=pointer]:
+                - text: 查看全部
+                - img [ref=e110]
+  - dialog "连接 AE Orbit" [ref=e114]:
+    - generic [ref=e115]:
+      - heading "连接 AE Orbit" [level=2] [ref=e117]
+      - generic [ref=e118]: 访问令牌
+      - textbox "访问令牌" [active] [ref=e119]
+      - alert [ref=e120]
+      - button "登录" [ref=e121] [cursor=pointer]:
+        - img [ref=e122]
+        - text: 登录

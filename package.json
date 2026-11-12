@@ -1,0 +1,14 @@
+{
+  "name": "ae-orbit-web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build_web.mjs",
+    "test:web": "node --test web/tests/*.test.mjs scripts/dev_web.test.mjs",
+    "dev": "node scripts/dev_web.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.12",
+    "lucide": "0.468.0"
+  }
+}

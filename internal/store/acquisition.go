@@ -59,7 +59,7 @@ func (s *Store) acquisitionGrant(ctx context.Context, tx pgx.Tx, d Device, sessi
 		return
 	}
 	err = tx.QueryRow(ctx, `UPDATE acquisition_intents a SET claimed=true WHERE a.device_id=$1 AND a.session_id=$2
-		AND NOT a.claimed AND a.grant_budget>0 AND a.grant_until>now() AND `+acquisitionDemand+`
+		AND NOT a.claimed AND a.grant_budget>0 AND a.grant_until>=now()+interval '1 millisecond' AND `+acquisitionDemand+`
 		RETURNING a.grant_budget,a.grant_id,greatest(0,floor(extract(epoch FROM a.grant_until-now())*1000))::int`, d.ID, session).Scan(&budget, &grantID, &ttl)
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = nil

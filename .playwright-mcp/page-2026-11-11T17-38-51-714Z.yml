@@ -1,0 +1,83 @@
+- generic [ref=e1]:
+  - banner [ref=e2]:
+    - link "AE Orbit" [ref=e3] [cursor=pointer]:
+      - /url: /
+      - generic [ref=e4]: AE Orbit
+    - generic [ref=e5]:
+      - img [ref=e6]
+      - combobox "选择网络" [ref=e11]:
+        - option "未连接" [selected]
+    - status [ref=e12]: 未登录
+  - generic [ref=e13]:
+    - navigation "主导航" [ref=e14]:
+      - button "库存" [ref=e15] [cursor=pointer]:
+        - img [ref=e16]
+        - generic [ref=e26]: 库存
+      - button "合成任务" [ref=e27] [cursor=pointer]:
+        - img [ref=e28]
+        - generic [ref=e31]: 合成任务
+      - button "合成 CPU" [ref=e32] [cursor=pointer]:
+        - img [ref=e33]
+        - generic [ref=e36]: 合成 CPU
+      - button "网络" [ref=e37] [cursor=pointer]:
+        - img [ref=e38]
+        - generic [ref=e45]: 网络
+      - generic [ref=e47]: 未登录
+    - main [ref=e48]:
+      - generic [ref=e49]:
+        - generic [ref=e50]:
+          - generic [ref=e51]:
+            - heading "库存" [level=1] [ref=e52]
+            - generic [ref=e53]: 尚未连接网络
+          - button "刷新库存列表" [ref=e54] [cursor=pointer]:
+            - img [ref=e55]
+        - generic [ref=e60]:
+          - generic [ref=e61]:
+            - img [ref=e62]
+            - searchbox "搜索物品" [ref=e65]
+          - button "清单 0" [ref=e66] [cursor=pointer]:
+            - img [ref=e67]
+            - generic [ref=e68]: 清单
+            - generic [ref=e69]: "0"
+        - generic [ref=e70]:
+          - group "物品筛选" [ref=e71]:
+            - button "全部" [pressed] [ref=e72] [cursor=pointer]
+            - button "可合成" [ref=e73] [cursor=pointer]
+            - button "仅库存" [ref=e74] [cursor=pointer]
+          - generic [ref=e75]:
+            - generic [ref=e76]: 排序
+            - combobox "库存排序" [ref=e77]:
+              - option "物品名称" [selected]
+              - option "库存数量"
+        - generic [ref=e78]:
+          - generic [ref=e79]:
+            - table [ref=e81]:
+              - rowgroup [ref=e82]:
+                - row "物品 库存数量 添加" [ref=e83]:
+                  - columnheader "物品" [ref=e84]
+                  - columnheader "库存数量" [ref=e85]
+                  - columnheader "添加" [ref=e86]:
+                    - generic [ref=e87]: 添加
+              - rowgroup
+            - generic [ref=e88]: 登录后查看库存
+            - generic [ref=e89]:
+              - generic [ref=e90]: 第 1 页
+              - generic [ref=e91]:
+                - button "上一页" [disabled] [ref=e92]:
+                  - img [ref=e93]
+                - button "下一页" [disabled] [ref=e95]:
+                  - img [ref=e96]
+          - complementary "物品与待提交清单" [ref=e98]:
+            - group "操作区" [ref=e100]:
+              - button "物品" [pressed] [ref=e101] [cursor=pointer]
+              - button "待提交清单" [ref=e102] [cursor=pointer]
+            - generic [ref=e104]: 尚未选择物品
+  - dialog "连接 AE Orbit" [ref=e105]:
+    - generic [ref=e106]:
+      - heading "连接 AE Orbit" [level=2] [ref=e108]
+      - generic [ref=e109]: 访问令牌
+      - textbox "访问令牌" [active] [ref=e110]
+      - alert [ref=e111]
+      - button "登录" [ref=e112] [cursor=pointer]:
+        - img [ref=e113]
+        - text: 登录

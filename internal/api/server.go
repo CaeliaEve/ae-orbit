@@ -1,4 +1,4 @@
-// Package api exposes the service without embedding a frontend.
+// Package api exposes the service and its same-origin browser client.
 package api
 
 import (
@@ -125,6 +125,8 @@ func fail(w http.ResponseWriter, err error) {
 		status, code, message = 409, "stale_session", "This device session has been retired."
 	case errors.Is(err, store.ErrViewChanged):
 		status, code, message = 409, "view_changed", "Refresh the query from its first page."
+	case errors.Is(err, store.ErrClientUpgradeRequired):
+		status, code, message = 409, "client_upgrade_required", "Refresh the browser client before submitting new drafts."
 	case errors.Is(err, store.ErrConflict):
 		status, code, message = 409, "conflict", "The request conflicts with the current state."
 	case errors.Is(err, store.ErrCapability):

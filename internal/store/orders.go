@@ -6,16 +6,17 @@ import (
 	"errors"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/CaeliaEve/ae-orbit/internal/protocol"
 	"github.com/jackc/pgx/v5"
 )
 
-const orderColumns = `o.id,o.network_id,o.member_id,o.item_id,o.quantity,o.state,o.attempt_id,o.reason,o.created_at,o.updated_at,o.expires_at`
+const orderColumns = `o.id,o.network_id,o.member_id,o.item_id,o.quantity,o.state,o.attempt_id,o.reason,o.created_at,o.updated_at,o.expires_at,o.batch_id`
 
 func scanOrder(row scanner) (protocol.Order, error) {
 	var o protocol.Order
-	err := row.Scan(&o.ID, &o.NetworkID, &o.UserID, &o.ItemID, &o.Quantity, &o.State, &o.AttemptID, &o.Reason, &o.CreatedAt, &o.UpdatedAt, &o.ExpiresAt)
+	err := row.Scan(&o.ID, &o.NetworkID, &o.UserID, &o.ItemID, &o.Quantity, &o.State, &o.AttemptID, &o.Reason, &o.CreatedAt, &o.UpdatedAt, &o.ExpiresAt, &o.BatchID)
 	return o, notFound(err)
 }
 
@@ -26,6 +27,11 @@ func (s *Store) CreateOrder(ctx context.Context, userID, networkID string, in pr
 	}
 	if err := in.Validate(); err != nil {
 		return result, errors.Join(ErrInvalid, err)
+	}
+	// The installed OC name selector may silently fall back to another CPU.
+	// Reject targets until the bridge has an atomic, fail-closed submission API.
+	if in.CPUName != "" || in.WaitForCPU {
+		return result, ErrCapability
 	}
 	if in.TTLSeconds == 0 {
 		in.TTLSeconds = 3600
@@ -51,7 +57,7 @@ func (s *Store) CreateOrder(ctx context.Context, userID, networkID string, in pr
 			if err != nil {
 				return err
 			}
-			if existingID != in.ItemID || existing.Quantity != in.Quantity || ttl != in.TTLSeconds {
+			if existingID != in.ItemID || existing.Quantity != in.Quantity || ttl != in.TTLSeconds || existing.BatchID != in.BatchID {
 				return ErrConflict
 			}
 			result = existing
@@ -59,6 +65,10 @@ func (s *Store) CreateOrder(ctx context.Context, userID, networkID string, in pr
 		}
 		if !errors.Is(err, ErrNotFound) {
 			return err
+		}
+		// Retire stale browser writers without invalidating retained exact replays.
+		if strings.HasPrefix(in.IdempotencyKey, "draft-") {
+			return ErrClientUpgradeRequired
 		}
 		var caps protocol.Capabilities
 		if err = json.Unmarshal(capsJSON, &caps); err != nil {
@@ -81,26 +91,36 @@ func (s *Store) CreateOrder(ctx context.Context, userID, networkID string, in pr
 		if pending >= s.options.MaxQueuedOrders {
 			return ErrCapacity
 		}
-		result.ID = newID()
-		if _, err = tx.Exec(ctx, `INSERT INTO orders(id,network_id,member_id,item_id,quantity,idempotency_key,ttl_seconds,state,expires_at)
-            VALUES($1,$2,$3,$4,$5,$6,$7::integer,'queued',now()+$7::integer*interval '1 second')`, result.ID, networkID, userID, int64(in.ItemID), int64(in.Quantity), in.IdempotencyKey, in.TTLSeconds); err != nil {
-			return err
-		}
-		if err = auditOrder(ctx, tx, result.ID); err != nil {
-			return err
-		}
-		result, err = scanOrder(tx.QueryRow(ctx, "SELECT "+orderColumns+" FROM orders o WHERE o.id=$1", result.ID))
-		if err != nil {
-			return err
-		}
-		return s.event(ctx, tx, networkID, "orders")
+		result, err = s.enqueueOrder(ctx, tx, userID, networkID, in, "")
+		return err
 	})
 	return result, err
 }
 
 func auditOrder(ctx context.Context, tx pgx.Tx, id string) error {
 	_, err := tx.Exec(ctx, `INSERT INTO order_events(order_id,state,reason,attempt_id) SELECT id,state,reason,attempt_id FROM orders WHERE id=$1`, id)
-	return err
+	if err != nil {
+		return err
+	}
+	return markProductionOrderChanged(ctx, tx, id)
+}
+
+// Eligibility and capacity must be checked by the caller under the network lock.
+func (s *Store) enqueueOrder(ctx context.Context, tx pgx.Tx, userID, networkID string, in protocol.OrderInput, entryID string) (protocol.Order, error) {
+	id := newID()
+	_, err := tx.Exec(ctx, `INSERT INTO orders(id,network_id,member_id,item_id,quantity,idempotency_key,ttl_seconds,state,expires_at,batch_id,production_job_entry_id)
+		VALUES($1,$2,$3,$4,$5,$6,$7::integer,'queued',now()+$7::integer*interval '1 second',$8,nullif($9,''))`,
+		id, networkID, userID, int64(in.ItemID), int64(in.Quantity), in.IdempotencyKey, in.TTLSeconds, in.BatchID, entryID)
+	if err != nil {
+		return protocol.Order{}, err
+	}
+	if err = auditOrder(ctx, tx, id); err != nil {
+		return protocol.Order{}, err
+	}
+	if err = s.event(ctx, tx, networkID, "orders"); err != nil {
+		return protocol.Order{}, err
+	}
+	return scanOrder(tx.QueryRow(ctx, "SELECT "+orderColumns+" FROM orders o WHERE o.id=$1", id))
 }
 
 func (s *Store) Order(ctx context.Context, userID, networkID, id string) (protocol.Order, error) {
@@ -108,6 +128,16 @@ func (s *Store) Order(ctx context.Context, userID, networkID, id string) (protoc
 		return protocol.Order{}, err
 	}
 	return scanOrder(s.pool.QueryRow(ctx, "SELECT "+orderColumns+" FROM orders o WHERE o.network_id=$1 AND o.id=$2", networkID, id))
+}
+
+func (s *Store) OrderByIdempotencyKey(ctx context.Context, userID, networkID, key string) (protocol.Order, error) {
+	if err := s.RequireAccess(ctx, userID, networkID, false); err != nil {
+		return protocol.Order{}, err
+	}
+	if len(key) < 8 || len(key) > 128 || !utf8.ValidString(key) || strings.ContainsRune(key, 0) {
+		return protocol.Order{}, ErrInvalid
+	}
+	return scanOrder(s.pool.QueryRow(ctx, "SELECT "+orderColumns+" FROM orders o WHERE o.member_id=$1 AND o.network_id=$2 AND o.idempotency_key=$3", userID, networkID, key))
 }
 
 func (s *Store) Orders(ctx context.Context, userID, networkID, state string, limit int) ([]protocol.Order, error) {
@@ -226,26 +256,42 @@ func (s *Store) OrderHistory(ctx context.Context, userID, networkID, id string) 
 }
 
 func (s *Store) markUncertain(ctx context.Context, tx pgx.Tx, networkID, reason string) error {
-	tag, err := tx.Exec(ctx, `WITH changed AS (UPDATE orders SET state='needs_review',reason=$2,updated_at=now()
-        WHERE network_id=$1 AND state IN ('assigned','computing','running') RETURNING id,state,reason,attempt_id)
-        INSERT INTO order_events(order_id,state,reason,attempt_id) SELECT id,state,reason,attempt_id FROM changed`, networkID, reason)
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() > 0 {
-		return s.event(ctx, tx, networkID, "orders")
-	}
-	return nil
+	rows, err := tx.Query(ctx, `WITH changed AS (UPDATE orders SET state='needs_review',reason=$2,updated_at=now()
+        WHERE network_id=$1 AND state IN ('assigned','computing','running') RETURNING id,state,reason,attempt_id,production_job_entry_id),
+        audited AS (INSERT INTO order_events(order_id,state,reason,attempt_id) SELECT id,state,reason,attempt_id FROM changed RETURNING order_id)
+		SELECT e.job_id FROM changed c JOIN audited a ON a.order_id=c.id LEFT JOIN production_job_entries e ON e.id=c.production_job_entry_id`, networkID, reason)
+	return s.trackProductionBulk(ctx, tx, networkID, rows, err)
 }
 
 func (s *Store) expireQueued(ctx context.Context, tx pgx.Tx, networkID string) error {
-	tag, err := tx.Exec(ctx, `WITH changed AS (UPDATE orders SET state='expired',reason='queue deadline elapsed',updated_at=now()
-        WHERE network_id=$1 AND state='queued' AND expires_at<=now() RETURNING id,state,reason,attempt_id)
-        INSERT INTO order_events(order_id,state,reason,attempt_id) SELECT id,state,reason,attempt_id FROM changed`, networkID)
+	rows, err := tx.Query(ctx, `WITH changed AS (UPDATE orders SET state='expired',reason='queue deadline elapsed',updated_at=now()
+        WHERE network_id=$1 AND state='queued' AND expires_at<=now() RETURNING id,state,reason,attempt_id,production_job_entry_id),
+        audited AS (INSERT INTO order_events(order_id,state,reason,attempt_id) SELECT id,state,reason,attempt_id FROM changed RETURNING order_id)
+		SELECT e.job_id FROM changed c JOIN audited a ON a.order_id=c.id LEFT JOIN production_job_entries e ON e.id=c.production_job_entry_id`, networkID)
+	return s.trackProductionBulk(ctx, tx, networkID, rows, err)
+}
+
+func (s *Store) trackProductionBulk(ctx context.Context, tx pgx.Tx, networkID string, rows pgx.Rows, err error) error {
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() > 0 {
+	changed := false
+	for rows.Next() {
+		var jobID *string
+		if err = rows.Scan(&jobID); err != nil {
+			rows.Close()
+			return err
+		}
+		changed = true
+		if jobID != nil {
+			markProductionJobChanged(tx, networkID, *jobID)
+		}
+	}
+	rows.Close()
+	if err = rows.Err(); err != nil {
+		return err
+	}
+	if changed {
 		return s.event(ctx, tx, networkID, "orders")
 	}
 	return nil
@@ -256,7 +302,12 @@ func (s *Store) expireQueued(ctx context.Context, tx pgx.Tx, networkID string) e
 func (s *Store) Maintain(ctx context.Context) error {
 	rows, err := s.pool.Query(ctx, `SELECT n.id FROM networks n WHERE
         (n.last_seen<now()-$1::double precision*interval '1 second' AND EXISTS(SELECT 1 FROM orders o WHERE o.network_id=n.id AND o.state IN ('assigned','computing','running')))
-        OR EXISTS(SELECT 1 FROM orders o WHERE o.network_id=n.id AND o.state='queued' AND o.expires_at<=now()) LIMIT 64`, s.options.OfflineAfter.Seconds())
+        OR EXISTS(SELECT 1 FROM orders o WHERE o.network_id=n.id AND o.state='queued' AND o.expires_at<=now())
+		OR EXISTS(SELECT 1 FROM production_jobs j JOIN members m ON m.id=j.member_id
+			JOIN production_job_authority_epochs a ON a.member_id=j.member_id AND a.network_id=j.network_id
+			LEFT JOIN network_grants g ON g.member_id=j.member_id AND g.network_id=j.network_id
+			WHERE j.network_id=n.id AND j.control='active' AND j.settled_at IS NULL
+			AND (j.owner_authority_epoch<>a.epoch OR m.revoked OR (NOT m.is_admin AND NOT coalesce(g.can_craft,false)))) LIMIT 64`, s.options.OfflineAfter.Seconds())
 	if err != nil {
 		return err
 	}
@@ -279,6 +330,9 @@ func (s *Store) Maintain(ctx context.Context) error {
 			if err := tx.QueryRow(ctx, "SELECT coalesce(last_seen<now()-$2::double precision*interval '1 second',true) FROM networks WHERE id=$1 FOR UPDATE", id, s.options.OfflineAfter.Seconds()).Scan(&offline); err != nil {
 				return err
 			}
+			if err := s.fenceProductionJobs(ctx, tx, id); err != nil {
+				return err
+			}
 			if offline {
 				if err := s.markUncertain(ctx, tx, id, "bridge unreachable; execution outcome unknown"); err != nil {
 					return err
@@ -292,6 +346,11 @@ func (s *Store) Maintain(ctx context.Context) error {
 	if _, err = s.pool.Exec(ctx, "DELETE FROM web_sessions WHERE expires_at<now()"); err != nil {
 		return err
 	}
-	_, err = s.pool.Exec(ctx, `DELETE FROM orders WHERE id IN (SELECT id FROM orders WHERE state IN ('done','failed','canceled','expired') AND updated_at<now()-interval '30 days' ORDER BY updated_at LIMIT 1000)`)
+	if err = s.archiveProductionJobs(ctx); err != nil {
+		return err
+	}
+	_, err = s.pool.Exec(ctx, `DELETE FROM orders WHERE id IN (SELECT o.id FROM orders o WHERE o.state IN ('done','failed','canceled','expired') AND o.updated_at<now()-interval '30 days'
+		AND NOT EXISTS(SELECT 1 FROM production_job_entries e JOIN production_jobs j ON j.id=e.job_id WHERE e.id=o.production_job_entry_id AND (j.settled_at IS NULL OR j.settled_at>=now()-interval '30 days'))
+		ORDER BY o.updated_at LIMIT 1000)`)
 	return err
 }
