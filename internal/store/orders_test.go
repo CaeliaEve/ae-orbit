@@ -43,6 +43,28 @@ func TestOrderIdempotencyAndCancel(t *testing.T) {
 	}
 }
 
+func TestOrderRejectsUnsupportedCPUSelectionBeforeEnqueue(t *testing.T) {
+	s, admin, network, _, _, _, id := orderFixture(t)
+	for _, wait := range []bool{false, true} {
+		_, err := s.CreateOrder(ctx, admin.ID, network.ID, protocol.OrderInput{
+			ItemID: id, Quantity: 64, IdempotencyKey: "strict-cpu-001",
+			CPUName: "Main CPU", WaitForCPU: wait,
+		})
+		if !errors.Is(err, store.ErrCapability) {
+			t.Fatalf("unsupported CPU selection was not rejected: wait=%v err=%v", wait, err)
+		}
+	}
+	orders, err := s.Orders(ctx, admin.ID, network.ID, "", 100)
+	if err != nil || len(orders) != 0 {
+		t.Fatal("unsupported selection enqueued an order", orders, err)
+	}
+	if _, err = s.CreateOrder(ctx, admin.ID, network.ID, protocol.OrderInput{
+		ItemID: id, Quantity: 64, IdempotencyKey: "automatic-cpu-001",
+	}); err != nil {
+		t.Fatal("automatic order was rejected", err)
+	}
+}
+
 func TestDeviceTokenRotationRetiresTracking(t *testing.T) {
 	s, admin, network, oldToken, device, welcome, id := orderFixture(t)
 	order := createOrder(t, s, admin, network, id, "rotate-order-001")

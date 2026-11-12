@@ -36,6 +36,7 @@ local function fixture()
       limits={batch_items=8,batch_bytes=2048,response_bytes=4096,cpus=2,poll_millis=1000}}
   end
   function client:send(path,body)
+    if path=="/bridge/v1/hello" then return self:post(path,json.decode(body)) end
     assert(#body<=self.request_bytes,"request budget exceeded")
     local value=json.decode(body)
     if path=="/bridge/v1/poll" then

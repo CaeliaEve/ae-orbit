@@ -29,6 +29,8 @@ var (
 	ErrCapability   = errors.New("capability_unavailable")
 )
 
+var ErrClientUpgradeRequired = errors.New("client_upgrade_required")
+
 type Options struct {
 	MaxConnections  int32
 	Limits          protocol.Limits
@@ -104,6 +106,9 @@ func (s *Store) transaction(ctx context.Context, fn func(pgx.Tx) error) (err err
 	defer tx.Rollback(context.Background())
 	tracked := &notifyingTx{Tx: tx}
 	if err = fn(tracked); err != nil {
+		return err
+	}
+	if err = s.flushProductionJobs(ctx, tracked); err != nil {
 		return err
 	}
 	commitStarted := time.Now()

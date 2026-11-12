@@ -1,5 +1,24 @@
 local json = require("aeorbit.json")
+local cancel = require("aeorbit.cancel")
+local quantity = require("aeorbit.quantity")
 local M = {}
+local function require_valid(valid,code)
+  if not valid then error({code=code,fatal=true,message=code},0) end
+end
+local function valid_command(command)
+  if type(command)~="table" or type(command.order_id)~="string" or command.order_id=="" or
+    type(command.attempt_id)~="string" or command.attempt_id=="" or type(command.item)~="table" then return false end
+  local item=command.item
+  if type(item.kind)~="string" or type(item.name)~="string" or item.name=="" or
+    type(item.exact)~="boolean" then return false end
+  if item.damage~=nil and (type(item.damage)~="number" or item.damage<0 or item.damage%1~=0) then return false end
+  if item.nbt~=nil and type(item.nbt)~="string" then return false end
+  if command.cpu_name~=nil and type(command.cpu_name)~="string" then return false end
+  if command.wait_for_cpu~=nil and type(command.wait_for_cpu)~="boolean" then return false end
+  local ok,err=pcall(quantity.validate,command.quantity)
+  if not ok then cancel.rethrow(err) end
+  return ok
+end
 local function terminal(state) return state=="done" or state=="failed" or state=="canceled" or state=="needs_review" end
 function M.new(adapter,journal,max_active)
   local data=journal.data
@@ -11,12 +30,21 @@ function M.new(adapter,journal,max_active)
     if not terminal(record.state) then record.state="needs_review";record.reason="tracking handle lost during process restart";recovered=true end
   end
   if recovered then journal:save(data) end
+  function tracker:validate_commands(commands)
+    require_valid(type(commands)=="table","invalid_command")
+    local count=0
+    for index,command in pairs(commands) do
+      require_valid(type(index)=="number" and index>=1 and index%1==0 and valid_command(command),"invalid_command")
+      count=count+1
+    end
+    for index=1,count do require_valid(commands[index]~=nil,"invalid_command") end
+  end
   function tracker:accept(command)
-    assert(type(command.order_id)=="string" and type(command.attempt_id)=="string","tracker: invalid command")
+    require_valid(valid_command(command),"invalid_command")
     local id=command.attempt_id
     if self.data.attempts[id] or self.completed[id] then return end
     local active=0;for _ in pairs(self.data.attempts) do active=active+1 end
-    assert(active<max_active,"tracker: active window exceeded")
+    require_valid(active<max_active,"command_window_exceeded")
     local record={order_id=command.order_id,attempt_id=id,state="intent",reason=""}
     self.data.attempts[id]=record
     journal:save(self.data)
@@ -25,6 +53,7 @@ function M.new(adapter,journal,max_active)
     elseif not handle then record.state=submitted and "needs_review" or "failed";record.reason=tostring(reason or "craft failed"):sub(1,160)
     else self.handles[id]=handle;record.state="computing" end
     journal:save(self.data)
+    if not ok then cancel.rethrow(handle) end
   end
   function tracker:pump()
     local changed=false
@@ -38,9 +67,11 @@ function M.new(adapter,journal,max_active)
         if handle.isDone() then return "done","" end
         return "running",""
       end)
+      local failure=not ok and state
       if not ok then state,reason="needs_review","tracking call failed; outcome unknown" end
       if state~=record.state then record.state=state;record.reason=tostring(reason or ""):sub(1,160);changed=true end
       if terminal(state) then self.handles[id]=nil end
+      if cancel.is_stop(failure) then journal:save(self.data);cancel.rethrow(failure) end
     end
     if changed then journal:save(self.data) end
   end

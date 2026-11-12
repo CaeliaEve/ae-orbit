@@ -20,8 +20,10 @@ SERVICE = "https://ae.example.test"
 DESTINATIONS = {
     **{f"lib/aeorbit/{name}.lua": f"/lib/aeorbit/{name}.lua" for name in (
         "quantity", "json", "base64", "cache", "bitops", "sha256", "gzip", "nbt",
-        "journal", "client", "adapter", "tracker", "runner", "cooperative", "read_diagnostics", "latency")},
+        "journal", "client", "adapter", "tracker", "runner", "cooperative", "read_diagnostics", "latency",
+        "cancel", "runtime", "service")},
     "bin/ae-orbit.lua": "/bin/ae-orbit.lua",
+    "rc.d/ae-orbit.lua": "/etc/rc.d/ae-orbit.lua",
     "config.example.lua": "/etc/ae-orbit.cfg.example",
     "install.lua": "/bin/ae-orbit-install.lua",
 }
@@ -217,8 +219,8 @@ class OpenOS:
             end
             test_component.proxy = function() return me end
             package.loaded.event = {
-                listen = function() assert(not worker, "worker subscribed to events") end,
-                ignore = function() assert(not worker, "worker unsubscribed shared events") end
+                listen = function(name) assert(name == "interrupted" or not worker, "worker subscribed to events"); return true end,
+                ignore = function(name) assert(name == "interrupted" or not worker, "worker unsubscribed shared events"); return true end
             }
             package.loaded["aeorbit.client"] = {new = function() return {} end}
             local runtime = {new = function(_, dependencies)
@@ -233,7 +235,7 @@ class OpenOS:
                             dependencies.journal:save({attempts={},completed={},boot_id="test-boot"})
                         end
                     end,
-                    tick = function() error("test finished", 0) end
+                    tick = function() error("interrupted", 0) end
                 }
             end}
             package.loaded["aeorbit.runner"] = {new = function(...)
@@ -271,7 +273,7 @@ class InstallerTests(unittest.TestCase):
         self.oc.run_bridge(worker=True, callable_subscription=True)
         self.assertEqual(list(self.oc.lua.globals().subscription_calls.values()), [])
         self.assertTrue(any("AE Orbit connected." in message for message in self.oc.messages))
-        self.assertTrue(any("test finished" in message for message in self.oc.messages))
+        self.assertTrue(any("interrupted" in message for message in self.oc.messages))
 
     def test_bridge_reports_failed_subscription_without_stopping(self):
         self.oc.run_bridge(callable_subscription=True, subscription_error=True)
@@ -298,10 +300,11 @@ class InstallerTests(unittest.TestCase):
     def test_upgrade_preserves_configuration_journal_and_unrelated_files(self):
         self.oc.seed_upgrade()
         self.oc.write("/home/notes.txt", "user file")
+        self.oc.write("/etc/rc.cfg", 'enabled={"other-service"}\n')
         before = self.oc.snapshot()
         self.oc.install("github")
         self.assertInstalled()
-        for path in ("/etc/ae-orbit.cfg", "/var/lib/ae-orbit/journal.0", "/home/notes.txt"):
+        for path in ("/etc/ae-orbit.cfg", "/var/lib/ae-orbit/journal.0", "/home/notes.txt", "/etc/rc.cfg"):
             self.assertEqual(self.oc.path(path).read_bytes(), before[path])
         self.assertEqual(set(self.oc.snapshot()), set(before), "staging or backup files left after success")
 
@@ -433,23 +436,23 @@ class InstallerTests(unittest.TestCase):
 
     def test_bridge_entrypoint_persists_journal_with_openos_close(self):
         self.oc.run_bridge()
-        self.assertIn("AE Orbit connected. Session: test-session", self.oc.messages)
+        self.assertIn("AE Orbit connected.", self.oc.messages)
         envelope = json.loads(self.oc.path("/var/lib/ae-orbit/journal.1").read_text(encoding="utf-8"))
         self.assertEqual(envelope["generation"], "1")
         self.assertEqual(json.loads(envelope["body"])["boot_id"], "test-boot")
-        self.assertTrue(any("test finished" in message for message in self.oc.messages))
+        self.assertTrue(any("interrupted" in message for message in self.oc.messages))
 
     def test_bridge_entrypoint_stops_if_journal_flush_fails(self):
         self.oc.lua.globals().fail_flush = "/var/lib/ae-orbit/journal.1"
         self.oc.run_bridge()
         self.assertFalse(any("AE Orbit connected." in message for message in self.oc.messages))
-        self.assertTrue(any("journal: write failed" in message for message in self.oc.messages))
+        self.assertTrue(any("journal_failed" in message for message in self.oc.messages))
 
     def test_bridge_entrypoint_stops_if_journal_close_fails(self):
         self.oc.lua.globals().fail_close = "/var/lib/ae-orbit/journal.1"
         self.oc.run_bridge()
         self.assertFalse(any("AE Orbit connected." in message for message in self.oc.messages))
-        self.assertTrue(any("journal: write failed" in message for message in self.oc.messages))
+        self.assertTrue(any("journal_failed" in message for message in self.oc.messages))
 
     def test_replacement_failure_rolls_back_every_changed_file(self):
         self.oc.seed_upgrade()

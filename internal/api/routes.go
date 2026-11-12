@@ -8,6 +8,7 @@ import (
 
 	"github.com/CaeliaEve/ae-orbit/internal/protocol"
 	"github.com/CaeliaEve/ae-orbit/internal/store"
+	"github.com/CaeliaEve/ae-orbit/web"
 )
 
 func integerQuery(r *http.Request, key string) (int, error) {
@@ -23,6 +24,7 @@ func integerQuery(r *http.Request, key string) (int, error) {
 }
 
 func (s *Server) routes() {
+	s.productionJobRoutes()
 	s.mux.HandleFunc("GET /api/v1/networks/{network}/devices", s.user(s.devices))
 	s.mux.HandleFunc("POST /api/v1/networks/{network}/devices", s.user(s.createDevice))
 	s.mux.HandleFunc("POST /api/v1/networks/{network}/devices/{device}/token", s.user(s.rotateDevice))
@@ -156,6 +158,14 @@ func (s *Server) routes() {
 		}
 		respond(w, 200, value)
 	}))
+	s.mux.HandleFunc("GET /api/v1/networks/{network}/orders/by-key/{key}", s.user(func(w http.ResponseWriter, r *http.Request, m protocol.Member) {
+		value, err := s.db.OrderByIdempotencyKey(r.Context(), m.ID, r.PathValue("network"), r.PathValue("key"))
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		respond(w, 200, value)
+	}))
 	s.mux.HandleFunc("GET /api/v1/networks/{network}/orders/{order}", s.user(func(w http.ResponseWriter, r *http.Request, m protocol.Member) {
 		value, err := s.db.Order(r.Context(), m.ID, r.PathValue("network"), r.PathValue("order"))
 		if err != nil {
@@ -164,7 +174,9 @@ func (s *Server) routes() {
 		}
 		respond(w, 200, value)
 	}))
-	s.mux.HandleFunc("GET /api/v1/networks/{network}/orders/{order}/events", s.user(func(w http.ResponseWriter, r *http.Request, m protocol.Member) {
+	// A subrouter avoids ServeMux ambiguity between by-key/{key} and {order}/events.
+	orderActions := http.NewServeMux()
+	orderActions.HandleFunc("GET /api/v1/networks/{network}/orders/{order}/events", s.user(func(w http.ResponseWriter, r *http.Request, m protocol.Member) {
 		value, err := s.db.OrderHistory(r.Context(), m.ID, r.PathValue("network"), r.PathValue("order"))
 		if err != nil {
 			fail(w, err)
@@ -172,6 +184,7 @@ func (s *Server) routes() {
 		}
 		respond(w, 200, value)
 	}))
+	s.mux.Handle("GET /api/v1/networks/{network}/orders/{order}/{action...}", orderActions)
 	s.mux.HandleFunc("POST /api/v1/networks/{network}/orders/{order}/cancel", s.user(func(w http.ResponseWriter, r *http.Request, m protocol.Member) {
 		value, err := s.db.CancelOrder(r.Context(), m.ID, r.PathValue("network"), r.PathValue("order"))
 		if err != nil {
@@ -302,4 +315,5 @@ func (s *Server) routes() {
 		}
 		respond(w, 200, result)
 	}))
+	s.mux.Handle("GET /", web.Handler())
 }

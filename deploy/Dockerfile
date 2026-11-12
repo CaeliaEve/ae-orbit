@@ -5,6 +5,7 @@ RUN go mod download
 COPY cmd ./cmd
 COPY internal ./internal
 COPY oc ./oc
+COPY web ./web
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/ae-orbit ./cmd/ae-orbit
 
 FROM debian:bookworm-slim

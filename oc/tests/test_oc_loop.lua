@@ -1,4 +1,5 @@
-local entry=assert(loadfile(TEST_ROOT.."/oc/bin/ae-orbit.lua"))
+local runtime=require("aeorbit.runtime")
+local cancel=require("aeorbit.cancel")
 
 local function run_case(fail_first_poll,first_control_seconds,work_seconds,jitter,poll_delay,steady_slow)
   first_control_seconds=first_control_seconds or 0.1
@@ -38,21 +39,27 @@ local function run_case(fail_first_poll,first_control_seconds,work_seconds,jitte
   }
   local saved={}
   for name,module in pairs(modules) do saved[name]=package.loaded[name];package.loaded[name]=module end
-  local old_loadfile,old_sleep,old_random,old_print,old_stderr=loadfile,os.sleep,math.random,print,io.stderr
+  local old_loadfile,old_random,old_print,old_stderr=loadfile,math.random,print,io.stderr
   loadfile=function(path)
     assert(path=="/etc/ae-orbit.cfg")
     return function() return {me_address="test-me",url="http://127.0.0.1:18080",token="test-token"} end
   end
-  os.sleep=function(delay) assert(delay>=0);clock=clock+delay end
+  local context=cancel.new({now=function() return clock end,
+    sleep=function(delay) assert(delay>=0);clock=clock+delay end})
   math.random=function() return jitter end
-  print=function() end
-  local stopped
-  io.stderr={write=function(_,message) stopped=message end}
-  local ok,err=pcall(entry)
-  loadfile,os.sleep,math.random,print,io.stderr=old_loadfile,old_sleep,old_random,old_print,old_stderr
+  local output,reports={},{}
+  print=function(message) output[#output+1]=message end
+  io.stderr={write=function(_,message) output[#output+1]=message end}
+  local ok,result=pcall(runtime.run,context,"/etc/ae-orbit.cfg",function(state,code,session)
+    reports[#reports+1]={state=state,code=code,session=session}
+  end,"background")
+  loadfile,math.random,print,io.stderr=old_loadfile,old_random,old_print,old_stderr
   for name in pairs(modules) do package.loaded[name]=saved[name] end
-  assert(ok,err)
-  assert(stopped=="AE Orbit stopped: test_stop\n","the application did not shut down at the fixture boundary")
+  assert(ok,result)
+  assert(result.kind=="blocked" and result.code=="bridge_error","the runtime did not redact the fixture fatal outcome")
+  assert(#output==0,"background runtime wrote console output")
+  assert(reports[1].state=="starting" and reports[2].state=="running")
+  assert(reports[2].code==nil and reports[2].session=="test-session")
   local interval=math.max(poll_delay,1)*(1+jitter*0.2)
   if work_seconds>0.1 then
     assert(#work_polls>0 and #work_polls<9,"inventory work ignored the control deadline")

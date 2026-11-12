@@ -45,7 +45,7 @@ type routeStatistics struct {
 }
 
 func (m *httpMetrics) observe(pattern string, w *measuredResponse) {
-	if pattern == "" {
+	if pattern == "" || (pattern == "GET /" && w.status == http.StatusNotFound) {
 		pattern = "unmatched"
 	}
 	m.mu.Lock()

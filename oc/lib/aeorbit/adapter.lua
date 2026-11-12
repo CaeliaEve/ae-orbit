@@ -3,6 +3,7 @@ local base64 = require("aeorbit.base64")
 local json = require("aeorbit.json")
 local nbt = require("aeorbit.nbt")
 local cache = require("aeorbit.cache")
+local cancel = require("aeorbit.cancel")
 local M = {}
 function M.has_method(proxy,name)
   local value=proxy[name]
@@ -22,9 +23,9 @@ function M.new(me,config)
     nbt_cache=cache.new(64,32768)}
   function adapter:capabilities()
     if worker then
-      return {inventory=true,craft=false,cpu_output=false,exact_quantities=true,quantity_refresh=true}
+      return {inventory=true,craft=false,cpu_output=false,cpu_selection=false,exact_quantities=true,quantity_refresh=true}
     end
-    return {inventory=true,craft=M.has_method(me,"getCraftable"),cpu_output=M.has_method(me,"getCpus"),
+    return {inventory=true,craft=M.has_method(me,"getCraftable"),cpu_output=M.has_method(me,"getCpus"),cpu_selection=false,
       exact_quantities=true,quantity_refresh=true,max_craft_quantity=quantity.maximum(),enumeration="volatile_iterator"}
   end
   function adapter:key(raw)
@@ -87,6 +88,7 @@ function M.new(me,config)
   end
   function adapter:_recipe(detail)
     local available,craftable=pcall(me.getCraftable,detail,"item")
+    if not available then cancel.rethrow(craftable) end
     if not available then return nil,"recipe lookup failed" end
     if craftable==nil then
       if not M.has_method(me,"getCraftables") then return nil,"recipe lookup unavailable" end
@@ -94,6 +96,7 @@ function M.new(me,config)
       -- recipe array. The native method may still walk the AE storage list.
       local filter={name=detail.name,damage=detail.damage,hasTag=detail.hasTag,tag=detail.tag}
       local ok,recipes=pcall(me.getCraftables,filter)
+      if not ok then cancel.rethrow(recipes) end
       if not ok or type(recipes)~="table" then return nil,"recipe lookup failed" end
       if #recipes==0 then
         -- This fallback compares compressed bytes inside OC. A tagged miss
@@ -106,25 +109,51 @@ function M.new(me,config)
       craftable=recipes[1]
     end
     local matches,stack=pcall(function() return craftable.getStack() end)
+    if not matches then cancel.rethrow(stack) end
     if not matches then return nil,"recipe identity could not be verified" end
     local identity_ok,key=pcall(self.key,self,stack)
+    if not identity_ok then cancel.rethrow(key) end
     if not identity_ok or key~=self:key(detail) then return nil,"recipe output identity differs" end
     return craftable
   end
   function adapter:recipe_status(raw)
-    local recipe,reason=self:_recipe(self:descriptor(raw))
+    local detail=self:descriptor(raw)
+    local recipe,reason=self:_recipe(detail)
+    if reason=="recipe NBT encoding could not be verified" and M.has_method(me,"getItemsInNetwork") then
+      -- The storage list retains recipe flags independently of stock lookup.
+      -- Filter natively by the complete identity; an empty result proves nothing.
+      local checked,flag=pcall(function()
+        local rows=me.getItemsInNetwork({name=detail.name,damage=detail.damage,hasTag=detail.hasTag,tag=detail.tag})
+        if type(rows)~="table" or type(rows[1])~="table" then return nil end
+        for index in pairs(rows) do if index~=1 then return nil end end
+        local row=rows[1]
+        if type(row.isCraftable)=="boolean" and self:key(row)==self:key(detail) then return row.isCraftable end
+      end)
+      if not checked then cancel.rethrow(flag) end
+      if checked and type(flag)=="boolean" then return flag end
+    end
     assert(reason==nil,reason)
     return recipe~=nil
   end
   function adapter:craft(command)
+    -- OC 1.12.68's name selector falls back to automatic when no CPU matches.
+    -- Never turn an unsupported strict target into an automatic request.
+    if (command.cpu_name~=nil and command.cpu_name~="") or
+      (command.wait_for_cpu~=nil and command.wait_for_cpu~=false) then
+      return nil,"strict CPU selection is unavailable",false
+    end
     local ok,detail=pcall(self.from_definition,self,command.item)
+    if not ok then cancel.rethrow(detail) end
     if not ok then return nil,"item identity unavailable",false end
     local parsed,amount=pcall(quantity.to_number,command.quantity)
+    if not parsed then cancel.rethrow(amount) end
     if not parsed or amount<1 then return nil,"quantity is not exactly representable",false end
     local available,craftable,reason=pcall(self._recipe,self,detail)
+    if not available then cancel.rethrow(craftable) end
     if not available then return nil,"recipe lookup failed",false end
     if not craftable then return nil,reason or "recipe is unavailable",false end
     local submitted,handle=pcall(function() return craftable.request(amount) end)
+    if not submitted then cancel.rethrow(handle) end
     if not submitted or not handle then return nil,"request returned no reliable tracking handle",true end
     return handle,nil,true
   end
@@ -140,8 +169,10 @@ function M.new(me,config)
         storage=quantity.from_number(raw.storage or 0),coprocessors=raw.coprocessors or 0}
       if cpu.busy and raw.cpu then
         local ok,output,reason=pcall(function() return raw.cpu.finalOutput() end)
+        if not ok then cancel.rethrow(output) end
         if ok and type(output)=="table" then
           local precise,count=pcall(self.count,self,output)
+          if not precise then cancel.rethrow(count) end
           if precise then cpu.output={name=output.name or "",label=output.label or "",quantity=count}
           else cpu.output_unavailable="quantity precision unavailable" end
         else cpu.output_unavailable=ok and tostring(reason or "output unavailable"):sub(1,256) or "monitor unavailable" end

@@ -20,6 +20,7 @@ local me={
 local backend={inventory_seq=0,poll_seq=0,ids={},names={},items={},next_id=0,received=0,acks={},lost=false,commands_sent=false}
 local client={request_bytes=2048,response_bytes=4096}
 function client:send(path,body)
+  if path=="/bridge/v1/hello" then return self:post(path,json.decode(body)) end
   local b=json.decode(body)
   if path=="/bridge/v1/inventory" then
     backend.received=backend.received+1

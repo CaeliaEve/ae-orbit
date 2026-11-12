@@ -120,6 +120,9 @@ func (h Hello) validate(version int) error {
 	if h.Capabilities.Craft && (h.Capabilities.MaxCraftQuantity < 1 || !h.Capabilities.ExactQuantities) {
 		return fmt.Errorf("crafting requires exact quantity capability")
 	}
+	if h.Capabilities.CPUSelection {
+		return fmt.Errorf("strict CPU selection is not supported by this bridge protocol")
+	}
 	if !textOK(h.Capabilities.Enumeration, 0, 64) {
 		return fmt.Errorf("invalid enumeration capability")
 	}
@@ -252,6 +255,14 @@ func (d ReadFailure) Validate() error {
 func (o OrderInput) Validate() error {
 	if o.ItemID < 1 || o.Quantity < 1 || !textOK(o.IdempotencyKey, 8, 128) || o.TTLSeconds < 0 || o.TTLSeconds > 86400 {
 		return fmt.Errorf("invalid order")
+	}
+	if !textOK(o.BatchID, 0, 128) || (o.BatchID != "" && strings.TrimSpace(o.BatchID) == "") ||
+		strings.ContainsFunc(o.BatchID, unicode.IsControl) {
+		return fmt.Errorf("invalid order batch")
+	}
+	if !textOK(o.CPUName, 0, 256) || (o.CPUName != "" && strings.TrimSpace(o.CPUName) == "") ||
+		strings.ContainsFunc(o.CPUName, unicode.IsControl) || (o.WaitForCPU && o.CPUName == "") {
+		return fmt.Errorf("invalid CPU selection")
 	}
 	return nil
 }

@@ -11,3 +11,4 @@ dist
 contracts
 scripts
 oc/tests
+node_modules

@@ -78,6 +78,9 @@ func (s *Store) RevokeMember(ctx context.Context, adminID, userID string) error 
 		if tag.RowsAffected() == 0 {
 			return ErrConflict
 		}
+		if _, err = tx.Exec(ctx, "UPDATE production_job_authority_epochs SET epoch=epoch+1 WHERE member_id=$1", userID); err != nil {
+			return err
+		}
 		_, err = tx.Exec(ctx, "DELETE FROM web_sessions WHERE member_id=$1", userID)
 		return err
 	})
@@ -105,6 +108,14 @@ func (s *Store) DeleteGrant(ctx context.Context, adminID, userID, networkID stri
 	if err := s.RequireAdmin(ctx, adminID); err != nil {
 		return err
 	}
-	_, err := s.pool.Exec(ctx, "DELETE FROM network_grants WHERE member_id=$1 AND network_id=$2", userID, networkID)
-	return err
+	return s.transaction(ctx, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, "SELECT id FROM members WHERE id=$1 FOR UPDATE", userID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE production_job_authority_epochs SET epoch=epoch+1 WHERE member_id=$1 AND network_id=$2 AND NOT EXISTS(SELECT 1 FROM members WHERE id=$1 AND is_admin) AND EXISTS(SELECT 1 FROM network_grants WHERE member_id=$1 AND network_id=$2 AND can_craft)`, userID, networkID); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, "DELETE FROM network_grants WHERE member_id=$1 AND network_id=$2", userID, networkID)
+		return err
+	})
 }

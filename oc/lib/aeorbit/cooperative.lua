@@ -3,12 +3,25 @@ local quantity=require("aeorbit.quantity")
 local cache=require("aeorbit.cache")
 local tracker=require("aeorbit.tracker")
 local read_diagnostics=require("aeorbit.read_diagnostics")
+local cancel=require("aeorbit.cancel")
+local native_pcall=pcall
+local function preserve_stop(ok,...)
+  if not ok then cancel.rethrow((...)) end
+  return ok,...
+end
+-- Recovery handlers must never reinterpret an intentional stop as read failure.
+local function pcall(...) return preserve_stop(native_pcall(...)) end
 local M={}
 local read_cycle={"order","refresh","refresh","background"}
 local read_sources={order="priority",refresh="refresh",background="recheck"}
 local function fatal(code) error({code=code,message=code,fatal=true},0) end
 local function integer(value,minimum,maximum)
   return type(value)=="number" and value%1==0 and value>=minimum and value<=maximum
+end
+local function list(value,maximum)
+  if type(value)~="table" or value==json.null or #value>maximum then return false end
+  for key in pairs(value) do if not integer(key,1,#value) then return false end end
+  return true
 end
 local function token(value)
   return type(value)=="string" and #value==32 and not value:find("[^0-9a-f]")
@@ -54,24 +67,32 @@ function M.new(config,deps)
     return slots,math.floor(bytes/2)
   end
   function self:start()
-    local nonce=self.client:post("/bridge/v2/boot-id",{})
-    if type(nonce.boot_id)~="string" or #nonce.boot_id<1 then fatal("invalid_boot_identity") end
-    local response=math.max(2048,math.min(config.max_response_bytes or 16384,math.floor(deps.free_memory()/16)))
-    self.client.response_bytes=response
-    local capabilities=self.adapter:capabilities()
-    if not primary then
-      capabilities={inventory=true,exact_quantities=true,quantity_refresh=true,craft=false,cpu_output=false}
+    if self.started then return end
+    if not self.boot_id then
+      local nonce=self.client:post("/bridge/v2/boot-id",{})
+      if type(nonce)~="table" or type(nonce.boot_id)~="string" or #nonce.boot_id<1 then fatal("invalid_boot_identity") end
+      self.boot_id=nonce.boot_id
     end
-    local w=self.client:post("/bridge/v2/hello",{protocol=2,boot_id=nonce.boot_id,
-      source=config.source or "oc",capabilities=capabilities,max_response_bytes=response})
-    if w.protocol~=2 or type(w.session_id)~="string" or #w.session_id==0 or
+    if not self.hello_body then
+      self.hello_response_bytes=math.max(2048,math.min(config.max_response_bytes or 16384,math.floor(deps.free_memory()/16)))
+      local capabilities=self.adapter:capabilities()
+      if not primary then
+        capabilities={inventory=true,exact_quantities=true,quantity_refresh=true,craft=false,cpu_output=false}
+      end
+      self.hello_body=json.encode({protocol=2,boot_id=self.boot_id,
+        source=config.source or "oc",capabilities=capabilities,max_response_bytes=self.hello_response_bytes},self.client.request_bytes)
+    end
+    local response=self.hello_response_bytes
+    self.client.response_bytes=response
+    local w=self.client:send("/bridge/v2/hello",self.hello_body)
+    if type(w)~="table" or w.protocol~=2 or type(w.session_id)~="string" or #w.session_id==0 or
       type(w.device_id)~="string" or #w.device_id==0 or w.role~=role or
       w.inventory_ack~="0" or w.poll_ack~="0" or type(w.limits)~="table" then fatal("invalid_welcome") end
     local l=w.limits
     if not integer(l.batch_items,1,512) or not integer(l.batch_bytes,512,1048576) or
       not integer(l.response_bytes,512,response) or not integer(l.read_slots,0,16) or
       not integer(l.read_bytes,0,16384) or not integer(l.cpus,1,64) or
-      not integer(l.poll_millis or 1000,1,30000) then fatal("invalid_device_limits") end
+      (l.poll_millis~=nil and not integer(l.poll_millis,1,30000)) then fatal("invalid_device_limits") end
     self.session=w.session_id;self.device_id=w.device_id;self.limits=l
     self.background_recipe_inconclusive=primary and l.background_recipe_inconclusive==true
     if integer(l.diagnostic_samples,1,4) then
@@ -83,7 +104,7 @@ function M.new(config,deps)
     self.poll_delay=(l.poll_millis or 1000)/1000
     if primary then
       if next(deps.journal.data.attempts or {}) then self:diagnose("previous_attempts_need_review") end
-      deps.journal:save({boot_id=nonce.boot_id,attempts={},completed=json.array({})})
+      deps.journal:save({boot_id=self.boot_id,attempts={},completed=json.array({})})
       self.tracker=tracker.new(self.adapter,deps.journal,16)
     end
     self.started=true
@@ -137,6 +158,7 @@ function M.new(config,deps)
       not integer(read.ttl_millis,1,30000) or (not primary and read.kind~="quantity") then fatal("invalid_read_assignment") end
     local valid=pcall(quantity.validate,read.id)
     if not valid or read.id=="0" then fatal("invalid_read_identity") end
+    if type(read.item)~="table" or (read.item.label~=nil and type(read.item.label)~="string") then fatal("invalid_read_identity") end
     local ok,raw=pcall(self.adapter.from_definition,self.adapter,read.item)
     if not ok then fatal("invalid_read_identity") end
     return raw
@@ -159,11 +181,14 @@ function M.new(config,deps)
     for _,entry in pairs(self.tasks.entries) do if entry.value.purpose~="background" and not entry.value.in_flight then fast=fast+1 end end
     local budget=math.min(self.task_bytes,math.floor(deps.free_memory()/16),self.limits.read_bytes)
     local candidate=self.candidates.entries[key]
-    local candidate_count=self.candidates.count-(candidate and 1 or 0)
-    local candidate_bytes=self.candidates.bytes-(candidate and candidate.size or 0)
-    if deadline<=deps.now() or self.tasks.count+candidate_count>=16 or self.tasks.bytes+candidate_bytes+cost>budget or
+    if deadline<=deps.now() or self.tasks.count>=16 or self.tasks.bytes+cost>budget or
       (read.purpose~="background" and fast>=8) then self:diagnose("read_queue_full");return end
     if candidate then self.candidates:remove(key) end
+    -- Events arriving during a poll must yield advertised room to assigned work.
+    while self.tasks.count+self.candidates.count>=16 or self.tasks.bytes+self.candidates.bytes+cost>budget do
+      self.candidates:remove(self.candidates.last.key)
+      self:diagnose("discovery_queue_full")
+    end
     -- Replace only unread ownership. Frozen transport retains its own immutable token.
     local entry=self.tasks.last
     while entry do
@@ -235,17 +260,19 @@ function M.new(config,deps)
     local pending=self.pending_poll
     local started=deps.now()
     local ack=self.client:send("/bridge/v2/poll",pending.body)
+    if type(ack)~="table" then fatal("invalid_poll_confirmation") end
     local no_grant=ack.scan_budget==0 and (ack.grant_id==nil or ack.grant_id=="") and
       (ack.grant_ttl_millis==nil or ack.grant_ttl_millis==0)
     local valid_grant=type(ack.grant_id)=="string" and #ack.grant_id>=1 and #ack.grant_id<=128 and
       integer(ack.grant_ttl_millis,1,30000)
-    if ack.ack~=pending.sequence or type(ack.commands)~="table" or #ack.commands>16 or
-      type(ack.reads)~="table" or #ack.reads>16 or ack.verify~=nil or ack.refresh~=nil or
+    if ack.ack~=pending.sequence or not list(ack.commands,16) or
+      not list(ack.reads,16) or ack.verify~=nil or ack.refresh~=nil or
       not integer(ack.scan_budget,0,512) or not integer(ack.poll_millis,1,30000) or
       (not no_grant and not valid_grant) or (not primary and #ack.commands>0) then fatal("invalid_poll_confirmation") end
     local raw={}
     for index,read in ipairs(ack.reads) do raw[index]=self:_validate_read(read) end
     if primary then
+      self.tracker:validate_commands(ack.commands)
       self.tracker:ack(pending.reports)
       for _,command in ipairs(ack.commands) do self.tracker:accept(command) end
       for _,hint in ipairs(pending.hints) do
@@ -386,9 +413,10 @@ function M.new(config,deps)
     local pending=self.pending_inventory
     if not pending then return end
     local ack=self.client:send("/bridge/v2/inventory",pending.body)
-    if ack.ack~=pending.sequence or type(ack.bindings)~="table" then fatal("invalid_inventory_confirmation") end
+    if type(ack)~="table" or ack.ack~=pending.sequence or not list(ack.bindings,#pending.entries) then fatal("invalid_inventory_confirmation") end
     local seen={}
     for _,binding in ipairs(ack.bindings) do
+      if type(binding)~="table" then fatal("invalid_short_id_binding") end
       local index=binding.index
       if not integer(index,1,#pending.entries) or seen[index] or not pending.entries[index].item or
         not pcall(quantity.validate,binding.id) or binding.id=="0" then fatal("invalid_short_id_binding") end

@@ -4,12 +4,34 @@ local cache = require("aeorbit.cache")
 local tracker = require("aeorbit.tracker")
 local read_diagnostics = require("aeorbit.read_diagnostics")
 local latency = require("aeorbit.latency")
+local cancel = require("aeorbit.cancel")
+local native_pcall=pcall
+local function preserve_stop(ok,...)
+  if not ok then cancel.rethrow((...)) end
+  return ok,...
+end
+-- Recovery handlers must never reinterpret an intentional stop as read failure.
+local function pcall(...) return preserve_stop(native_pcall(...)) end
 local M = {}
 local function collect_step(amount)
   -- OC manages collection in its host; ordinary Lua also allows explicit steps.
   if collectgarbage then collectgarbage("step",amount) end
 end
 local function fatal(code) error({code=code,message=code,fatal=true},0) end
+local function integer(value,minimum,maximum)
+  return type(value)=="number" and value%1==0 and value>=minimum and value<=maximum
+end
+local function list(value,maximum)
+  if type(value)~="table" or value==json.null or #value>maximum then return false end
+  for key in pairs(value) do if not integer(key,1,#value) then return false end end
+  return true
+end
+local function definition(adapter,item,code)
+  if type(item)~="table" or (item.label~=nil and type(item.label)~="string") then fatal(code) end
+  local ok,raw=pcall(adapter.from_definition,adapter,item)
+  if not ok then fatal(code) end
+  return raw
+end
 local function transient(error_value)
   return type(error_value)=="table" and error_value.fatal==false
 end
@@ -50,19 +72,26 @@ function M.new(config,deps)
     self.read_diagnostics:record(code,source,raw,raw.diagnostic_item_id or (known and known.value.id),error_value)
   end
   function self:start()
-    self.started_at=deps.now()
-    local nonce=self.client:post("/bridge/v1/boot-id",{})
-    if type(nonce.boot_id)~="string" or #nonce.boot_id<1 then fatal("invalid_boot_identity") end
-    local free=deps.free_memory()
-    local response=math.max(2048,math.min(config.max_response_bytes or 16384,math.floor(free/16)))
+    if self.started then return end
+    self.started_at=self.started_at or deps.now()
+    if not self.boot_id then
+      local nonce=self.client:post("/bridge/v1/boot-id",{})
+      if type(nonce)~="table" or type(nonce.boot_id)~="string" or #nonce.boot_id<1 then fatal("invalid_boot_identity") end
+      self.boot_id=nonce.boot_id
+    end
+    if not self.hello_body then
+      local free=deps.free_memory()
+      self.hello_response_bytes=math.max(2048,math.min(config.max_response_bytes or 16384,math.floor(free/16)))
+      self.hello_body=json.encode({protocol=1,boot_id=self.boot_id,source=config.source or "oc",
+        capabilities=self.adapter:capabilities(),max_response_bytes=self.hello_response_bytes},self.client.request_bytes)
+    end
+    local response=self.hello_response_bytes
     self.client.response_bytes=response
-    local w=self.client:post("/bridge/v1/hello",{protocol=1,boot_id=nonce.boot_id,source=config.source or "oc",
-      capabilities=self.adapter:capabilities(),max_response_bytes=response})
-    if w.protocol~=1 or type(w.session_id)~="string" or type(w.limits)~="table" or w.inventory_ack~="0" or w.poll_ack~="0" then fatal("invalid_welcome") end
-    if type(w.limits.batch_items)~="number" or w.limits.batch_items<1 or w.limits.batch_items>512 or
-      type(w.limits.batch_bytes)~="number" or w.limits.batch_bytes<512 or
-      type(w.limits.cpus)~="number" or w.limits.cpus<1 or w.limits.cpus>64 or w.limits.cpus%1~=0 or
-      type(w.limits.response_bytes)~="number" or w.limits.response_bytes>response then fatal("invalid_device_limits") end
+    local w=self.client:send("/bridge/v1/hello",self.hello_body)
+    if type(w)~="table" or w.protocol~=1 or type(w.session_id)~="string" or #w.session_id==0 or type(w.limits)~="table" or w.inventory_ack~="0" or w.poll_ack~="0" then fatal("invalid_welcome") end
+    if not integer(w.limits.batch_items,1,512) or not integer(w.limits.batch_bytes,512,1048576) or
+      not integer(w.limits.cpus,1,64) or not integer(w.limits.response_bytes,512,response) or
+      (w.limits.poll_millis~=nil and not integer(w.limits.poll_millis,1,30000)) then fatal("invalid_device_limits") end
     self.session=w.session_id;self.limits=w.limits
     if w.limits.sync_telemetry==true then self.latency=latency.new(deps.now,self.started_at) end
     self.read_diagnostics=read_diagnostics.new(deps.now)
@@ -74,9 +103,10 @@ function M.new(config,deps)
     if recovered>0 then self:diagnose("previous_attempts_need_review") end
     -- A new server-issued boot identity retires the old backend session. Never
     -- reconstruct native tracking userdata or execute an old disk record.
-    deps.journal:save({boot_id=nonce.boot_id,attempts={},completed=json.array({})})
+    deps.journal:save({boot_id=self.boot_id,attempts={},completed=json.array({})})
     self.tracker=tracker.new(self.adapter,deps.journal,16)
     self.poll_delay=(w.limits.poll_millis or 1000)/1000
+    self.started=true
   end
   function self:on_item_changed(raw,verify_craftable)
     local ok,descriptor=pcall(self.adapter.descriptor,self.adapter,raw)
@@ -223,41 +253,45 @@ function M.new(config,deps)
     local pending=self.pending_poll
     local started=deps.now()
     local ack=self:_send("/bridge/v1/poll",pending.body,"control_http")
-    if ack.ack~=pending.sequence or type(ack.commands)~="table" or #ack.commands>16 or type(ack.verify)~="table" or #ack.verify>16 or
-      type(ack.scan_budget)~="number" or ack.scan_budget<0 or ack.scan_budget>512 or ack.scan_budget%1~=0 or
-      type(ack.poll_millis)~="number" or ack.poll_millis<1 or ack.poll_millis>30000 then fatal("invalid_poll_confirmation") end
-    self.tracker:ack(pending.reports)
-    for _,command in ipairs(ack.commands) do self.tracker:accept(command) end
-    for _,verification in ipairs(ack.verify) do
+    if type(ack)~="table" or ack.ack~=pending.sequence or not list(ack.commands,16) or not list(ack.verify,16) or
+      not integer(ack.scan_budget,0,512) or not integer(ack.poll_millis,1,30000) then fatal("invalid_poll_confirmation") end
+    self.tracker:validate_commands(ack.commands)
+    local verified,refreshed={},{}
+    for index,verification in ipairs(ack.verify) do
+      if type(verification)~="table" or not pcall(quantity.validate,verification.id) or verification.id=="0" or
+        (verification.craftable~=nil and type(verification.craftable)~="boolean") then fatal("invalid_verification_identity") end
       local token=verification.token
       if token~=nil and (type(token)~="string" or #token~=32 or token:find("[^0-9a-f]")) then fatal("invalid_verification_token") end
-      local ok,raw=pcall(self.adapter.from_definition,self.adapter,verification.item)
-      if ok then
-        quantity.validate(verification.id)
-        raw.diagnostic_item_id=verification.id
-        local key=self.adapter:key(raw)
-        self.ids:put(key,{id=verification.id,label=raw.label,tag=raw.tag},#key+#verification.id+#(raw.tag or "")+#(raw.label or "")+160)
-        if token then self:_queue_verification(raw,token)
-        else raw.verify_craftable=verification.craftable;self:_queue_recheck(raw) end
-      else self:diagnose("verification_identity_unavailable") end
+      verified[index]=definition(self.adapter,verification.item,"invalid_verification_identity")
     end
     if self.limits.quantity_refresh==true and ack.refresh~=nil then
-      if type(ack.refresh)~="table" or #ack.refresh>4 then fatal("invalid_refresh_confirmation") end
-      for _,refresh in ipairs(ack.refresh) do
+      if not list(ack.refresh,4) then fatal("invalid_refresh_confirmation") end
+      for index,refresh in ipairs(ack.refresh) do
+        if type(refresh)~="table" then fatal("invalid_refresh_identity") end
         local token=refresh.token
         if type(token)~="string" or #token~=32 or token:find("[^0-9a-f]") then fatal("invalid_refresh_token") end
         local ttl=refresh.ttl_millis
-        if type(ttl)~="number" or ttl<1 or ttl>60000 or ttl%1~=0 then fatal("invalid_refresh_ttl") end
-        quantity.validate(refresh.id)
-        if refresh.id=="0" then fatal("invalid_refresh_identity") end
-        local ok,raw=pcall(self.adapter.from_definition,self.adapter,refresh.item)
-        if ok then
-          raw.diagnostic_item_id=refresh.id
-          local key=self.adapter:key(raw)
-          self.ids:put(key,{id=refresh.id,label=raw.label,tag=raw.tag},#key+#refresh.id+#(raw.tag or "")+#(raw.label or "")+160)
-          self:_queue_refresh(raw,token,ttl)
-        else self:diagnose("refresh_identity_unavailable") end
+        if not integer(ttl,1,60000) then fatal("invalid_refresh_ttl") end
+        if not pcall(quantity.validate,refresh.id) or refresh.id=="0" then fatal("invalid_refresh_identity") end
+        refreshed[index]=definition(self.adapter,refresh.item,"invalid_refresh_identity")
       end
+    end
+    self.tracker:ack(pending.reports)
+    for _,command in ipairs(ack.commands) do self.tracker:accept(command) end
+    for index,raw in ipairs(verified) do
+      local verification=ack.verify[index]
+      raw.diagnostic_item_id=verification.id
+      local key=self.adapter:key(raw)
+      self.ids:put(key,{id=verification.id,label=raw.label,tag=raw.tag},#key+#verification.id+#(raw.tag or "")+#(raw.label or "")+160)
+      if verification.token then self:_queue_verification(raw,verification.token)
+      else raw.verify_craftable=verification.craftable;self:_queue_recheck(raw) end
+    end
+    for index,raw in ipairs(refreshed) do
+      local refresh=ack.refresh[index]
+      raw.diagnostic_item_id=refresh.id
+      local key=self.adapter:key(raw)
+      self.ids:put(key,{id=refresh.id,label=raw.label,tag=raw.tag},#key+#refresh.id+#(raw.tag or "")+#(raw.label or "")+160)
+      self:_queue_refresh(raw,refresh.token,refresh.ttl_millis)
     end
     self.poll_seq=ack.ack;self.pending_poll=nil;self.credits=ack.scan_budget;self.poll_delay=ack.poll_millis/1000
     self.refresh_reads=0
@@ -384,18 +418,23 @@ function M.new(config,deps)
     local pending=self.pending_inventory
     if not pending then return end
     local ack=self:_send("/bridge/v1/inventory",pending.body,"inventory_http")
-    if ack.ack~=pending.sequence or type(ack.bindings)~="table" then fatal("invalid_inventory_confirmation") end
+    if type(ack)~="table" or ack.ack~=pending.sequence or not list(ack.bindings,#pending.entries) then fatal("invalid_inventory_confirmation") end
     local seen={}
     for _,binding in ipairs(ack.bindings) do
+      if type(binding)~="table" then fatal("invalid_short_id_binding") end
       local index=binding.index
       if type(index)~="number" or index%1~=0 or index<1 or index>#pending.entries or seen[index] or not pending.entries[index].item then fatal("invalid_short_id_binding") end
-      quantity.validate(binding.id);if binding.id=="0" then fatal("invalid_short_id_binding") end
-      local entry=pending.entries[index]
-      self.ids:put(entry.key,{id=binding.id,label=entry.label,tag=entry.tag},#entry.key+#binding.id+#entry.label+#(entry.tag or "")+160)
+      if not pcall(quantity.validate,binding.id) or binding.id=="0" then fatal("invalid_short_id_binding") end
       seen[index]=true
     end
     for index,entry in ipairs(pending.entries) do
       if entry.item and not seen[index] then fatal("missing_short_id_binding") end
+    end
+    for _,binding in ipairs(ack.bindings) do
+      local entry=pending.entries[binding.index]
+      self.ids:put(entry.key,{id=binding.id,label=entry.label,tag=entry.tag},#entry.key+#binding.id+#entry.label+#(entry.tag or "")+160)
+    end
+    for _,entry in ipairs(pending.entries) do
       local queued=self.verifications.entries[entry.key]
       if entry.verification and queued and queued.value.verification==entry.verification then self.verifications:remove(entry.key) end
       local refreshed=self.refreshes.entries[entry.key]

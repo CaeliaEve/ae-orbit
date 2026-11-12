@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 1000" role="img" aria-label="AE Orbit">
+  <defs>
+    <linearGradient id="gold" x1="180" y1="170" x2="820" y2="830" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#f7df9b"/>
+      <stop offset=".52" stop-color="#d7a84d"/>
+      <stop offset="1" stop-color="#f0ca70"/>
+    </linearGradient>
+    <linearGradient id="silver" x1="250" y1="250" x2="750" y2="750" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#c4d2df"/>
+      <stop offset="1" stop-color="#8196ac"/>
+    </linearGradient>
+    <path id="spark" d="M500 24 512 88 576 100 512 112 500 176 488 112 424 100 488 88Z"/>
+    <path id="moon" d="M184 458a52 52 0 1 0 26 91 44 44 0 1 1-26-91Z"/>
+  </defs>
+
+  <g fill="none" stroke="url(#gold)" stroke-width="9" stroke-linecap="round">
+    <circle cx="500" cy="500" r="390" stroke-dasharray="264 28 192 28 264 28 192 28"/>
+    <path d="M194 337a390 390 0 0 1 83-91"/>
+    <path d="M723 246a390 390 0 0 1 83 91"/>
+    <path d="M806 663a390 390 0 0 1-83 91"/>
+    <path d="M277 754a390 390 0 0 1-83-91"/>
+  </g>
+
+  <g fill="none" stroke="url(#silver)" stroke-width="9" stroke-linecap="round">
+    <circle cx="500" cy="500" r="310" stroke-dasharray="205 42 180 42 205 42 180 42"/>
+    <path d="M322 275a310 310 0 0 1 126-67"/>
+    <path d="M552 208a310 310 0 0 1 126 67"/>
+    <path d="M678 725a310 310 0 0 1-126 67"/>
+    <path d="M448 792a310 310 0 0 1-126-67"/>
+  </g>
+
+  <g fill="none" stroke="url(#gold)" stroke-width="18" stroke-linecap="round">
+    <path d="M288 690a284 284 0 0 1 0-380"/>
+    <path d="M712 310a284 284 0 0 1 0 380"/>
+  </g>
+
+  <g fill="none" stroke="#f6e4b3" stroke-width="20" stroke-linejoin="round">
+    <path d="M500 214 286 758"/>
+    <path d="M500 214 714 758"/>
+    <path d="M347 758h306"/>
+  </g>
+
+  <g fill="none" stroke="url(#gold)" stroke-width="15" stroke-linecap="round">
+    <path d="M182 672c180 134 510 114 650-205"/>
+    <path d="M180 672c110 48 223 62 324 43"/>
+    <path d="M504 715c124-22 240-93 328-248"/>
+    <path d="M500 391v220" stroke-width="4" stroke-dasharray="2 18"/>
+  </g>
+
+  <g fill="url(#gold)">
+    <use href="#spark" transform="translate(0 0)"/>
+    <use href="#spark" transform="rotate(90 500 500)"/>
+    <use href="#spark" transform="rotate(180 500 500)"/>
+    <use href="#spark" transform="rotate(270 500 500)"/>
+    <circle cx="500" cy="190" r="25"/>
+    <circle cx="810" cy="500" r="25"/>
+    <circle cx="500" cy="810" r="25"/>
+    <circle cx="190" cy="500" r="25"/>
+    <use href="#moon"/>
+    <use href="#moon" transform="rotate(180 500 500)"/>
+  </g>
+
+  <g fill="none" stroke="url(#gold)" stroke-width="8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="m292 286 22 42h-44l22-42Zm0 18-22 42h44l-22-42Z"/>
+    <path d="m708 286-22 42h44l-22-42Zm0 18-22 42h44l-22-42Z"/>
+    <circle cx="288" cy="712" r="22"/>
+    <path d="M288 690v44M266 712h44"/>
+    <path d="M708 688v48M690 706c12 18 36 18 48 0M708 736v8"/>
+  </g>
+
+  <path d="M500 408 512 482 586 494 512 506 500 580 488 506 414 494 488 482Z" fill="url(#gold)"/>
+</svg>
