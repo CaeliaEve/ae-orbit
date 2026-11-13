@@ -20,7 +20,7 @@ func Handler() http.Handler {
 		if name == "" || name == "." {
 			name = "index.html"
 		}
-		if name != "index.html" && name != "app.js" && name != "style.css" &&
+		if name != "index.html" && name != "app.js" && name != "style.css" && name != "compact.css" &&
 			name != "assets/nei/manifest.json" &&
 			name != "assets/brand/ae-orbit-mark.png" &&
 			name != "assets/brand/ae-orbit-mark-dark.png" &&

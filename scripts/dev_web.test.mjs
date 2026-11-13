@@ -17,6 +17,7 @@ async function fixture(t) {
     writeFile(path.join(root, "index.html"), "<!doctype html><title>AE Orbit</title>"),
     writeFile(path.join(root, "app.js"), "export const app = true;"),
     writeFile(path.join(root, "style.css"), "body{color:black}"),
+    writeFile(path.join(root, "compact.css"), "html[data-inventory-layout=\\\"dense\\\"]{}"),
     writeFile(path.join(root, "assets/nei/manifest.json"), '{"version":1,"icons":{}}'),
     writeFile(path.join(root, `assets/nei/${hash}.png`), Buffer.from([137, 80, 78, 71])),
     writeFile(path.join(root, "assets/brand/ae-orbit-mark.png"), Buffer.from([137, 80, 78, 71])),
@@ -71,6 +72,10 @@ test("imports without listening and serves only the static allowlist", async (t)
   assert.match(page.headers["cache-control"], /no-store/);
   assert.match((await request(`${origin}/app.js`)).headers["content-type"], /javascript/);
   assert.match((await request(`${origin}/style.css`)).headers["content-type"], /css/);
+  const compact = await request(`${origin}/compact.css`);
+  assert.equal(compact.status, 200);
+  assert.match(compact.headers["content-type"], /css/);
+  assert.match(compact.text, /data-inventory-layout/);
   assert.equal((await request(`${origin}/assets/nei/manifest.json`)).status, 200);
   const image = await request(`${origin}/assets/nei/${hash}.png`);
   assert.equal(image.status, 200);
@@ -84,7 +89,7 @@ test("imports without listening and serves only the static allowlist", async (t)
   assert.match(brandVector.headers["content-type"], /image\/svg\+xml/);
   assert.match(brandVector.headers["cache-control"], /immutable/);
   for (const name of ["/assets/nei/audit.json", "/credentials.txt", "/app.js.map",
-    "/assets/nei/not-a-hash.png", "/assets/brand/secret.png", "/scripts/dev_web.mjs", "/assets/nei/"]) {
+    "/assets/nei/not-a-hash.png", "/assets/brand/secret.png", "/scripts/dev_web.mjs", "/compact.css.map", "/assets/nei/"]) {
     assert.equal((await request(origin + name)).status, 404, name);
   }
   const head = await request(`${origin}/app.js`, { method: "HEAD" });

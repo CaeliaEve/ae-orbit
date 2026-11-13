@@ -1,0 +1,82 @@
+/* Final compact control-room overrides, loaded after the reference stylesheet. */
+@media (min-width: 901px) {
+  .app-frame { margin: 10px auto; border-radius: 12px; box-shadow: 0 12px 32px #0007; }
+  .shell { grid-template-columns: 226px minmax(0, 1fr); min-height: calc(100dvh - 20px); }
+  .sidebar { padding: 24px 14px 18px; }
+  .brand { margin: 0 8px 30px; font-size: 18px; }
+  .brand-mark { width: 32px; height: 32px; }
+  .sidebar > button, .sidebar-secondary button { min-height: 42px; gap: 11px; padding: 0 12px; border-radius: 7px; font-size: 14px; }
+  .sidebar > button svg, .sidebar-secondary button svg { width: 19px; height: 19px; }
+  .sidebar-secondary { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--rule); }
+  .sidebar-secondary button { display: flex; align-items: center; justify-content: flex-start; width: 100%; text-align: left; }
+  .sidebar > button[data-view="settings"] { margin-top: auto; }
+  .topbar { height: 68px; padding: 0 28px; gap: 12px; }
+  .network-picker { min-width: 236px; min-height: 42px; padding: 0 14px; border-radius: 7px; }
+  .network-picker select { font-size: 14px; }
+  .topbar > .icon-button { width: 40px; height: 40px; border-radius: 7px; }
+  .topbar > .icon-button svg { width: 19px; height: 19px; }
+  .view { padding: 24px 32px 40px; }
+  .page-heading { min-height: 112px; padding: 0 0 22px; }
+  .page-heading h1 { font-size: 34px; line-height: 1.08; }
+  .page-heading .muted { margin-top: 8px; font-size: 14px; }
+  .dashboard-grid { gap: 12px; padding: 0 0 16px; }
+  .metric-card { min-height: 132px; padding: 18px 20px; border-radius: 8px; }
+  .metric-label { font-size: 14px; }
+  .metric-card strong { margin-top: 12px; font-size: 30px; }
+  .metric-meta { font-size: 12px; }
+  .dashboard-columns { gap: 12px; padding: 0; }
+  .panel-heading { padding: 16px 18px 12px; }
+  .panel-heading h2 { font-size: 17px; }
+  .panel-heading .muted { font-size: 12px; }
+  .health-list, .activity-list { padding: 4px 18px 12px; }
+  .health-row, .activity-row { min-height: 52px; }
+  .inventory-toolbar { gap: 12px; margin-bottom: 14px; }
+  .search { min-height: 42px; border-radius: 7px; }
+  .search input { font-size: 14px; }
+  .segments { padding: 3px; border-radius: 7px; }
+  .segments button { min-height: 34px; padding: 0 13px; border-radius: 5px; font-size: 12px; }
+  .workbench { grid-template-columns: minmax(0, 1fr) minmax(286px, 26%); gap: 12px; padding: 0; }
+  .inventory-table { padding: 12px; }
+  .inventory-table tbody { grid-template-columns: repeat(7, minmax(82px, 1fr)); gap: 8px; }
+  .inventory-table tr { min-height: 124px; padding: 10px; border-radius: 7px; }
+  .item-image, .missing-image { width: 50px; height: 50px; min-width: 50px; }
+  .aux-list { padding: 0 18px 20px; }
+  .group-heading, .task-row, .job-row, .cpu-row, .device-row, .history-entry { min-height: 60px; }
+  .github-layout, .settings-layout { gap: 12px; padding: 0; }
+  .github-layout { grid-template-columns: minmax(0, 1fr); }
+  .github-card { padding: 22px; }
+  .github-title h2 { font-size: 22px; }
+  .github-card > p { font-size: 14px; }
+  .github-links { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .panel-link { min-height: 54px; padding: 0 14px; font-size: 13px; }
+  .settings-layout { display: grid; grid-template-columns: minmax(220px, 280px) minmax(0, 1fr); align-items: start; }
+  .settings-row { min-height: 62px; padding: 10px 16px; }
+  .settings-row strong { font-size: 13px; }
+  .settings-row small { font-size: 11px; }
+}
+
+html[data-inventory-layout="dense"] .inventory-table tbody { grid-template-columns: repeat(8, minmax(78px, 1fr)); }
+html[data-inventory-layout="wide"] .inventory-table tbody { grid-template-columns: repeat(6, minmax(92px, 1fr)); }
+
+@media (max-width: 1100px) and (min-width: 901px) {
+  .shell { grid-template-columns: 196px minmax(0, 1fr); }
+  .view { padding-left: 24px; padding-right: 24px; }
+  .inventory-table tbody,
+  html[data-inventory-layout="dense"] .inventory-table tbody,
+  html[data-inventory-layout="wide"] .inventory-table tbody { grid-template-columns: repeat(5, minmax(80px, 1fr)); }
+}
+
+@media (max-width: 900px) {
+  .settings-layout { display: grid; grid-template-columns: 1fr; gap: 12px; }
+  .settings-row { min-height: 58px; padding: 10px 16px; }
+  .settings-row strong { font-size: 13px; }
+  .settings-row small { font-size: 11px; }
+  .settings-detail { min-height: 0; }
+  .github-links { grid-template-columns: 1fr; }
+}
+
+.github-card { max-width: none; }
+.setting-actions { display: flex; flex-wrap: wrap; gap: 8px; padding: 16px 0 4px; }
+.setting-actions button { min-height: 36px; }
+.remember-session { display: flex; align-items: center; gap: 8px; color: #5f6770; font-size: 12px; }
+.login-form .remember-session input { width: 15px; min-height: 15px; margin: 0; accent-color: #252a32; }

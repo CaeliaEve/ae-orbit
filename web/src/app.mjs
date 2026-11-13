@@ -13,6 +13,8 @@ import {
   normalizeQuantity, formatQuantity, storageKey, loadDraft, saveDraft, addDraft,
   updateDraft, removeDraft, completeSubmission, networkQualityLabel,
 } from "./model.mjs";
+import { loadSettings, saveSettings } from "./settings.mjs";
+import { clearSession, loadSession, saveSession } from "./session.mjs";
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -32,6 +34,7 @@ const state = {
   context: 0, orderGeneration: 0, orderSnapshot: null, ordersLoading: false, ordersError: false,
   activeOrderCount: 0, activeOrdersTruncated: false, detailId: "", detailGeneration: 0,
   taskMode: "jobs", jobFilter: "unsettled", jobStorageError: false,
+  settings: loadSettings(), settingsSection: "display", session: null,
 };
 const jobs = createJobController({
   storage: localStorage, request: (path, options) => api.request(path, options),
@@ -54,13 +57,71 @@ const endedStates = new Set(["done", "failed", "canceled", "expired"]);
 const stateNames = { queued: "排队中", assigned: "已派发", computing: "计算中", running: "合成中", done: "已完成", failed: "失败", canceled: "已撤回", expired: "已过期", needs_review: "结果待确认" };
 let searchTimer, toastTimer, streamTimer, streamRefreshTimer, queryController, ordersController, detailController, cpuCallback, inspectorFocus;
 
-function toast(message, error = false) {
+function toast(message, error = false, category = "general") {
+  if (!error && category !== "general") {
+    const enabled = category === "task" ? state.settings.taskNotifications : category === "network" ? state.settings.networkNotifications : state.settings.syncNotifications;
+    if (!enabled) return;
+  }
   clearTimeout(toastTimer);
   const el = $("#toast");
   el.textContent = message;
   el.dataset.error = String(error);
   el.hidden = false;
   toastTimer = setTimeout(() => { el.hidden = true; }, error ? 6500 : 3200);
+}
+
+function applySettings() {
+  document.documentElement.dataset.density = state.settings.density;
+  document.documentElement.dataset.inventoryLayout = state.settings.inventoryLayout;
+  const remember = $("#remember-session");
+  if (remember) remember.checked = state.settings.rememberSession;
+}
+
+function updateSettings(patch) {
+  try {
+    state.settings = saveSettings(localStorage, { ...state.settings, ...patch });
+    applySettings();
+    if (Object.prototype.hasOwnProperty.call(patch, "rememberSession")) {
+      if (state.settings.rememberSession && state.session) saveSession(localStorage, sessionStorage, state.session, true);
+      if (!state.settings.rememberSession) clearSession(localStorage, sessionStorage);
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "reconnect") && state.network) {
+      if (state.settings.reconnect) connectStream();
+      else state.stream?.close();
+    }
+    renderSettings();
+    toast("设置已保存");
+  } catch { toast("设置无法保存，请检查浏览器存储。", true); }
+}
+
+function settingControl(key, label, description, checked) {
+  return `<label class="setting-toggle"><span><strong>${label}</strong><small>${description}</small></span><input type="checkbox" data-setting="${key}" ${checked ? "checked" : ""}><span class="toggle-track" aria-hidden="true"></span></label>`;
+}
+
+function renderSettings() {
+  const detail = $("#settings-detail");
+  if (!detail) return;
+  const section = state.settingsSection;
+  const sections = {
+    display: {
+      title: "显示",
+      description: "调整工作台密度与库存网格，不改变页面结构。",
+      body: `<div class="setting-field"><span><strong>界面密度</strong><small>控制页面标题、卡片和列表的垂直间距。</small></span><div class="setting-segment" role="group" aria-label="界面密度"><button type="button" data-setting-value="density" data-value="compact" aria-pressed="${state.settings.density === "compact"}">紧凑</button><button type="button" data-setting-value="density" data-value="comfortable" aria-pressed="${state.settings.density === "comfortable"}">舒适</button></div></div><div class="setting-field"><span><strong>库存网格</strong><small>在桌面端选择每行物品数量，自动模式随窗口宽度调整。</small></span><select data-setting="inventoryLayout" aria-label="库存网格"><option value="auto" ${state.settings.inventoryLayout === "auto" ? "selected" : ""}>自动</option><option value="dense" ${state.settings.inventoryLayout === "dense" ? "selected" : ""}>紧密</option><option value="wide" ${state.settings.inventoryLayout === "wide" ? "selected" : ""}>宽松</option></select></div>`,
+    },
+    notifications: {
+      title: "通知",
+      description: "选择哪些状态变化通过页面提示反馈。错误提示始终保留。",
+      body: settingControl("taskNotifications", "任务状态", "提交、核对和控制操作完成时提示。", state.settings.taskNotifications) + settingControl("networkNotifications", "网络异常", "网络刷新或连接状态异常时提示。", state.settings.networkNotifications) + settingControl("syncNotifications", "同步提示", "库存和事件流更新时提示，默认关闭以减少打扰。", state.settings.syncNotifications),
+    },
+    connection: {
+      title: "连接与凭据",
+      description: "管理服务连接、自动重连和浏览器会话。",
+      body: settingControl("reconnect", "自动重连", "网络恢复后自动重新建立事件流连接。", state.settings.reconnect) + settingControl("rememberSession", "记住本次会话", "仅保存会话恢复信息，不保存原始访问令牌。", state.settings.rememberSession) + `<div class="setting-fact"><span>后端地址</span><strong>${esc(location.origin)}</strong><small>页面通过同源代理连接后端；开发环境由启动参数配置。</small></div><div class="setting-fact"><span>会话状态</span><strong>${state.member ? "已连接" : "未连接"}</strong><small>${state.session?.expiresAt ? `会话有效期至 ${esc(dateTime(state.session.expiresAt))}` : "登录后可在此浏览器恢复会话。"}</small></div><div class="setting-actions"><button type="button" class="secondary" data-session-action="test"><i data-lucide="refresh-cw"></i>测试连接</button><button type="button" class="secondary" data-session-action="login"><i data-lucide="log-in"></i>重新登录</button><button type="button" class="secondary" data-session-action="clear"><i data-lucide="trash-2"></i>清除已保存会话</button></div>`,
+    },
+  };
+  const current = sections[section] || sections.display;
+  detail.innerHTML = `<div class="settings-detail-heading"><div><h2>${current.title}</h2><span class="muted">${current.description}</span></div></div><div class="settings-detail-body">${current.body}</div>`;
+  paint();
 }
 
 function errorText(error) {
@@ -181,10 +242,19 @@ function showView(view) {
     else button.removeAttribute("aria-current");
   });
   closeInspector(false);
-  if (!state.network) return;
-  if (view === "orders") { if (state.taskMode === "jobs") refreshJobs(); else refreshOrders(); }
-  if (view === "cpus") refreshCPUs();
-  if (view === "network") refreshNetwork();
+  if (view === "orders") {
+    renderJobs();
+    renderOrders();
+    if (state.network) { if (state.taskMode === "jobs") refreshJobs(); else refreshOrders(); }
+  }
+  if (view === "cpus") {
+    renderCPUs();
+    if (state.network) refreshCPUs();
+  }
+  if (view === "network") {
+    renderNetwork();
+    if (state.network) refreshNetwork();
+  }
   if (view === "dashboard") renderDashboard();
 }
 
@@ -403,7 +473,7 @@ async function submitDraft(ids = selectedDraftIds()) {
   renderDraft(); renderDetail(); renderInventory();
   try {
     await jobs.submit(ids);
-    if (context === state.context) { toast(`生产任务已受理 · ${ids.length} 项`); await refreshJobs(); }
+    if (context === state.context) { toast(`生产任务已受理 · ${ids.length} 项`, false, "task"); await refreshJobs(); }
   } catch (error) {
     if (context === state.context) toast(`${errorText(error)} 原清单保持锁定，请到生产任务核对。`, true);
   } finally {
@@ -460,6 +530,13 @@ async function reconcile(id) {
 
 function renderCPUs() {
   const cpus = state.cpus.cpus || [];
+  if (!state.network) {
+    $("#cpu-summary").textContent = "尚未连接网络";
+    $("#cpu-overview").innerHTML = `<div class="empty empty-state"><i data-lucide="wifi-off"></i><strong>尚未连接网络</strong><span>连接 AE 网络后显示 CPU 状态与负载。</span></div>`;
+    $("#cpu-list").innerHTML = "";
+    paint();
+    return;
+  }
   const busy = cpus.filter(cpu => cpu.busy).length;
   const idle = Math.max(cpus.length - busy, 0);
   const outputs = cpus.filter(cpu => cpu.output).length;
@@ -696,7 +773,14 @@ async function refreshOrderDetail() {
 
 function renderNetwork() {
   const network = state.network;
-  if (!network) { $("#network-info").innerHTML = `<div class="empty">尚未连接网络</div>`; renderDashboard(); return; }
+  if (!network) {
+    $("#network-summary").textContent = "尚未连接网络";
+    $("#network-info").innerHTML = `<div class="empty empty-state"><i data-lucide="wifi-off"></i><strong>尚未连接网络</strong><span>添加或选择一个网络后查看 OC 节点、服务能力与同步状态。</span><button class="secondary" data-view="settings">打开设置</button></div>`;
+    $("#network-table").innerHTML = "";
+    renderDashboard();
+    paint();
+    return;
+  }
   $("#network-summary").textContent = network.name;
   const caps = network.capabilities || {};
   const services = network.services || {};
@@ -742,7 +826,7 @@ async function refreshNetwork() {
     renderNetwork();
     if (onlineChanged && !$("#draft-panel").contains(document.activeElement)) renderDraft();
     if (onlineChanged && !$("#detail-panel").contains(document.activeElement)) renderDetail();
-  } catch (error) { if (context === state.context && state.view === "network") toast(errorText(error), true); }
+  } catch (error) { if (context === state.context && state.view === "network") toast(errorText(error), true, "network"); }
 }
 
 async function loadInventory(reset = false) {
@@ -802,7 +886,12 @@ function connectStream() {
   const stream = new EventSource(networkPath("/events"));
   state.stream = stream;
   stream.onopen = () => { if (context === state.context) { state.streamConnected = true; refreshHeader(); refreshJobs(); } };
-  stream.onerror = () => { if (context === state.context) { state.streamConnected = false; refreshHeader(); } };
+  stream.onerror = () => {
+    if (context !== state.context) return;
+    state.streamConnected = false;
+    if (!state.settings.reconnect) stream.close();
+    refreshHeader();
+  };
   const update = event => {
     if (context !== state.context) return;
     let kind = "reset";
@@ -889,12 +978,16 @@ function showLogin() {
   if (!$("#auth-dialog").open) $("#auth-dialog").showModal();
 }
 
-async function acceptSession(member, csrf) {
+async function acceptSession(member, csrf, expiresAt = "", persist = true) {
   await switchNetwork("");
   const context = state.context;
   state.member = member;
   api.setCSRF(csrf);
-  try { sessionStorage.setItem("ae-orbit:session", JSON.stringify({ member: member.id, csrf })); } catch {}
+  state.session = { member: member.id, csrf, expiresAt };
+  if (persist) {
+    try { saveSession(localStorage, sessionStorage, state.session, state.settings.rememberSession); }
+    catch { toast("会话无法保存，请检查浏览器存储。", true); }
+  }
   $("#token").value = "";
   $("#network").innerHTML = `<option value="">正在读取网络</option>`;
   $("#network").disabled = true;
@@ -923,7 +1016,7 @@ $("#login-form").addEventListener("submit", async event => {
   $("#login-error").textContent = "";
   try {
     const value = await api.request("/api/v1/session", { method: "POST", body: { token: $("#token").value.trim() }, login: true });
-    await acceptSession(value.member, value.csrf);
+    await acceptSession(value.member, value.csrf, value.expires_at);
   } catch (error) { $("#login-error").textContent = errorText(error); }
   finally { $("#login-button").disabled = false; }
 });
@@ -934,7 +1027,8 @@ $("#logout").addEventListener("click", async () => {
     await api.request("/api/v1/session", { method: "DELETE" });
     state.stream?.close(); clearInterval(streamTimer); clearTimeout(streamRefreshTimer);
     api.setCSRF(""); state.member = null; state.networks = [];
-    try { sessionStorage.removeItem("ae-orbit:session"); } catch {}
+    clearSession(localStorage, sessionStorage);
+    state.session = null;
     $("#network").innerHTML = `<option value="">未连接</option>`;
     await switchNetwork("");
     showLogin();
@@ -973,6 +1067,52 @@ $("#order-dialog").addEventListener("close", () => { if (!$("#order-dialog").ope
 $("#refresh-cpus").addEventListener("click", () => refreshCPUs());
 $("#refresh-network").addEventListener("click", () => refreshNetwork());
 $("#order-group").addEventListener("change", event => { state.orderGroup = event.target.value; renderOrders(); });
+$("#settings-detail").addEventListener("change", event => {
+  const input = event.target;
+  if (input.dataset.setting === "inventoryLayout") updateSettings({ inventoryLayout: input.value });
+  if (input.dataset.setting && input.type === "checkbox") updateSettings({ [input.dataset.setting]: input.checked });
+});
+$("#settings-detail").addEventListener("click", async event => {
+  const actionButton = event.target.closest("[data-session-action]");
+  const sessionAction = actionButton?.dataset.sessionAction;
+  if (sessionAction === "test") {
+    actionButton.disabled = true;
+    actionButton.setAttribute("aria-busy", "true");
+    try {
+      const member = await api.request("/api/v1/me");
+      if (!member?.id) throw new Error("missing member");
+      state.member = member;
+      toast("连接正常");
+      renderSettings();
+    } catch (error) {
+      toast(errorText(error) || "连接失败，请检查后端和当前会话。", true, "network");
+    } finally {
+      if (actionButton.isConnected) {
+        actionButton.disabled = false;
+        actionButton.removeAttribute("aria-busy");
+      }
+    }
+    return;
+  }
+  if (sessionAction === "login") { showLogin(); return; }
+  if (sessionAction === "clear") {
+    clearSession(localStorage, sessionStorage);
+    toast("已清除保存的会话");
+    renderSettings();
+    return;
+  }
+  const button = event.target.closest("[data-setting-value]");
+  if (!button) return;
+  updateSettings({ [button.dataset.settingValue]: button.dataset.value });
+});
+$("#remember-session").addEventListener("change", event => updateSettings({ rememberSession: event.target.checked }));
+$("#settings-sections").addEventListener("click", event => {
+  const button = event.target.closest("[data-settings-section]");
+  if (!button) return;
+  state.settingsSection = button.dataset.settingsSection;
+  $("#settings-sections").querySelectorAll("[data-settings-section]").forEach(item => item.setAttribute("aria-current", String(item === button)));
+  renderSettings();
+});
 
 document.addEventListener("click", async event => {
   const button = event.target.closest("button");
@@ -1143,18 +1283,20 @@ document.addEventListener("error", event => {
 }, true);
 
 async function start() {
+  applySettings();
+  renderSettings();
   renderDetail(); renderDraft(); showView(state.view); paint();
   try {
     const response = await fetch("/assets/nei/manifest.json", { credentials: "same-origin" });
     if (response.ok) { const value = await response.json(); if (value.version === 1 && value.icons && typeof value.icons === "object") state.icons = value.icons; }
   } catch {}
   try {
-    const saved = JSON.parse(sessionStorage.getItem("ae-orbit:session") || "null");
-    if (saved?.csrf && saved?.member) {
+    const saved = loadSession(localStorage, sessionStorage, state.settings.rememberSession);
+    if (saved) {
       const member = await api.request("/api/v1/me");
-      if (member.id === saved.member) { await acceptSession(member, saved.csrf); return; }
+      if (member.id === saved.member) { await acceptSession(member, saved.csrf, saved.expiresAt); return; }
     }
-  } catch {}
+  } catch (error) { if (error?.status === 401) clearSession(localStorage, sessionStorage); }
   showLogin();
 }
 start();

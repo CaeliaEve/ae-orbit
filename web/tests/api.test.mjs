@@ -24,6 +24,17 @@ test("JSON mutations use cookie auth, CSRF and exact string quantities", async (
   assert.equal((await api.request("/api/v1/example", { method: "POST", body: { quantity: "9007199254740993" } })).id, "order-1");
 });
 
+test("connection checks use the current same-origin session endpoint", async () => {
+  const api = createAPI(async (url, options) => {
+    assert.equal(url, "/api/v1/me");
+    assert.equal(options.method, "GET");
+    assert.equal(options.credentials, "same-origin");
+    assert.equal(options.headers.Authorization, undefined);
+    return new Response('{"id":"member-1"}', { headers: { "Content-Type": "application/json" } });
+  });
+  assert.deepEqual(await api.request("/api/v1/me"), { id: "member-1" });
+});
+
 test("server errors are uncertain; explicit validation rejections are not", async () => {
   for (const status of [400, 401, 403, 409, 429, 500, 503]) {
     const api = createAPI(async () => new Response('{"error":{"code":"busy"}}', { status }));

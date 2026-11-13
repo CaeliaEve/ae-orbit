@@ -8,6 +8,7 @@
   <link rel="icon" type="image/svg+xml" href="/assets/brand/ae-orbit-mark.svg">
   <link rel="icon" type="image/png" sizes="256x256" href="/assets/brand/favicon.png">
   <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/compact.css">
   <script type="module" src="/app.js"></script>
 </head>
 <body>
@@ -17,10 +18,10 @@
       <a class="brand" href="/" aria-label="AE Orbit"><img class="brand-mark" src="/assets/brand/ae-orbit-mark.svg" alt=""><span>AE Orbit</span></a>
       <button data-view="dashboard" aria-current="page"><i data-lucide="layout-dashboard"></i><span>工作台</span></button>
       <button data-view="inventory"><i data-lucide="boxes"></i><span>库存</span></button>
-      <button data-view="orders"><i data-lucide="list-checks"></i><span>合成任务</span><span id="order-count" class="nav-count"></span></button>
-      <button data-view="cpus"><i data-lucide="cpu"></i><span>合成 CPU</span></button>
-      <button data-view="network"><i data-lucide="radio-tower"></i><span>网络</span></button>
-      <div class="sidebar-secondary"><button data-view="github"><i data-lucide="github"></i><span>GitHub 项目介绍</span></button></div>
+      <button data-view="orders"><i data-lucide="list-checks"></i><span>合成中心</span><span id="order-count" class="nav-count"></span></button>
+      <button data-view="cpus"><i data-lucide="cpu"></i><span>CPU 监控</span></button>
+      <button data-view="network"><i data-lucide="radio-tower"></i><span>网络管理</span></button>
+      <div class="sidebar-secondary"><button data-view="github"><i data-lucide="github"></i><span>GitHub</span></button></div>
       <button data-view="settings"><i data-lucide="settings"></i><span>设置</span></button>
       <div class="sidebar-foot"><span id="member-name">未登录</span><span id="network-quality"></span></div>
     </nav>
@@ -66,29 +67,29 @@
         </div>
       </section>
       <section id="view-orders" class="view" hidden>
-        <div class="page-heading"><div><h1>合成任务</h1><label class="sort"><select id="task-mode" aria-label="任务类型"><option value="jobs">生产任务</option><option value="orders">单项订单</option></select></label></div><button class="icon-button" id="refresh-orders" title="刷新任务" aria-label="刷新任务"><i data-lucide="refresh-cw"></i></button></div>
+        <div class="page-heading"><div><h1>合成中心</h1><label class="sort"><select id="task-mode" aria-label="任务类型"><option value="jobs">生产任务</option><option value="orders">单项订单</option></select></label></div><button class="icon-button" id="refresh-orders" title="刷新任务" aria-label="刷新任务"><i data-lucide="refresh-cw"></i></button></div>
         <div id="jobs-panel"><div class="filters"><div class="segments" role="group" aria-label="生产任务筛选"><button data-job-filter="unsettled" aria-pressed="true">未完成</button><button data-job-filter="attention" aria-pressed="false">待处理</button><button data-job-filter="history" aria-pressed="false">历史</button></div><span id="jobs-summary" class="muted" role="status"></span></div><p id="jobs-message" class="inline-message" role="status" hidden></p><div id="job-recoveries" class="aux-list"></div><div id="job-list" class="aux-list"></div><div class="job-history-footer"><button id="job-history-more" class="secondary" hidden><i data-lucide="chevron-down"></i>加载历史记录</button></div></div>
         <div id="legacy-panel" hidden><div class="filters"><div class="segments" role="group" aria-label="任务筛选"><button data-order-filter="active" aria-pressed="true">未完成</button><button data-order-filter="attention" aria-pressed="false">待处理</button><button data-order-filter="done" aria-pressed="false">已结束</button><button data-order-filter="all" aria-pressed="false">全部</button></div><label class="sort"><span>分组</span><select id="order-group" aria-label="任务分组"><option value="batch">提交批次</option><option value="cpu">CPU</option></select></label><span id="orders-summary" class="muted"></span></div>
         <div id="orders-message" class="inline-message" role="status" hidden></div><div id="order-list" class="aux-list"></div></div>
       </section>
       <section id="view-cpus" class="view" hidden>
-        <div class="page-heading"><div><h1>合成 CPU</h1><span id="cpu-summary" class="muted"></span></div><button class="icon-button" id="refresh-cpus" title="刷新 CPU 状态" aria-label="刷新 CPU 状态"><i data-lucide="refresh-cw"></i></button></div>
+        <div class="page-heading"><div><h1>CPU 监控</h1><span id="cpu-summary" class="muted"></span></div><button class="icon-button" id="refresh-cpus" title="刷新 CPU 状态" aria-label="刷新 CPU 状态"><i data-lucide="refresh-cw"></i></button></div>
         <div id="cpu-overview" class="cpu-overview"></div>
         <div id="cpu-list" class="aux-list"></div>
       </section>
       <section id="view-network" class="view" hidden>
-        <div class="page-heading"><div><h1>网络</h1><span id="network-summary" class="muted"></span></div><button class="icon-button" id="refresh-network" title="刷新网络状态" aria-label="刷新网络状态"><i data-lucide="refresh-cw"></i></button></div>
+        <div class="page-heading"><div><h1>网络管理</h1><span id="network-summary" class="muted"></span></div><button class="icon-button" id="refresh-network" title="刷新网络状态" aria-label="刷新网络状态"><i data-lucide="refresh-cw"></i></button></div>
         <div class="network-toolbar"><span>已配置网络</span><button class="primary" id="add-network" type="button"><i data-lucide="plus"></i>添加网络</button></div>
         <div id="network-table" class="network-table"></div>
         <div id="network-info" class="aux-list"></div>
       </section>
       <section id="view-github" class="view" hidden>
-        <div class="page-heading"><div><span class="eyebrow">PROJECT</span><h1>GitHub 项目介绍</h1><span class="muted">AE Orbit 的源码、协议与部署文档</span></div><a class="icon-button external-link" href="https://github.com/CaeliaEve/ae-orbit" target="_blank" rel="noreferrer" title="打开 GitHub" aria-label="打开 GitHub"><i data-lucide="arrow-up-right"></i></a></div>
-        <div class="github-layout"><section class="panel github-card"><div class="github-title"><i data-lucide="github"></i><div><h2>CaeliaEve / ae-orbit</h2><span class="muted">AE Orbit · 多 OC 协作合成控制台</span></div></div><p>用于 GTNH 的 AE 网络管理、库存检索、生产任务编排与 OpenComputers 协作。</p><div class="github-facts"><span><strong>公开仓库</strong><small>源码与协议</small></span><span><strong>前后端分离</strong><small>浏览器直连服务</small></span><span><strong>多 OC 协作</strong><small>可扩展传输节点</small></span></div></section><div class="github-links"><a href="https://github.com/CaeliaEve/ae-orbit" target="_blank" rel="noreferrer" class="panel-link"><span><i data-lucide="github"></i>访问代码仓库</span><i data-lucide="arrow-up-right"></i></a><a href="https://github.com/CaeliaEve/ae-orbit/tree/main/contracts" target="_blank" rel="noreferrer" class="panel-link"><span><i data-lucide="file-text"></i>查看协议文档</span><i data-lucide="arrow-up-right"></i></a><a href="https://github.com/CaeliaEve/ae-orbit/issues" target="_blank" rel="noreferrer" class="panel-link"><span><i data-lucide="circle-help"></i>提交 Issue</span><i data-lucide="arrow-up-right"></i></a></div></div>
+        <div class="page-heading"><div><h1>GitHub</h1><span class="muted">项目源码、协议与部署记录</span></div><a class="icon-button external-link" href="https://github.com/CaeliaEve/ae-orbit" target="_blank" rel="noreferrer" title="打开 GitHub" aria-label="打开 GitHub"><i data-lucide="arrow-up-right"></i></a></div>
+        <div class="github-layout"><section class="panel github-card"><div class="github-title"><i data-lucide="github"></i><div><h2>CaeliaEve / ae-orbit</h2><span class="muted">多 OC 协作合成控制台</span></div></div><div class="github-links"><a href="https://github.com/CaeliaEve/ae-orbit" target="_blank" rel="noreferrer" class="panel-link"><span><i data-lucide="github"></i>访问代码仓库</span><i data-lucide="arrow-up-right"></i></a><a href="https://github.com/CaeliaEve/ae-orbit/tree/main/contracts" target="_blank" rel="noreferrer" class="panel-link"><span><i data-lucide="file-text"></i>查看协议文档</span><i data-lucide="arrow-up-right"></i></a><a href="https://github.com/CaeliaEve/ae-orbit/issues" target="_blank" rel="noreferrer" class="panel-link"><span><i data-lucide="circle-help"></i>提交 Issue</span><i data-lucide="arrow-up-right"></i></a></div></section></div>
       </section>
       <section id="view-settings" class="view" hidden>
         <div class="page-heading"><div><span class="eyebrow">PREFERENCES</span><h1>设置</h1><span class="muted">系统偏好与连接行为</span></div></div>
-        <div class="settings-layout"><section class="panel settings-panel"><div class="panel-heading"><div><h2>偏好设置</h2><span class="muted">设置会保存在当前浏览器</span></div><i data-lucide="settings"></i></div><button class="settings-row" type="button"><i data-lucide="sliders-horizontal"></i><span><strong>通用</strong><small>语言、时间格式、数量显示</small></span><i data-lucide="chevron-right"></i></button><button class="settings-row" type="button"><i data-lucide="monitor"></i><span><strong>显示</strong><small>主题、密度与库存网格布局</small></span><i data-lucide="chevron-right"></i></button><button class="settings-row" type="button"><i data-lucide="bell"></i><span><strong>通知</strong><small>任务完成、网络异常与同步提醒</small></span><i data-lucide="chevron-right"></i></button><button class="settings-row" type="button"><i data-lucide="code-2"></i><span><strong>高级</strong><small>接口、API 访问与调试选项</small></span><i data-lucide="chevron-right"></i></button></section></div>
+        <div class="settings-layout"><section class="panel settings-panel"><div class="panel-heading"><div><h2>偏好设置</h2><span class="muted">设置会保存在当前浏览器</span></div><i data-lucide="settings"></i></div><div id="settings-sections" class="settings-sections" role="tablist" aria-label="设置分类"><button class="settings-row" type="button" data-settings-section="display" aria-current="true"><i data-lucide="monitor"></i><span><strong>显示</strong><small>密度与库存网格布局</small></span><i data-lucide="chevron-right"></i></button><button class="settings-row" type="button" data-settings-section="notifications" aria-current="false"><i data-lucide="bell"></i><span><strong>通知</strong><small>任务、网络与同步提醒</small></span><i data-lucide="chevron-right"></i></button><button class="settings-row" type="button" data-settings-section="connection" aria-current="false"><i data-lucide="radio-tower"></i><span><strong>连接与凭据</strong><small>自动重连与会话保存</small></span><i data-lucide="chevron-right"></i></button></div></section><section id="settings-detail" class="panel settings-detail" aria-live="polite"></section></div>
       </section>
     </main>
     </div>
@@ -97,7 +98,7 @@
   <nav class="mobile-nav" aria-label="手机导航">
     <button data-view="dashboard" aria-current="page"><i data-lucide="layout-dashboard"></i><span>工作台</span></button>
     <button data-view="inventory"><i data-lucide="boxes"></i><span>库存</span></button>
-    <button data-view="orders"><i data-lucide="list-checks"></i><span>任务</span></button>
+    <button data-view="orders"><i data-lucide="list-checks"></i><span>合成</span></button>
     <button data-view="cpus"><i data-lucide="cpu"></i><span>CPU</span></button>
     <button data-view="network"><i data-lucide="radio-tower"></i><span>网络</span></button>
     <button data-view="settings"><i data-lucide="settings"></i><span>设置</span></button>
@@ -105,7 +106,7 @@
   <div id="sheet-backdrop" class="sheet-backdrop" hidden></div>
   <div id="toast" role="status" class="toast" hidden></div>
   <dialog id="auth-dialog" aria-labelledby="auth-title">
-    <form id="login-form" class="login-form"><div class="dialog-heading"><h2 id="auth-title">连接 AE Orbit</h2><img class="auth-logo" src="/assets/brand/ae-orbit-mark.svg" alt=""></div><label for="token">访问令牌</label><input id="token" type="password" required autocomplete="off" maxlength="512"><p id="login-error" class="error" role="alert"></p><button type="submit" class="primary" id="login-button"><i data-lucide="log-in"></i>登录</button></form>
+    <form id="login-form" class="login-form"><div class="dialog-heading"><h2 id="auth-title">连接 AE Orbit</h2><img class="auth-logo" src="/assets/brand/ae-orbit-mark.svg" alt=""></div><label for="token">访问令牌</label><input id="token" type="password" required autocomplete="off" maxlength="512"><label class="remember-session"><input id="remember-session" type="checkbox"><span>记住本次会话</span></label><p id="login-error" class="error" role="alert"></p><button type="submit" class="primary" id="login-button"><i data-lucide="log-in"></i>登录</button></form>
   </dialog>
   <dialog id="cpu-dialog" aria-labelledby="cpu-title">
     <div class="dialog-heading"><h2 id="cpu-title">选择合成 CPU</h2><button class="icon-button" data-close="cpu-dialog" title="关闭" aria-label="关闭 CPU 选择"><i data-lucide="x"></i></button></div><div id="cpu-options"></div><p id="cpu-choice-error" class="error" role="alert"></p>

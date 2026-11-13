@@ -12,4 +12,5 @@ await build({
   legalComments: "eof",
 });
 await copyFile("web/src/style.css", "web/static/style.css");
-console.log("Built web/static/app.js and style.css.");
+await copyFile("web/src/compact.css", "web/static/compact.css");
+console.log("Built web/static/app.js, style.css and compact.css.");
