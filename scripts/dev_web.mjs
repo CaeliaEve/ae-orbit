@@ -23,6 +23,7 @@ const files = new Map([
   ["/index.html", ["index.html", "text/html; charset=utf-8"]],
   ["/app.js", ["app.js", "text/javascript; charset=utf-8"]],
   ["/style.css", ["style.css", "text/css; charset=utf-8"]],
+  ["/compact.css", ["compact.css", "text/css; charset=utf-8"]],
   ["/assets/nei/manifest.json", ["assets/nei/manifest.json", "application/json; charset=utf-8"]],
   ["/assets/brand/ae-orbit-mark.png", ["assets/brand/ae-orbit-mark.png", "image/png"]],
   ["/assets/brand/ae-orbit-mark-dark.png", ["assets/brand/ae-orbit-mark-dark.png", "image/png"]],

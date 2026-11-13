@@ -16,6 +16,7 @@ func TestFrontendBoundaries(t *testing.T) {
 		{"/", 200},
 		{"/app.js", 200},
 		{"/style.css", 200},
+		{"/compact.css", 200},
 		{"/assets/brand/ae-orbit-mark.png", 200},
 		{"/assets/brand/ae-orbit-mark.svg", 200},
 		{"/missing.js", 404},

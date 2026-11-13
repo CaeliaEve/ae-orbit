@@ -2295,6 +2295,683 @@ main {
   }
 }
 
+/* Compact control-room pass: preserve the existing page structure while
+   returning typography and spacing to a scan-friendly working density. */
+:root[data-density="compact"] {
+  --ui-page-pad: 32px;
+  --ui-heading-size: 34px;
+  --ui-heading-gap: 18px;
+}
+
+.app-frame {
+  max-width: 1540px;
+  min-height: calc(100dvh - 20px);
+  margin: 10px auto;
+  border-radius: 12px;
+  box-shadow: 0 12px 32px #0007;
+}
+
+.shell {
+  grid-template-columns: 226px minmax(0, 1fr);
+  min-height: calc(100dvh - 20px);
+}
+
+.sidebar {
+  padding: 24px 14px 18px;
+}
+
+.brand {
+  margin: 0 8px 30px;
+  gap: 8px;
+  font-size: 18px;
+}
+
+.brand-mark {
+  width: 32px;
+  height: 32px;
+}
+
+.sidebar > button,
+.sidebar-secondary button {
+  min-height: 42px;
+  gap: 11px;
+  padding: 0 12px;
+  border-radius: 7px;
+  font-size: 14px;
+}
+
+.sidebar > button svg,
+.sidebar-secondary button svg {
+  width: 19px;
+  height: 19px;
+}
+
+.sidebar-secondary {
+  gap: 4px;
+  padding-top: 12px;
+}
+
+.topbar {
+  height: 68px;
+  padding: 0 28px;
+  gap: 12px;
+}
+
+.network-picker {
+  min-width: 236px;
+  min-height: 42px;
+  padding: 0 14px;
+  border-radius: 7px;
+}
+
+.network-picker select {
+  font-size: 14px;
+}
+
+.topbar > .icon-button {
+  width: 40px;
+  height: 40px;
+  border-radius: 7px;
+}
+
+.topbar > .icon-button svg {
+  width: 19px;
+  height: 19px;
+}
+
+.view {
+  padding: 24px var(--ui-page-pad, 32px) 40px;
+}
+
+.page-heading {
+  min-height: 112px;
+  padding: 0 0 22px;
+}
+
+.page-heading h1 {
+  font-size: var(--ui-heading-size, 34px);
+  line-height: 1.08;
+}
+
+.page-heading .muted {
+  margin-top: 8px;
+  font-size: 14px;
+}
+
+.dashboard-grid {
+  gap: 12px;
+  padding: 0 0 16px;
+}
+
+.metric-card {
+  min-height: 132px;
+  padding: 18px 20px;
+  border-radius: 8px;
+}
+
+.metric-label {
+  font-size: 14px;
+}
+
+.metric-card strong {
+  margin-top: 12px;
+  font-size: 30px;
+}
+
+.metric-meta {
+  font-size: 12px;
+}
+
+.metric-ring {
+  width: 78px;
+  height: 78px;
+  flex-basis: 78px;
+}
+
+.metric-ring::before {
+  width: 58px;
+  height: 58px;
+}
+
+.metric-ring span {
+  font-size: 14px;
+}
+
+.dashboard-columns {
+  gap: 12px;
+  padding: 0;
+}
+
+.dashboard-columns .panel,
+.panel,
+.catalog,
+.inspector,
+.network-table,
+.cpu-overview {
+  border-radius: 8px;
+}
+
+.panel-heading {
+  padding: 16px 18px 12px;
+}
+
+.panel-heading h2 {
+  font-size: 17px;
+}
+
+.panel-heading .muted {
+  font-size: 12px;
+}
+
+.health-list,
+.activity-list {
+  padding: 4px 18px 12px;
+}
+
+.health-row,
+.activity-row {
+  min-height: 52px;
+}
+
+.health-row > span,
+.activity-row > span,
+.health-row strong,
+.activity-row strong {
+  font-size: 13px;
+}
+
+.activity-row small,
+.activity-row time {
+  font-size: 11px;
+}
+
+.inventory-toolbar {
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.search {
+  min-height: 42px;
+  border-radius: 7px;
+}
+
+.search input {
+  font-size: 14px;
+}
+
+.segments {
+  padding: 3px;
+  border-radius: 7px;
+}
+
+.segments button {
+  min-height: 34px;
+  padding: 0 13px;
+  border-radius: 5px;
+  font-size: 12px;
+}
+
+.workbench {
+  grid-template-columns: minmax(0, 1fr) minmax(286px, 26%);
+  gap: 12px;
+  padding: 0;
+}
+
+.inventory-table {
+  padding: 12px;
+}
+
+.inventory-table tbody {
+  grid-template-columns: repeat(7, minmax(82px, 1fr));
+  gap: 8px;
+}
+
+.inventory-table tr {
+  min-height: 124px;
+  padding: 10px;
+  border-radius: 7px;
+}
+
+.item-image,
+.missing-image {
+  width: 50px;
+  height: 50px;
+  min-width: 50px;
+}
+
+.stock-value {
+  font-size: 13px;
+}
+
+.freshness {
+  font-size: 10px;
+}
+
+.aux-list {
+  padding: 0 18px 20px;
+}
+
+.group-heading,
+.task-row,
+.job-row,
+.cpu-row,
+.device-row,
+.history-entry {
+  min-height: 60px;
+}
+
+.group-heading h2,
+.task-title,
+.cpu-row h2,
+.device-row h2 {
+  font-size: 16px;
+}
+
+.task-sub,
+.cpu-row p,
+.device-row p {
+  font-size: 12px;
+}
+
+.task-state,
+.state-label {
+  font-size: 12px;
+}
+
+.github-layout,
+.settings-layout {
+  gap: 12px;
+}
+
+.github-layout {
+  grid-template-columns: minmax(0, 1fr) 260px;
+}
+
+.github-card {
+  padding: 22px;
+}
+
+.github-title h2 {
+  font-size: 22px;
+}
+
+.github-card > p {
+  font-size: 14px;
+}
+
+.github-facts strong {
+  font-size: 14px;
+}
+
+.github-facts small {
+  font-size: 11px;
+}
+
+.panel-link {
+  min-height: 54px;
+  padding: 0 14px;
+  font-size: 13px;
+}
+
+.settings-layout {
+  display: grid;
+  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+  align-items: start;
+}
+
+.settings-panel,
+.settings-detail {
+  max-width: none;
+  overflow: hidden;
+}
+
+.settings-row {
+  min-height: 62px;
+  padding: 10px 16px;
+}
+
+.settings-row strong {
+  font-size: 13px;
+}
+
+.settings-row small {
+  font-size: 11px;
+}
+
+.settings-row > svg:first-child {
+  width: 19px;
+  height: 19px;
+}
+
+.settings-row > svg:last-child {
+  width: 17px;
+  height: 17px;
+}
+
+.settings-row[aria-current="true"] {
+  color: #f4f5f6;
+  background: #25282d;
+}
+
+.settings-detail {
+  min-height: 248px;
+}
+
+.settings-detail-heading {
+  padding: 18px 20px 14px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.settings-detail-heading h2 {
+  margin: 0 0 5px;
+  font-size: 18px;
+}
+
+.settings-detail-heading .muted {
+  font-size: 12px;
+}
+
+.settings-detail-body {
+  display: grid;
+  gap: 0;
+  padding: 2px 20px 12px;
+}
+
+.setting-field,
+.setting-toggle,
+.setting-fact {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  min-height: 64px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.setting-field:last-child,
+.setting-toggle:last-child,
+.setting-fact:last-child {
+  border-bottom: 0;
+}
+
+.setting-field span,
+.setting-toggle span,
+.setting-fact {
+  min-width: 0;
+}
+
+.setting-field strong,
+.setting-toggle strong,
+.setting-fact span {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.setting-field small,
+.setting-toggle small,
+.setting-fact small {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.setting-field select {
+  min-height: 34px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.setting-segment {
+  display: inline-flex;
+  gap: 3px;
+  padding: 3px;
+  background: #171a1e;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.setting-segment button {
+  min-height: 30px;
+  padding: 0 10px;
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.setting-segment button[aria-pressed="true"] {
+  color: #101214;
+  background: #e9ebee;
+}
+
+.setting-toggle {
+  position: relative;
+}
+
+.setting-toggle input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.toggle-track {
+  position: relative;
+  width: 38px;
+  height: 22px;
+  background: #2c3137;
+  border: 1px solid #4a5057;
+  border-radius: 11px;
+}
+
+.toggle-track::after {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 14px;
+  height: 14px;
+  content: "";
+  background: #aeb5bd;
+  border-radius: 50%;
+  transition: transform .15s ease, background-color .15s ease;
+}
+
+.setting-toggle input:checked + .toggle-track {
+  background: #e9ebee;
+  border-color: #e9ebee;
+}
+
+.setting-toggle input:checked + .toggle-track::after {
+  background: #111417;
+  transform: translateX(16px);
+}
+
+.setting-toggle input:focus-visible + .toggle-track {
+  outline: 2px solid #e9ebee;
+  outline-offset: 2px;
+}
+
+.setting-fact {
+  grid-template-columns: 120px minmax(0, 1fr);
+  align-content: center;
+}
+
+.setting-fact strong {
+  display: block;
+  overflow: hidden;
+  color: #dfe2e5;
+  font-size: 12px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.setting-fact small {
+  grid-column: 2;
+}
+
+html[data-density="comfortable"] {
+  --ui-page-pad: 38px;
+  --ui-heading-size: 38px;
+}
+
+html[data-inventory-layout="dense"] .inventory-table tbody {
+  grid-template-columns: repeat(8, minmax(78px, 1fr));
+}
+
+html[data-inventory-layout="wide"] .inventory-table tbody {
+  grid-template-columns: repeat(6, minmax(92px, 1fr));
+}
+
+@media (max-width: 1100px) {
+  .shell {
+    grid-template-columns: 196px minmax(0, 1fr);
+  }
+
+  .view {
+    --ui-page-pad: 24px;
+  }
+
+  .inventory-table tbody,
+  html[data-inventory-layout="dense"] .inventory-table tbody,
+  html[data-inventory-layout="wide"] .inventory-table tbody {
+    grid-template-columns: repeat(5, minmax(80px, 1fr));
+  }
+}
+
+@media (max-width: 900px) {
+  .app-frame {
+    min-height: 100dvh;
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+  }
+
+  .shell {
+    min-height: 100dvh;
+  }
+
+  .topbar {
+    height: 64px;
+    padding: 8px 16px 0;
+  }
+
+  .view {
+    padding: 20px 16px 30px;
+  }
+
+  .page-heading {
+    min-height: 94px;
+  }
+
+  .page-heading h1 {
+    font-size: 32px;
+  }
+
+  .settings-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-detail {
+    min-height: 0;
+  }
+}
+
+/* Keep the CPU summary readable inside the four-column desktop dashboard. */
+.metric-card-wide {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 82px;
+  align-items: center;
+  gap: 8px;
+}
+
+.metric-card-wide > div:first-child {
+  min-width: 0;
+}
+
+.metric-card-wide .metric-label {
+  font-size: 17px;
+  line-height: 1.2;
+}
+
+.metric-card-wide strong {
+  font-size: 28px;
+  line-height: 1.08;
+  white-space: normal;
+}
+
+.metric-card-wide .metric-meta {
+  font-size: 15px;
+  line-height: 1.25;
+}
+
+.metric-card-wide .metric-ring {
+  width: 82px;
+  height: 82px;
+  flex-basis: 82px;
+}
+
+.metric-card-wide .metric-ring::before {
+  width: 60px;
+  height: 60px;
+}
+
+.empty-state {
+  display: grid;
+  min-height: 190px;
+  place-items: center;
+  align-content: center;
+  gap: 10px;
+  padding: 28px;
+  text-align: center;
+}
+
+.empty-state svg {
+  width: 30px;
+  height: 30px;
+  color: #8a9199;
+}
+
+.empty-state strong {
+  color: #f0f1f3;
+  font-size: 18px;
+}
+
+.empty-state span {
+  max-width: 34rem;
+  color: #8a9199;
+  font-size: 14px;
+}
+
+@media (max-width: 900px) {
+  .metric-card-wide {
+    grid-template-columns: minmax(0, 1fr) 96px;
+    gap: 12px;
+  }
+
+  .metric-card-wide .metric-label {
+    font-size: 18px;
+  }
+
+  .metric-card-wide strong {
+    font-size: 32px;
+  }
+
+  .metric-card-wide .metric-ring {
+    width: 96px;
+    height: 96px;
+    flex-basis: 96px;
+  }
+
+  .metric-card-wide .metric-ring::before {
+    width: 70px;
+    height: 70px;
+  }
+}
+
 .trend-chart {
   min-height: 290px;
   padding: 12px 26px 22px;
