@@ -22,15 +22,31 @@ const summary = (version = "1") => ({ id: "job-1", network_id: "network-1", owne
 const response = () => ({ receipt: { job_id: "job-1", manifest_digest: "a".repeat(64), archived: false },
   job: { summary: summary(), entries: [{ id: "entry-1", entry_key: "draft-row-0001", ordinal: 0, requested_item_id: "12", item_id: "12", quantity: "64", state: "pending" }] } });
 
-test("manifest captures immutable row order and stable legacy-derived source keys without CPU fields", () => {
+test("manifest captures immutable row order, source keys, and strict CPU policy", () => {
   assert.equal(typeof jobs.createJobIntent, "function");
-  const entries = [row(), row("row-0002")];
+  const entries = [row(), { ...row("row-0002"), cpu_name: "CPU A", wait_for_cpu: true }];
   const value = jobs.createJobIntent({ ...scope, requestKey: "request-0001", entries, ttlSeconds: 0 });
   entries[0].quantity = "99";
   assert.deepEqual(value.manifest, { request_key: "request-0001", name: "", ttl_seconds: 3600,
-    entries: [{ entry_key: "draft-row-0001", item_id: "12", quantity: "64" }, { entry_key: "draft-row-0002", item_id: "12", quantity: "64" }] });
+    entries: [{ entry_key: "draft-row-0001", item_id: "12", quantity: "64", cpu_name: "", wait_for_cpu: false },
+      { entry_key: "draft-row-0002", item_id: "12", quantity: "64", cpu_name: "CPU A", wait_for_cpu: true }] });
   assert.ok(Object.isFrozen(value.manifest.entries[0]));
-  assert.throws(() => jobs.createJobIntent({ ...scope, requestKey: "request-0001", entries: [{ ...row(), cpu_name: "named" }] }));
+  assert.throws(() => jobs.createJobIntent({ ...scope, requestKey: "request-0001", entries: [{ ...row(), wait_for_cpu: true }] }));
+  assert.throws(() => jobs.createJobIntent({ ...scope, requestKey: "request-0001", entries: [{ ...row(), cpu_name: " " }] }));
+});
+
+test("legacy persisted intents without CPU fields restore as automatic policy", () => {
+  const store = storage();
+  const prefix = "ae-orbit:jobs:v1:member-1:network-1:";
+  const legacy = {
+    ...scope, requestKey: "legacy-0001", state: "uncertain", draftIds: ["row-0001"],
+    manifest: { request_key: "legacy-0001", name: "", ttl_seconds: 3600,
+      entries: [{ entry_key: "draft-row-0001", item_id: "12", quantity: "64" }] },
+  };
+  store.setItem(`${prefix}intent:legacy-0001`, JSON.stringify(legacy));
+  const restored = jobs.createJobJournal(store, scope).list()[0];
+  assert.equal(restored.manifest.entries[0].cpu_name, "");
+  assert.equal(restored.manifest.entries[0].wait_for_cpu, false);
 });
 
 test("journal and compatible claims persist and reread before POST eligibility; restored intent is uncertain", () => {

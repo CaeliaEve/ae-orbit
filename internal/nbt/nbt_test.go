@@ -50,3 +50,20 @@ func FuzzDigest(f *testing.F) {
 	}
 	f.Fuzz(func(t *testing.T, raw []byte) { Digest(raw) })
 }
+
+func TestNESQLItemIDMatchesSourceIdentityVectors(t *testing.T) {
+	for _, vector := range []struct {
+		registry string
+		want     string
+	}{
+		{"BiblioCraft:Armor Stand", "item_49eeed3f0c9fd63f329598282a1406c58accbe6729a6195ebef95e6c4dcd84c1"},
+		{"ProjRed|Core:projectred.core.part", "item_cc00b969a3e38a4bd9e7c34a9a4ce0d01befa1703559b3ed4b06a95031801347"},
+		{"兼容|测试:方块 \"A\" /β", "item_ef3cfffdb74e2147983247b80182807f3ed49de488c2837dcc8d9e22e5f40d12"},
+		{"owner:part:variant", "item_03e51f074fd995a201649bab53fc67bc0e92857f6598cc2692bb981dd02b37b0"},
+	} {
+		got, err := NESQLItemID(vector.registry, 0, nil)
+		if err != nil || got != vector.want {
+			t.Fatalf("%s: id=%s err=%v", vector.registry, got, err)
+		}
+	}
+}

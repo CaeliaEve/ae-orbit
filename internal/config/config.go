@@ -16,12 +16,15 @@ type Config struct {
 	DatabaseURL string
 	AdminToken  string
 	PublicURL   string
+	CatalogRoot string
 	Store       store.Options
 	HTTP        api.Options
 }
 
 func Load(env func(string) string) (Config, error) {
 	c := Config{Listen: "127.0.0.1:8080", DatabaseURL: env("AE_DATABASE_URL"), AdminToken: env("AE_ADMIN_TOKEN"), PublicURL: "http://127.0.0.1:8080", Store: store.DefaultOptions(), HTTP: api.DefaultOptions()}
+	c.CatalogRoot = env("AE_CATALOG_ROOT")
+	c.Store.CatalogRoot = c.CatalogRoot
 	if value := env("AE_LISTEN"); value != "" {
 		c.Listen = value
 	}

@@ -12,11 +12,11 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-const orderColumns = `o.id,o.network_id,o.member_id,o.item_id,o.quantity,o.state,o.attempt_id,o.reason,o.created_at,o.updated_at,o.expires_at,o.batch_id`
+const orderColumns = `o.id,o.network_id,o.member_id,o.item_id,o.quantity,o.state,o.attempt_id,o.reason,o.created_at,o.updated_at,o.expires_at,o.batch_id,o.cpu_name,o.wait_for_cpu`
 
 func scanOrder(row scanner) (protocol.Order, error) {
 	var o protocol.Order
-	err := row.Scan(&o.ID, &o.NetworkID, &o.UserID, &o.ItemID, &o.Quantity, &o.State, &o.AttemptID, &o.Reason, &o.CreatedAt, &o.UpdatedAt, &o.ExpiresAt, &o.BatchID)
+	err := row.Scan(&o.ID, &o.NetworkID, &o.UserID, &o.ItemID, &o.Quantity, &o.State, &o.AttemptID, &o.Reason, &o.CreatedAt, &o.UpdatedAt, &o.ExpiresAt, &o.BatchID, &o.CPUName, &o.WaitForCPU)
 	return o, notFound(err)
 }
 
@@ -27,11 +27,6 @@ func (s *Store) CreateOrder(ctx context.Context, userID, networkID string, in pr
 	}
 	if err := in.Validate(); err != nil {
 		return result, errors.Join(ErrInvalid, err)
-	}
-	// The installed OC name selector may silently fall back to another CPU.
-	// Reject targets until the bridge has an atomic, fail-closed submission API.
-	if in.CPUName != "" || in.WaitForCPU {
-		return result, ErrCapability
 	}
 	if in.TTLSeconds == 0 {
 		in.TTLSeconds = 3600
@@ -57,7 +52,8 @@ func (s *Store) CreateOrder(ctx context.Context, userID, networkID string, in pr
 			if err != nil {
 				return err
 			}
-			if existingID != in.ItemID || existing.Quantity != in.Quantity || ttl != in.TTLSeconds || existing.BatchID != in.BatchID {
+			if existingID != in.ItemID || existing.Quantity != in.Quantity || ttl != in.TTLSeconds || existing.BatchID != in.BatchID ||
+				existing.CPUName != in.CPUName || existing.WaitForCPU != in.WaitForCPU {
 				return ErrConflict
 			}
 			result = existing
@@ -73,6 +69,9 @@ func (s *Store) CreateOrder(ctx context.Context, userID, networkID string, in pr
 		var caps protocol.Capabilities
 		if err = json.Unmarshal(capsJSON, &caps); err != nil {
 			return err
+		}
+		if (in.CPUName != "" || in.WaitForCPU) && !caps.CPUSelection {
+			return ErrCapability
 		}
 		if !caps.Craft || in.Quantity > caps.MaxCraftQuantity || session == "" {
 			return ErrCapability
@@ -108,9 +107,9 @@ func auditOrder(ctx context.Context, tx pgx.Tx, id string) error {
 // Eligibility and capacity must be checked by the caller under the network lock.
 func (s *Store) enqueueOrder(ctx context.Context, tx pgx.Tx, userID, networkID string, in protocol.OrderInput, entryID string) (protocol.Order, error) {
 	id := newID()
-	_, err := tx.Exec(ctx, `INSERT INTO orders(id,network_id,member_id,item_id,quantity,idempotency_key,ttl_seconds,state,expires_at,batch_id,production_job_entry_id)
-		VALUES($1,$2,$3,$4,$5,$6,$7::integer,'queued',now()+$7::integer*interval '1 second',$8,nullif($9,''))`,
-		id, networkID, userID, int64(in.ItemID), int64(in.Quantity), in.IdempotencyKey, in.TTLSeconds, in.BatchID, entryID)
+	_, err := tx.Exec(ctx, `INSERT INTO orders(id,network_id,member_id,item_id,quantity,idempotency_key,ttl_seconds,state,expires_at,batch_id,production_job_entry_id,cpu_name,wait_for_cpu)
+		VALUES($1,$2,$3,$4,$5,$6,$7::integer,'queued',now()+$7::integer*interval '1 second',$8,nullif($9,''),$10,$11)`,
+		id, networkID, userID, int64(in.ItemID), int64(in.Quantity), in.IdempotencyKey, in.TTLSeconds, in.BatchID, entryID, in.CPUName, in.WaitForCPU)
 	if err != nil {
 		return protocol.Order{}, err
 	}

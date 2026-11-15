@@ -1,0 +1,6 @@
+services:
+  api:
+    environment:
+      AE_CATALOG_ROOT: /var/lib/ae-orbit/catalog
+    volumes:
+      - ${AE_CATALOG_HOST_PATH:-../.local/catalog/nesqlpp}:/var/lib/ae-orbit/catalog:ro

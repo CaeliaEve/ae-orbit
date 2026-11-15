@@ -120,9 +120,6 @@ func (h Hello) validate(version int) error {
 	if h.Capabilities.Craft && (h.Capabilities.MaxCraftQuantity < 1 || !h.Capabilities.ExactQuantities) {
 		return fmt.Errorf("crafting requires exact quantity capability")
 	}
-	if h.Capabilities.CPUSelection {
-		return fmt.Errorf("strict CPU selection is not supported by this bridge protocol")
-	}
 	if !textOK(h.Capabilities.Enumeration, 0, 64) {
 		return fmt.Errorf("invalid enumeration capability")
 	}

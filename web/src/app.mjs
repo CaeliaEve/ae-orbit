@@ -2,7 +2,8 @@ import {
   createIcons, Orbit, Network, LogOut, Boxes, ListChecks, Cpu, RadioTower, RefreshCw,
   Search, ListPlus, ChevronLeft, ChevronRight, ChevronDown, X, Plus, Minus, Package,
   Trash2, Check, Clock, CircleAlert, LogIn, ArrowUpRight, Server, Send, Pause, Play, Square,
-  LayoutDashboard, Settings, Github, Bell, Activity, Monitor, SlidersHorizontal, Code2, FileText, CircleHelp,
+  LayoutDashboard, Settings, Github, Bell, Activity, Monitor, SlidersHorizontal, Code2, FileText, CircleHelp, Copy,
+  WifiOff,
 } from "lucide";
 import { createAPI } from "./api.mjs";
 import { loadOrderSnapshot } from "./orders.mjs";
@@ -10,31 +11,47 @@ import { createJobController } from "./job-controller.mjs";
 import { isJobClaim } from "./jobs.mjs";
 import { jobListHTML, jobDetailHTML, recoveryHTML } from "./job-view.mjs";
 import {
-  normalizeQuantity, formatQuantity, storageKey, loadDraft, saveDraft, addDraft,
+  normalizeQuantity, formatQuantity, formatCompactQuantity, storageKey, loadDraft, saveDraft, addDraft,
   updateDraft, removeDraft, completeSubmission, networkQualityLabel,
 } from "./model.mjs";
 import { loadSettings, saveSettings } from "./settings.mjs";
 import { clearSession, loadSession, saveSession } from "./session.mjs";
+import { connectionTestTone, connectionTestText } from "./connection-status.mjs";
+import { deviceState, healthSummary, networkDeviceSummary, roleLabel } from "./device-status.mjs";
+import {
+  networkCreateResult,
+  networkRefreshState,
+  normalizeNetworkDraft,
+  networkDashboardSummary,
+  networkCapabilityRows,
+} from "./network-ui.mjs";
+import { connectionDiagnostics, streamStateTone, streamStateText } from "./connection-diagnostics.mjs";
+import { networkErrorKind, networkRecoveryState } from "./network-recovery.mjs";
+import { cpuDisplayName, cpuSelectionState, cpuOutputText } from "./cpu-ui.mjs";
+import { catalogAnimation, catalogDisplayName, catalogFacts, catalogSource, catalogTooltips } from "./inventory-catalog.mjs";
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const esc = value => String(value ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const quantityHTML = value => formatQuantity(value).replaceAll(",", ",<wbr>");
+const compactQuantityHTML = value => esc(formatCompactQuantity(value));
 const icon = name => `<i data-lucide="${name}" aria-hidden="true"></i>`;
-const icons = { Orbit, Network, LogOut, Boxes, ListChecks, Cpu, RadioTower, RefreshCw, Search, ListPlus, ChevronLeft, ChevronRight, ChevronDown, X, Plus, Minus, Package, Trash2, Check, Clock, CircleAlert, LogIn, ArrowUpRight, Server, Send, Pause, Play, Square, LayoutDashboard, Settings, Github, Bell, Activity, Monitor, SlidersHorizontal, Code2, FileText, CircleHelp };
+const icons = { Orbit, Network, LogOut, Boxes, ListChecks, Cpu, RadioTower, RefreshCw, Search, ListPlus, ChevronLeft, ChevronRight, ChevronDown, X, Plus, Minus, Package, Trash2, Check, Clock, CircleAlert, LogIn, ArrowUpRight, Server, Send, Pause, Play, Square, LayoutDashboard, Settings, Github, Bell, Activity, Monitor, SlidersHorizontal, Code2, FileText, CircleHelp, Copy, WifiOff };
 const paint = () => createIcons({ icons });
 const api = createAPI();
 const state = {
   member: null, network: null, networks: [], view: "dashboard", items: [], itemCache: new Map(),
   orders: [], devices: [], cpus: { cpus: [] }, icons: {}, filter: "", sort: "name", search: "",
-  cursor: "", nextCursor: "", cursors: [""], page: 0, selected: null, amount: "1",
+  cursor: "", nextCursor: "", cursors: [""], page: 0, inventoryLimit: 50, selected: null, amount: "1",
   cpuName: "", waitForCPU: false, inspector: "detail", draft: { version: 1, entries: [], receipts: {} },
   draftKey: "", draftBlocked: false, unchecked: new Set(), busy: false, preparing: false, inventoryLoading: false,
-  orderFilter: "active", orderGroup: "batch", stream: null, streamConnected: false, generation: 0,
+  orderFilter: "active", orderGroup: "batch", stream: null, streamConnected: false, streamState: "closed", generation: 0,
   context: 0, orderGeneration: 0, orderSnapshot: null, ordersLoading: false, ordersError: false,
   activeOrderCount: 0, activeOrdersTruncated: false, detailId: "", detailGeneration: 0,
   taskMode: "jobs", jobFilter: "unsettled", jobStorageError: false,
   settings: loadSettings(), settingsSection: "display", session: null,
+  connectionTest: { status: "idle", checkedAt: "", message: "" },
+  networkLoading: false, networkError: "", networkErrorKind: "", networkSnapshotReady: false, networkCreateBusy: false,
 };
 const jobs = createJobController({
   storage: localStorage, request: (path, options) => api.request(path, options),
@@ -55,7 +72,17 @@ const activeStates = new Set(["queued", "assigned", "computing", "running"]);
 const attentionStates = new Set(["failed", "needs_review"]);
 const endedStates = new Set(["done", "failed", "canceled", "expired"]);
 const stateNames = { queued: "排队中", assigned: "已派发", computing: "计算中", running: "合成中", done: "已完成", failed: "失败", canceled: "已撤回", expired: "已过期", needs_review: "结果待确认" };
-let searchTimer, toastTimer, streamTimer, streamRefreshTimer, queryController, ordersController, detailController, cpuCallback, inspectorFocus;
+let searchTimer, toastTimer, streamTimer, streamRefreshTimer, queryController, ordersController, detailController, cpuCallback, inspectorFocus, inventoryResizeTimer;
+let inventoryWheelAccumulation = 0;
+let inventoryWheelDrainTimer = 0;
+let spriteAnimationFrame = 0;
+const inventoryPrefetchControllers = new Set();
+const inventoryPageCache = new Map();
+const inventoryPageRequests = new Map();
+const INVENTORY_WHEEL_THRESHOLD = 80;
+const INVENTORY_WHEEL_MAX_BACKLOG = INVENTORY_WHEEL_THRESHOLD * 48;
+const INVENTORY_WHEEL_MAX_PAGES_PER_FRAME = 12;
+const INVENTORY_PREFETCH_DEPTH = 12;
 
 function toast(message, error = false, category = "general") {
   if (!error && category !== "general") {
@@ -87,7 +114,12 @@ function updateSettings(patch) {
     }
     if (Object.prototype.hasOwnProperty.call(patch, "reconnect") && state.network) {
       if (state.settings.reconnect) connectStream();
-      else state.stream?.close();
+      else {
+        state.stream?.close();
+        state.streamConnected = false;
+        state.streamState = "closed";
+        refreshHeader();
+      }
     }
     renderSettings();
     toast("设置已保存");
@@ -96,6 +128,67 @@ function updateSettings(patch) {
 
 function settingControl(key, label, description, checked) {
   return `<label class="setting-toggle"><span><strong>${label}</strong><small>${description}</small></span><input type="checkbox" data-setting="${key}" ${checked ? "checked" : ""}><span class="toggle-track" aria-hidden="true"></span></label>`;
+}
+
+function connectionDiagnosticsSnapshot() {
+  return connectionDiagnostics({
+    origin: location.origin,
+    member: state.member,
+    session: state.session,
+    network: state.network,
+    devices: state.devices,
+    streamState: state.streamState,
+    connectionTest: state.connectionTest,
+  });
+}
+
+function diagnosticFact(label, value, detail, tone = "idle") {
+  return `<div class="diagnostic-fact" data-state="${esc(tone)}"><span>${esc(label)}</span><strong><i class="status-dot" data-tone="${esc(tone)}"></i>${esc(value)}</strong><small>${esc(detail)}</small></div>`;
+}
+
+function connectionDiagnosticsHTML() {
+  const diagnostics = connectionDiagnosticsSnapshot();
+  const devices = diagnostics.devices;
+  const recovery = networkRecoveryState({
+    network: state.network,
+    devices: state.devices,
+    streamState: state.streamState,
+    loading: state.networkLoading,
+    error: state.networkError,
+    errorKind: state.networkErrorKind,
+    hasSnapshot: state.networkSnapshotReady,
+    formatTime: dateTime,
+    formatAge: age,
+  });
+  const deviceValue = devices.total ? `${devices.online} / ${devices.total} 在线` : "暂无设备观测";
+  const deviceDetail = devices.total
+    ? `${devices.offline} 台离线 · ${devices.stale} 台数据滞后`
+    : "等待 OC 节点上报状态";
+  const sessionDetail = diagnostics.session.expiresAt
+    ? `有效期至 ${dateTime(diagnostics.session.expiresAt)}`
+    : diagnostics.session.key === "active" ? "未返回会话有效期" : "登录后建立浏览器会话";
+  const networkDetail = state.network
+    ? `${recovery.detail} · 网络标识 ${state.network.id || "未返回"}`
+    : "请选择网络后开始同步";
+  const streamDetail = diagnostics.stream.key === "connected"
+    ? "实时事件会自动触发局部刷新"
+    : state.settings.reconnect ? "自动重连已开启，浏览器将继续尝试恢复" : "自动重连已关闭";
+  const communication = diagnostics.lastCommunication ? dateTime(diagnostics.lastCommunication) : "尚无记录";
+  const inventory = diagnostics.lastInventory ? dateTime(diagnostics.lastInventory) : "尚无记录";
+  const test = connectionTestText(diagnostics.connectionTest, dateTime);
+  return `<section class="connection-diagnostics" id="connection-diagnostics" aria-label="连接诊断"><div class="connection-diagnostics-heading"><strong>连接诊断</strong><small>状态随网络刷新与事件流自动更新</small></div><div class="connection-diagnostics-grid">${diagnosticFact("后端地址", diagnostics.origin, "页面通过同源代理连接后端", "ok")}${diagnosticFact("会话状态", diagnostics.session.label, sessionDetail, diagnostics.session.tone)}${diagnosticFact("当前网络", diagnostics.network.label, networkDetail, diagnostics.network.tone)}${diagnosticFact("事件流", streamStateText(diagnostics.stream.key), streamDetail, streamStateTone(diagnostics.stream.key))}${diagnosticFact("OC 节点", deviceValue, deviceDetail, devices.total && devices.offline === 0 && devices.stale === 0 ? "ok" : devices.total ? "warn" : "idle")}${diagnosticFact("最近通信", communication, "网络或 OC 节点最近一次心跳", diagnostics.lastCommunication ? "ok" : "idle")}${diagnosticFact("最近库存观测", inventory, "库存同步最近一次收到的时间", diagnostics.lastInventory ? "ok" : "idle")}${diagnosticFact("最近测试", test, diagnostics.connectionTest.checkedAt ? `测试时间 ${dateTime(diagnostics.connectionTest.checkedAt)}` : "尚未执行测试", connectionTestTone(diagnostics.connectionTest.status))}</div></section>`;
+}
+
+function renderConnectionDiagnostics() {
+  const target = $("#connection-diagnostics");
+  if (target) target.outerHTML = connectionDiagnosticsHTML();
+}
+
+function connectionSettingsHTML() {
+  return settingControl("reconnect", "自动重连", "网络恢复后自动重新建立事件流连接。", state.settings.reconnect)
+    + settingControl("rememberSession", "记住本次会话", "仅保存会话恢复信息，不保存原始访问令牌。", state.settings.rememberSession)
+    + connectionDiagnosticsHTML()
+    + `<div class="setting-actions"><button type="button" class="secondary" data-session-action="test"><i data-lucide="refresh-cw"></i>测试连接</button><button type="button" class="secondary" data-session-action="login"><i data-lucide="log-in"></i>重新登录</button><button type="button" class="secondary" data-session-action="clear"><i data-lucide="trash-2"></i>清除已保存会话</button></div>`;
 }
 
 function renderSettings() {
@@ -116,7 +209,7 @@ function renderSettings() {
     connection: {
       title: "连接与凭据",
       description: "管理服务连接、自动重连和浏览器会话。",
-      body: settingControl("reconnect", "自动重连", "网络恢复后自动重新建立事件流连接。", state.settings.reconnect) + settingControl("rememberSession", "记住本次会话", "仅保存会话恢复信息，不保存原始访问令牌。", state.settings.rememberSession) + `<div class="setting-fact"><span>后端地址</span><strong>${esc(location.origin)}</strong><small>页面通过同源代理连接后端；开发环境由启动参数配置。</small></div><div class="setting-fact"><span>会话状态</span><strong>${state.member ? "已连接" : "未连接"}</strong><small>${state.session?.expiresAt ? `会话有效期至 ${esc(dateTime(state.session.expiresAt))}` : "登录后可在此浏览器恢复会话。"}</small></div><div class="setting-actions"><button type="button" class="secondary" data-session-action="test"><i data-lucide="refresh-cw"></i>测试连接</button><button type="button" class="secondary" data-session-action="login"><i data-lucide="log-in"></i>重新登录</button><button type="button" class="secondary" data-session-action="clear"><i data-lucide="trash-2"></i>清除已保存会话</button></div>`,
+      body: connectionSettingsHTML(),
     },
   };
   const current = sections[section] || sections.display;
@@ -153,19 +246,121 @@ function age(value) {
 }
 
 function itemImage(item) {
+  const source = itemTextureSource(item);
+  if (source) return source;
+  return `<span class="missing-image" title="暂无已核验图标">${icon("package")}</span>`;
+}
+
+function itemTextureSource(item) {
+  if (item?.catalog?.image_url && item.catalog.image_state === "available") {
+    const animation = catalogAnimation(item);
+    if (animation) {
+      scheduleSpriteAnimation();
+      return `<span class="item-image item-image-sprite" data-sprite-item="${esc(item.id)}" data-sprite-url="${esc(item.catalog.image_url)}" data-sheet-width="${animation.width}" data-sheet-height="${animation.height}" role="img" aria-label="${esc(catalogDisplayName(item))}"></span>`;
+    }
+    return `<img class="item-image" src="${esc(item.catalog.image_url)}" width="32" height="32" alt="" loading="lazy">`;
+  }
   const filename = item?.kind === "item" ? state.icons[`${item.name}@${item.damage}`] : null;
   if (typeof filename === "string" && /^[a-f0-9]{64}\.png$/.test(filename)) {
     return `<img class="item-image" src="/assets/nei/${filename}" width="32" height="32" alt="" loading="lazy">`;
   }
-  return `<span class="missing-image" title="暂无已核验图标">${icon("package")}</span>`;
+  return "";
+}
+
+function scheduleSpriteAnimation() {
+  if (!spriteAnimationFrame) spriteAnimationFrame = requestAnimationFrame(animateSpriteImages);
+}
+
+function animateSpriteImages(timestamp) {
+  spriteAnimationFrame = 0;
+  const elements = $$(".item-image-sprite");
+  if (!elements.length) return;
+  for (const element of elements) {
+    const item = itemFor(element.dataset.spriteItem);
+    const animation = catalogAnimation(item);
+    if (!animation) continue;
+    const frameWidth = animation.frames[0].width;
+    const frameHeight = animation.frames[0].height;
+    const scale = Math.min(32 / frameWidth, 32 / frameHeight);
+    const cycle = animation.frames.reduce((total, frame) => total + frame.ticks, 0);
+    let tick = Math.floor(timestamp / 50) % cycle;
+    let frame = animation.frames[0];
+    for (const candidate of animation.frames) {
+      if (tick < candidate.ticks) {
+        frame = candidate;
+        break;
+      }
+      tick -= candidate.ticks;
+    }
+    element.style.backgroundImage = `url("${element.dataset.spriteUrl}")`;
+    element.style.backgroundSize = `${animation.width * scale}px ${animation.height * scale}px`;
+    element.style.backgroundPosition = `${-frame.x * scale}px ${-frame.y * scale}px`;
+  }
+  scheduleSpriteAnimation();
+}
+
+function itemHasTexture(item) {
+  return Boolean(itemTextureSource(item));
 }
 
 function itemFor(id) {
   return state.itemCache.get(String(id)) || Object.values(state.draft.receipts).find(r => r.item?.id === String(id))?.item;
 }
 
+function inventoryHoverHTML(item) {
+  if (!item) return "";
+  const label = catalogDisplayName(item);
+  const source = catalogSource(item);
+  const quantity = formatQuantity(item.quantity);
+  const status = item.craftable ? item.craftable_current_session === false ? "待重新核验" : "可合成" : "不可合成";
+  const sourceHTML = source ? `<span class="inventory-hover-source">${esc(source)}</span>` : "";
+  const catalogHTML = catalogFacts(item).map(([factLabel, value]) => `<div class="inventory-hover-catalog"><dt>${esc(factLabel)}</dt><dd>${esc(value)}</dd></div>`).join("");
+  const tooltips = catalogTooltips(item);
+  const tooltipHTML = tooltips.length
+    ? `<div class="inventory-hover-tooltip"><span>说明</span><ul>${tooltips.map(value => `<li>${esc(value)}</li>`).join("")}</ul></div>`
+    : "";
+  return `<div class="inventory-hover-head"><span class="inventory-hover-media">${itemImage(item)}</span><span><strong class="inventory-hover-title">${esc(label)}</strong>${sourceHTML}</span></div><dl class="inventory-hover-facts"><div><dt>精确数量</dt><dd>${esc(quantity)}</dd></div><div><dt>状态</dt><dd>${esc(status)}</dd></div><div><dt>物品 ID</dt><dd>${esc(item.id)}</dd></div>${catalogHTML}</dl>${tooltipHTML}`;
+}
+
+let inventoryHoverTimer;
+
+function hideInventoryHover() {
+  clearTimeout(inventoryHoverTimer);
+  const card = $("#inventory-hover-card");
+  if (!card) return;
+  card.hidden = true;
+  card.removeAttribute("data-placement");
+  card.innerHTML = "";
+}
+
+function showInventoryHover(button) {
+  const item = itemFor(button?.dataset.item);
+  const card = $("#inventory-hover-card");
+  const wrap = $("#view-inventory .table-wrap");
+  if (!item || !card || !wrap || matchMedia("(max-width: 800px)").matches) return;
+  clearTimeout(inventoryHoverTimer);
+  inventoryHoverTimer = setTimeout(() => {
+    if (!button.isConnected) return;
+    card.innerHTML = inventoryHoverHTML(item);
+    card.hidden = false;
+    scheduleSpriteAnimation();
+    const buttonRect = button.getBoundingClientRect();
+    const cardRect = card.getBoundingClientRect();
+    const tableRect = wrap.getBoundingClientRect();
+    const left = tableRect.left + (tableRect.width - cardRect.width) / 2;
+    const boundedLeft = Math.min(Math.max(10, left), Math.max(10, window.innerWidth - cardRect.width - 10));
+    const top = Math.max(tableRect.top + 12, buttonRect.top - cardRect.height - 12);
+    const boundedTop = Math.min(Math.max(10, top), Math.max(10, window.innerHeight - cardRect.height - 10));
+    card.style.left = `${boundedLeft}px`;
+    card.style.top = `${boundedTop}px`;
+    card.dataset.placement = "overlay";
+  }, 150);
+}
+
 const networkPath = (suffix = "", network = state.network?.id) => `/api/v1/networks/${encodeURIComponent(network)}${suffix}`;
 const maximum = () => state.network?.capabilities?.max_craft_quantity || "9223372036854775807";
+const cpuSelectionSupported = () => state.network?.capabilities?.cpu_selection === true;
+const cpuSelectionTitle = () => cpuSelectionSupported() ? "选择合成 CPU" : "当前 OC 未启用严格 CPU 指定";
 
 function renderDashboard() {
   const network = state.network;
@@ -174,7 +369,13 @@ function renderDashboard() {
   const activeJobs = jobs.state.sync ? [...jobs.state.sync.jobs.values()].filter(row => !row.settled_at).length : state.activeOrderCount;
   const onlineDevices = state.devices.filter(device => device.online).length;
   const networkState = !state.member ? "未连接" : !network ? "暂无网络" : network.online ? "在线" : "离线";
-  const networkMeta = !state.member ? "登录后开始同步" : !network ? "请选择一个网络" : `${network.name} · ${state.streamConnected ? "实时连接" : "等待连接"}`;
+  const networkMeta = !state.member ? "登录后开始同步" : !network ? "请选择一个网络" : network.online
+    ? `${network.name} · ${state.streamConnected ? "实时连接" : "等待连接"}`
+    : `${network.name} · 等待 OC 恢复`;
+  const networkCard = $("#dashboard-network-card");
+  if (networkCard) {
+    networkCard.dataset.state = !state.member || !network ? "idle" : network.online ? "online" : "offline";
+  }
   $("#dashboard-network-state").textContent = networkState;
   $("#dashboard-network-meta").textContent = networkMeta;
   $("#dashboard-inventory-count").textContent = formatQuantity(state.items.length);
@@ -220,21 +421,40 @@ function renderDashboard() {
   ];
   $("#dashboard-activity-list").innerHTML = activity.map(([label, value, time]) => `<div class="activity-row"><span class="activity-icon"><i data-lucide="activity"></i></span><span><strong>${esc(value)}</strong><small>${esc(label)}</small></span><time>${esc(time)}</time></div>`).join("");
   paint();
+  scheduleSpriteAnimation();
 }
 
 function refreshHeader() {
   $("#member-name").textContent = state.member?.name || "未登录";
   $("#logout").hidden = !state.member;
   const network = state.network;
-  $("#connection").textContent = !state.member ? "未登录" : !network ? "暂无网络" : !network.online ? "OC 离线" : state.streamConnected ? "已连接" : "状态重连中";
-  $("#connection").dataset.state = !state.member || !network ? "idle" : !network.online ? "offline" : state.streamConnected ? "online" : "reconnecting";
+  const recovery = networkRecoveryState({
+    network,
+    devices: state.devices,
+    streamState: state.streamState,
+    loading: state.networkLoading,
+    error: state.networkError,
+    errorKind: state.networkErrorKind,
+    hasSnapshot: state.networkSnapshotReady,
+  });
+  const connectionLabel = !state.member ? "未登录" : !network ? "暂无网络"
+    : recovery.key === "backend_unavailable" ? "后端不可达"
+      : recovery.key === "backend_error" ? "后端异常"
+        : recovery.key === "heartbeat_waiting" ? "等待游戏心跳"
+          : recovery.key === "oc_offline" ? "OC 离线"
+            : recovery.key === "reconnecting" ? "状态重连中"
+              : network.online ? "已连接" : "OC 离线";
+  $("#connection").textContent = connectionLabel;
+  $("#connection").dataset.state = !state.member || !network ? "idle" : recovery.tone === "ok" ? "online" : recovery.tone === "warn" ? "offline" : "reconnecting";
   $("#network-quality").textContent = network ? networkQualityLabel(network.quality) : "";
   $("#inventory-summary").textContent = network ? `${network.name} · ${network.online ? "在线" : "离线"}` : "尚未连接网络";
   $("#draft-count").textContent = state.draft.entries.length;
   renderDashboard();
+  renderConnectionDiagnostics();
 }
 
 function showView(view) {
+  hideInventoryHover();
   state.view = view;
   for (const name of ["dashboard", "inventory", "orders", "cpus", "network", "github", "settings"]) $(`#view-${name}`).hidden = name !== view;
   $$("[data-view]").forEach(button => {
@@ -255,6 +475,7 @@ function showView(view) {
     renderNetwork();
     if (state.network) refreshNetwork();
   }
+  if (view === "inventory") refreshInventoryCapacity();
   if (view === "dashboard") renderDashboard();
 }
 
@@ -283,22 +504,25 @@ function closeInspector(restore = true) {
 function renderInventory() {
   const tbody = $("#inventory-rows");
   tbody.innerHTML = state.items.map(item => `<tr data-selected="${state.selected?.id === item.id}" data-id="${esc(item.id)}">
-    <td><button class="item-button" data-item="${esc(item.id)}">${itemImage(item)}<span class="item-copy"><span class="item-name">${esc(item.label || item.name)}</span><span class="item-meta">${esc(item.name.split(":")[0])}${item.craftable ? " · 可合成" : ""}${!item.exact ? " · 身份待确认" : ""}</span></span></button></td>
-    <td><span class="stock-value ${String(item.quantity).length > 12 ? "long-number" : ""}">${quantityHTML(item.quantity)}</span><span class="freshness ${item.current_session ? "" : "stale"}">${item.current_session ? age(item.observed_at) : "库存待同步"}</span></td>
+    <td><button class="item-button ${itemHasTexture(item) ? "" : "missing-texture"}" data-item="${esc(item.id)}" aria-label="${esc(`${item.label || item.name}，库存 ${formatQuantity(item.quantity)}`)}">${itemImage(item)}<span class="item-copy"><span class="item-name">${esc(item.label || item.name)}</span><span class="item-meta">${esc(item.name.split(":")[0])}${item.craftable ? " · 可合成" : ""}${!item.exact ? " · 身份待确认" : ""}</span></span></button></td>
+    <td><span class="stock-value ${String(item.quantity).length > 12 ? "long-number" : ""} ${item.current_session ? "" : "stale"}" title="${esc(formatQuantity(item.quantity))}">${compactQuantityHTML(item.quantity)}</span><span class="freshness ${item.current_session ? "" : "stale"}">${item.current_session ? age(item.observed_at) : "库存待同步"}</span></td>
     <td><button class="icon-button" data-quick-add="${esc(item.id)}" title="加入清单" aria-label="将${esc(item.label || item.name)}加入清单" ${item.craftable && item.exact && !state.draftBlocked && !state.busy && !state.preparing ? "" : "disabled"}>${icon("plus")}</button></td>
   </tr>`).join("");
   $("#inventory-empty").hidden = state.items.length > 0;
   $("#inventory-empty").textContent = state.inventoryLoading ? "正在读取库存…" : !state.member ? "登录后查看库存" : !state.network ? "没有可访问的网络" : "没有匹配的物品";
+  $("#prev-page").hidden = false;
+  $("#next-page").hidden = false;
   $("#prev-page").disabled = state.page === 0 || state.inventoryLoading;
   $("#next-page").disabled = !state.nextCursor || state.inventoryLoading;
   $("#page-label").textContent = `第 ${state.page + 1} 页 · 本页 ${state.items.length} 项`;
   paint();
+  scheduleSpriteAnimation();
 }
 
 function renderDetail() {
   const item = state.selected;
   if (!item) {
-    $("#detail-panel").innerHTML = `<div class="draft-empty">尚未选择物品</div>`;
+    $("#detail-panel").innerHTML = `<div class="detail-empty">${icon("boxes")}<strong>选择一个物品</strong><span>从库存网格中选择物品后，这里会显示数量、状态与合成操作。</span></div>`;
     return;
   }
   const canAdd = item.craftable && item.exact && !state.draftBlocked && !state.busy && !state.preparing;
@@ -307,10 +531,11 @@ function renderDetail() {
     <span class="muted">库存数量</span><div class="detail-stock number ${String(item.quantity ?? "0").length > 12 ? "long-number" : ""}">${quantityHTML(item.quantity ?? "0")}</div><span class="item-meta">${esc(item.name)} · ${esc(item.damage)}</span>
     <div class="detail-facts"><div class="fact"><span>库存观测</span><span>${item.current_session ? age(item.observed_at) : "待同步"}</span></div><div class="fact"><span>合成样板</span><span>${item.craftable ? item.craftable_current_session ? "已确认" : "待重新核验" : "不可合成"}</span></div><div class="fact"><span>身份</span><span>${item.exact ? "精确" : "待确认"}</span></div></div>
     <label class="field-label" for="craft-quantity">合成数量</label><div class="stepper"><button data-step="-1" title="减少数量" aria-label="减少数量">${icon("minus")}</button><input id="craft-quantity" type="text" inputmode="numeric" maxlength="19" value="${esc(state.amount)}" autocomplete="off"><button data-step="1" title="增加数量" aria-label="增加数量">${icon("plus")}</button></div>
-    <span class="field-label">合成 CPU</span><button class="cpu-select" id="detail-cpu" disabled title="生产任务暂不支持指定 CPU"><span>自动分配 · 暂不支持指定 CPU</span>${icon("cpu")}</button>
+    <span class="field-label">合成 CPU</span><button class="cpu-select" id="detail-cpu" ${state.busy || state.preparing || !state.network ? "disabled" : ""} title="${cpuSelectionTitle()}"><span>${esc(state.cpuName || "自动分配")}${state.waitForCPU ? " · 等待" : ""}${!cpuSelectionSupported() ? " · 当前 OC 未启用" : ""}</span>${icon("cpu")}</button>
     <div class="detail-actions"><button class="primary wide" id="add-to-draft" ${canAdd ? "" : "disabled"}>${icon("list-plus")}加入清单</button><button class="secondary wide" id="submit-immediately" ${canAdd && jobs.state.support === "supported" && !state.busy ? "" : "disabled"}>${icon("send")}立即提交</button></div>
     <p id="detail-feedback" class="detail-feedback" role="status">${esc(reason || submissionStatus())}</p>`;
   paint();
+  scheduleSpriteAnimation();
 }
 
 function selectedDraftIds() {
@@ -395,15 +620,15 @@ function renderDraft() {
   const chosen = selectedDraftIds();
   $("#draft-count").textContent = entries.length;
   $("#draft-panel").innerHTML = state.draftBlocked ? `<p class="error">本机清单或生产任务记录无法恢复。请保留浏览器数据并核对已提交任务，不要重复提交。</p>` : `
-    <div class="draft-toolbar"><label class="check"><input id="draft-check-all" type="checkbox" ${chosen.length > 0 && chosen.length === entries.filter(e => e.status === "draft").length ? "checked" : ""} ${state.busy ? "disabled" : ""}>全选 · ${chosen.length} 项</label><button class="secondary" id="bulk-cpu" disabled title="生产任务暂不支持指定 CPU">${icon("cpu")}CPU</button></div>
+    <div class="draft-toolbar"><label class="check"><input id="draft-check-all" type="checkbox" ${chosen.length > 0 && chosen.length === entries.filter(e => e.status === "draft").length ? "checked" : ""} ${state.busy ? "disabled" : ""}>全选 · ${chosen.length} 项</label><button class="secondary" id="bulk-cpu" ${!cpuSelectionSupported() || !chosen.length || state.busy ? "disabled" : ""} title="${cpuSelectionTitle()}">${icon("cpu")}CPU</button></div>
     ${entries.map(entry => `<div class="draft-entry" data-draft-id="${esc(entry.id)}">
       <div class="draft-entry-top"><input class="draft-check" type="checkbox" aria-label="选择${esc(entry.item.label)}" data-check="${esc(entry.id)}" ${state.unchecked.has(entry.id) ? "" : "checked"} ${entry.status === "draft" && !state.busy ? "" : "disabled"}>${itemImage(entry.item)}<label>${esc(entry.item.label)}</label><button class="icon-button" data-remove="${esc(entry.id)}" title="移除草稿" aria-label="移除${esc(entry.item.label)}草稿" ${entry.status === "draft" && !state.busy ? "" : "disabled"}>${icon("trash-2")}</button></div>
-      <div class="draft-entry-fields"><input class="draft-quantity" data-quantity="${esc(entry.id)}" type="text" inputmode="numeric" maxlength="19" aria-label="${esc(entry.item.label)}合成数量" value="${esc(entry.quantity)}" ${entry.status === "draft" && !state.busy ? "" : "disabled"}><button class="cpu-select" disabled title="生产任务暂不支持指定 CPU"><span>${esc(entry.cpu_name || "自动分配")}${entry.wait_for_cpu ? " · 等待" : ""}</span>${icon("cpu")}</button></div>
-      ${entry.status === "draft" && (entry.cpu_name || entry.wait_for_cpu) ? `<p class="draft-note">已保存的指定 CPU 策略不受支持。</p><button class="secondary wide" data-reset-cpu="${esc(entry.id)}">${icon("cpu")}改为自动分配</button>` : ""}
+      <div class="draft-entry-fields"><input class="draft-quantity" data-quantity="${esc(entry.id)}" type="text" inputmode="numeric" maxlength="19" aria-label="${esc(entry.item.label)}合成数量" value="${esc(entry.quantity)}" ${entry.status === "draft" && !state.busy ? "" : "disabled"}><button class="cpu-select" data-draft-cpu="${esc(entry.id)}" ${entry.status !== "draft" || state.busy || !cpuSelectionSupported() ? "disabled" : ""} title="${cpuSelectionTitle()}"><span>${esc(entry.cpu_name || "自动分配")}${entry.wait_for_cpu ? " · 等待" : ""}${!cpuSelectionSupported() ? " · 当前 OC 未启用" : ""}</span>${icon("cpu")}</button></div>
+      ${entry.status === "draft" && (entry.cpu_name || entry.wait_for_cpu) ? `<p class="draft-note">提交时会保留此 CPU 策略。</p><button class="secondary wide" data-reset-cpu="${esc(entry.id)}">${icon("cpu")}改为自动分配</button>` : ""}
       ${entry.status !== "draft" || entry.error ? `<p class="draft-note" data-status="${entry.status}">${entry.status === "submitting" ? "正在提交" : entry.status === "uncertain" ? "受理结果待核对" : esc(entry.error)}</p>` : ""}
       ${entry.status === "uncertain" ? isJobClaim(entry) ? `<button class="secondary wide" data-job-reconcile="${esc(entry.batch_id.slice(4))}">${icon("refresh-cw")}核对原生产任务</button>` : `<button class="secondary wide" data-reconcile="${esc(entry.id)}">${icon("refresh-cw")}核对原单项订单</button>` : ""}
     </div>`).join("")}
-    ${entries.length ? `<div class="draft-submit"><button class="primary" id="submit-draft" ${chosen.length && !state.busy && jobs.state.support === "supported" && !entries.some(e=>chosen.includes(e.id)&&(e.cpu_name||e.wait_for_cpu)) ? "" : "disabled"}>${icon("send")}${state.busy ? "正在提交生产任务" : `提交 ${chosen.length} 项生产任务`}</button><p class="draft-note">${esc(submissionStatus())}</p></div>` : `<div class="draft-empty">清单为空</div>`}`;
+    ${entries.length ? `<div class="draft-submit"><button class="primary" id="submit-draft" ${chosen.length && !state.busy && jobs.state.support === "supported" ? "" : "disabled"}>${icon("send")}${state.busy ? "正在提交生产任务" : `提交 ${chosen.length} 项生产任务`}</button><p class="draft-note">${esc(submissionStatus())}</p></div>` : `<div class="draft-empty">清单为空</div>`}`;
   paint();
 }
 
@@ -542,26 +767,28 @@ function renderCPUs() {
   const outputs = cpus.filter(cpu => cpu.output).length;
   const observed = state.cpus.observed_at || state.network?.services?.cpu_observed_at;
   const busyPercent = cpus.length ? Math.round((busy / cpus.length) * 100) : 0;
+  const donutLevel = Math.round(busyPercent / 5) * 5;
   $("#cpu-summary").textContent = `${cpus.length} 台已观测 · ${observed ? age(observed) : "未观测"}${state.cpus.truncated ? " · 列表不完整" : ""}`;
   const bars = cpus.length ? cpus.map((cpu, index) => {
     const height = cpu.busy ? 72 + (index % 4) * 6 : 18 + (index % 3) * 5;
-    return `<i style="height:${height}%" title="${esc(cpu.name || `CPU ${index + 1}`)} · ${cpu.busy ? "忙碌" : "空闲"}"></i>`;
+    return `<i class="load-bar level-${height}" title="${esc(cpuDisplayName(cpu, index))} · ${cpu.busy ? "忙碌" : "空闲"}"></i>`;
   }).join("") : `<span class="muted">暂无负载样本</span>`;
-  const overview = `<section id="cpu-overview" class="cpu-overview" aria-label="CPU 摘要">
-    <div class="cpu-donut" style="--value:${busyPercent}%"><strong>${busyPercent}%</strong><small>忙碌</small><span>${busy} / ${cpus.length || 0} 台</span></div>
+  const overview = `<div class="cpu-donut level-${donutLevel}" aria-label="忙碌 ${busyPercent}%"><strong>${busyPercent}%</strong><small>忙碌</small><span>${busy} / ${cpus.length || 0} 台</span></div>
     <div class="cpu-legend">
       <div><span>已观测 CPU</span><b class="number">${formatQuantity(cpus.length)}</b></div>
       <div><span>空闲 CPU</span><b class="number">${formatQuantity(idle)}</b></div>
       <div><span>可见输出</span><b class="number">${formatQuantity(outputs)}</b></div>
     </div>
     <div class="cpu-load"><span class="muted">当前快照负载</span><div class="load-bars">${bars}</div></div>
-  </section>`;
+  `;
   const rows = cpus.length ? `<div class="cpu-table" role="list" aria-label="CPU 列表">${cpus.map((cpu, index) => {
-    const output = cpu.output ? `${cpu.output.label || cpu.output.name || "未知产物"} × ${formatQuantity(cpu.output.quantity)}` :
-      cpu.output_unavailable || (cpu.busy ? "输出信息暂不可用" : "暂无合成输出");
-    return `<div class="cpu-row" role="listitem">${icon("cpu")}<div><h2>${esc(cpu.name || `未命名 CPU ${index + 1}`)}</h2><p>${formatQuantity(cpu.storage)} B · ${formatQuantity(cpu.coprocessors)} 协处理器 · 快照 ${esc(cpu.id || `${index + 1}`)}</p><p>${esc(output)}</p></div><span class="state-label ${cpu.busy ? "busy" : ""}">${cpu.busy ? "忙碌" : "空闲"}</span></div>`;
+    const output = cpuOutputText(cpu);
+    const displayName = cpuDisplayName(cpu, index);
+    const unnamed = !cpu.name?.trim();
+    return `<div class="cpu-row" role="listitem">${icon("cpu")}<div><h2>${esc(displayName)}</h2><p>${formatQuantity(cpu.storage)} B · ${formatQuantity(cpu.coprocessors)} 协处理器 · 快照 ${esc(cpu.id || `${index + 1}`)}</p>${unnamed ? `<p class="muted">游戏未返回 CPU 名称；严格指定需要在游戏内设置唯一名称。</p>` : ""}<p>${esc(output)}</p></div><span class="state-label ${cpu.busy ? "busy" : ""}">${cpu.busy ? "忙碌" : "空闲"}</span></div>`;
   }).join("")}</div>` : `<div class="empty">暂无 CPU 观测</div>`;
-  $("#cpu-list").innerHTML = overview + rows;
+  $("#cpu-overview").innerHTML = overview;
+  $("#cpu-list").innerHTML = rows;
   renderDashboard();
   paint();
 }
@@ -586,10 +813,13 @@ async function chooseCPU(callback) {
   const cpus = state.cpus.cpus || [];
   const counts = new Map();
   cpus.forEach(cpu => counts.set(cpu.name, (counts.get(cpu.name) || 0) + 1));
-  $("#cpu-choice-error").textContent = supported ? "" : "当前 OC 不支持严格指定 CPU，使用自动分配。";
+  $("#cpu-choice-error").textContent = supported ? "只有游戏内设置了唯一名称的 CPU 才能严格指定；未命名 CPU 只能自动分配。" : "当前 OC 不支持严格指定 CPU，使用自动分配。";
   $("#cpu-options").innerHTML = `<button class="cpu-option" data-cpu-auto><span><strong>自动分配</strong></span>${icon("check")}</button>` + cpus.map((cpu, index) => {
-    const valid = supported && cpu.name?.trim() && counts.get(cpu.name) === 1;
-    return `<div><button class="cpu-option" data-cpu-index="${index}" ${valid ? "" : "disabled"} title="${!supported ? "指定 CPU 不可用" : counts.get(cpu.name) !== 1 ? "CPU 名称重复" : !cpu.name.trim() ? "CPU 未命名" : cpu.busy ? "CPU 忙碌，可选择等待" : "指定此 CPU"}"><span><strong>${esc(cpu.name || "未命名 CPU")}</strong><small>${formatQuantity(cpu.storage)} B · ${cpu.coprocessors} 协处理器</small></span><span class="state-label ${cpu.busy ? "busy" : ""}">${cpu.busy ? "忙碌" : "空闲"}</span></button>${valid && cpu.busy ? `<button class="secondary wide" data-cpu-wait="${index}">${icon("clock")}等待此 CPU</button>` : ""}</div>`;
+    const selection = cpuSelectionState(cpu, cpus, supported);
+    const valid = selection.selectable;
+    const displayName = cpuDisplayName(cpu, index);
+    const title = valid ? (cpu.busy ? "CPU 忙碌，可选择等待" : "指定此 CPU") : selection.reason;
+    return `<div><button class="cpu-option" data-cpu-index="${index}" ${valid ? "" : "disabled"} title="${esc(title)}"><span><strong>${esc(displayName)}</strong><small>${formatQuantity(cpu.storage)} B · ${cpu.coprocessors} 协处理器 · 快照 ${esc(cpu.id || `${index + 1}`)}</small>${!valid ? `<em class="cpu-option-reason">${esc(selection.reason)}</em>` : ""}</span><span class="state-label ${cpu.busy ? "busy" : ""}">${cpu.busy ? "忙碌" : "空闲"}</span></button>${valid && cpu.busy ? `<button class="secondary wide" data-cpu-wait="${index}">${icon("clock")}等待此 CPU</button>` : ""}</div>`;
   }).join("");
   paint();
   if (!$("#cpu-dialog").open) $("#cpu-dialog").showModal();
@@ -773,10 +1003,43 @@ async function refreshOrderDetail() {
 
 function renderNetwork() {
   const network = state.network;
+  const feedback = $("#network-feedback");
+  if (feedback) {
+    const status = networkRefreshState({ loading: state.networkLoading, error: state.networkError, hasSnapshot: state.networkSnapshotReady });
+    feedback.hidden = status.hidden;
+    feedback.dataset.state = status.tone;
+    feedback.innerHTML = status.hidden ? "" : `<span>${esc(status.text)}</span>${status.retry ? `<button type="button" class="secondary" data-network-retry><i data-lucide="refresh-cw"></i>重试</button>` : ""}`;
+  }
+  const refreshButton = $("#refresh-network");
+  if (refreshButton) {
+    refreshButton.disabled = state.networkLoading;
+    refreshButton.setAttribute("aria-busy", String(state.networkLoading));
+  }
+  const addButton = $("#add-network");
+  if (addButton) {
+    addButton.disabled = state.networkCreateBusy;
+    addButton.title = state.member?.admin ? "创建一个新的网络" : "仅管理员可创建网络";
+  }
+  const recovery = $("#network-recovery");
+  if (recovery) {
+    const status = networkRecoveryState({
+      network: state.network,
+      devices: state.devices,
+      streamState: state.streamState,
+      loading: state.networkLoading,
+      error: state.networkError,
+      errorKind: state.networkErrorKind,
+      hasSnapshot: state.networkSnapshotReady,
+      formatTime: dateTime,
+      formatAge: age,
+    });
+    recovery.hidden = status.key === "healthy" || status.key === "loading";
+    recovery.dataset.state = status.key;
+    recovery.innerHTML = networkRecoveryHTML(status);
+  }
   if (!network) {
     $("#network-summary").textContent = "尚未连接网络";
     $("#network-info").innerHTML = `<div class="empty empty-state"><i data-lucide="wifi-off"></i><strong>尚未连接网络</strong><span>添加或选择一个网络后查看 OC 节点、服务能力与同步状态。</span><button class="secondary" data-view="settings">打开设置</button></div>`;
-    $("#network-table").innerHTML = "";
     renderDashboard();
     paint();
     return;
@@ -784,76 +1047,364 @@ function renderNetwork() {
   $("#network-summary").textContent = network.name;
   const caps = network.capabilities || {};
   const services = network.services || {};
+  const deviceSummary = networkDeviceSummary(state.devices);
+  const dashboard = networkDashboardSummary(network, state.devices);
   const bridgeMode = network.bridge_mode === "cooperative" ? "多 OC 协作" : network.bridge_mode === "single" ? "单 OC" : network.bridge_mode || "标准";
-  const capabilities = [
-    caps.inventory ? "库存" : "",
-    caps.recipes ? "配方" : "",
-    caps.craft ? "合成" : "",
-    caps.cpu_output ? "CPU 输出" : "",
-  ].filter(Boolean).join(" · ") || "尚未声明";
+  const healthLabel = dashboard.health === "healthy"
+    ? "网络健康"
+    : dashboard.health === "degraded"
+      ? "存在同步告警"
+      : dashboard.health === "waiting" ? "等待节点" : "网络离线";
+  const healthTone = dashboard.health === "healthy" ? "ok" : dashboard.health === "waiting" ? "idle" : "warn";
+  const healthIcon = dashboard.health === "healthy" ? "check" : dashboard.health === "offline" ? "wifi-off" : "circle-alert";
+  const capabilityRows = networkCapabilityRows(caps, services);
   const facts = [
-    ["服务状态", network.online ? "在线" : "离线"],
-    ["桥接模式", bridgeMode],
-    ["数据质量", networkQualityLabel(network.quality)],
-    ["最近通信", dateTime(network.last_seen)],
-    ["最近库存观测", dateTime(network.last_inventory)],
-    ["最近 CPU 观测", dateTime(services.cpu_observed_at)],
-    ["单次最大合成量", formatQuantity(caps.max_craft_quantity)],
-    ["服务能力", capabilities],
-    ["数量读取器", `${formatQuantity(services.quantity_readers || 0)} 个`],
-    ["严格指定 CPU", caps.cpu_selection ? "可用" : "当前 OC 不可用"],
+    ["最近通信", dateTime(network.last_seen), "网络或 OC 节点最近一次心跳"],
+    ["最近库存观测", dateTime(network.last_inventory), "库存同步最近一次收到的时间"],
+    ["最近 CPU 观测", dateTime(services.cpu_observed_at), "CPU 状态快照最近更新时间"],
+    ["单次最大合成量", formatQuantity(caps.max_craft_quantity), "当前 OC 报告的上限"],
+    ["数据质量", networkQualityLabel(network.quality), "服务端对当前快照的判断"],
+    ["数量读取器", `${formatQuantity(services.quantity_readers || 0)} 个`, "参与库存数量读取的 OC 节点"],
   ];
-  const deviceRows = state.devices.length ? state.devices.map(device => {
-    const role = device.role === "primary" ? "主设备" : device.role === "quantity_worker" ? "数量助手" : device.role || "设备";
-    const status = device.revoked ? "已撤销" : device.online ? "在线" : "离线";
-    return `<div class="network-table-row"><span><strong>${esc(device.name || device.id)}</strong><small class="task-sub">${esc(device.id)}</small></span><span>${esc(role)}</span><span class="state-label ${device.online && !device.revoked ? "" : "offline"}">${status}</span><span>${esc(age(device.last_seen))}</span><span>${esc(age(device.last_inventory))}</span><span class="muted">${esc(device.session_id || "未建立会话")}</span></div>`;
+  const deviceCards = state.devices.length ? state.devices.map(device => {
+    const status = deviceState(device);
+    const health = healthSummary(device.health);
+    const details = [
+      `通信 · ${age(device.last_seen)}`,
+      `库存 · ${age(device.last_inventory)}`,
+      health.diagnostics + health.readFailures > 0 ? `${health.diagnostics + health.readFailures} 项诊断` : "无诊断",
+    ];
+    return `<article class="device-card" data-state="${status.key}"><div class="device-card-head"><span class="device-icon">${icon(device.role === "primary" ? "radio-tower" : "boxes")}</span><span class="state-label ${status.tone}"><i class="status-dot" data-tone="${status.tone === "online" ? "ok" : status.tone === "busy" ? "warn" : "idle"}></i>${status.label}</span></div><div class="device-card-title"><h3>${esc(device.name || device.id)}</h3><span>${esc(roleLabel(device.role))}</span></div><div class="device-card-meta">${details.map(detail => `<span>${esc(detail)}</span>`).join("")}</div><small class="device-card-session">会话 ${esc(device.session_id || "未建立")}</small></article>`;
   }).join("") : `<div class="empty">暂无设备观测</div>`;
-  $("#network-info").innerHTML = `<div class="network-toolbar"><span>${esc(network.name)} · ${esc(network.id)}</span><span class="muted">${state.devices.length} 台设备 · ${network.online ? "实时连接" : "等待 OC 恢复"}</span></div><div class="network-facts">${facts.map(([label, value]) => `<div class="fact"><span>${esc(label)}</span><span>${esc(value)}</span></div>`).join("")}</div><div class="network-table" id="network-table"><div class="network-table-head"><span>设备</span><span>角色</span><span>状态</span><span>最近通信</span><span>库存观测</span><span>会话</span></div>${deviceRows}</div>`;
+  const deviceRows = state.devices.length ? state.devices.map(device => {
+    const status = deviceState(device);
+    return `<div class="network-table-row"><span><strong>${esc(device.name || device.id)}</strong><small class="task-sub">${esc(device.id)}</small></span><span>${esc(roleLabel(device.role))}</span><span class="state-label ${status.tone}">${status.label}</span><span>${esc(age(device.last_seen))}</span><span>${esc(age(device.last_inventory))}</span><span class="muted">${esc(device.session_id || "未建立会话")}</span></div>`;
+  }).join("") : `<div class="empty">暂无设备观测</div>`;
+  const deviceStatus = deviceSummary.total ? `${deviceSummary.online} / ${deviceSummary.total} 在线${deviceSummary.stale ? ` · ${deviceSummary.stale} 台滞后` : ""}` : "暂无设备观测";
+  const capabilityHTML = capabilityRows.map(row => `<div class="network-capability" data-state="${esc(row.tone)}"><span class="network-capability-icon">${icon(row.tone === "ok" ? "check" : "minus")}</span><span><strong>${esc(row.label)}</strong><small>${esc(row.detail)}</small></span><b>${esc(row.value)}</b></div>`).join("");
+  const factHTML = facts.map(([label, value, detail]) => `<div class="network-fact"><span>${esc(label)}</span><strong>${esc(value)}</strong><small>${esc(detail)}</small></div>`).join("");
+  const metricHTML = [
+    ["OC 节点", dashboard.total ? `${dashboard.online} / ${dashboard.total}` : "—", dashboard.total ? (dashboard.stale ? `${dashboard.stale} 台数据滞后` : "在线节点") : "等待节点上报", dashboard.total && dashboard.offline === 0 && dashboard.stale === 0 ? "ok" : dashboard.total ? "warn" : "idle"],
+    ["桥接模式", bridgeMode, network.online ? "实时心跳" : "等待 OC 恢复", network.online ? "ok" : "warn"],
+    ["服务能力", `${dashboard.serviceCount} / 5`, caps.cpu_selection ? "包含严格 CPU 指定" : "基础能力可用", dashboard.serviceCount >= 3 ? "ok" : "idle"],
+    ["事件流", state.streamState === "connected" ? "已连接" : state.streamState === "reconnecting" ? "重连中" : "已关闭", "浏览器实时刷新", state.streamState === "connected" ? "ok" : "warn"],
+  ].map(([label, value, detail, tone]) => `<div class="network-metric" data-state="${esc(tone)}"><span>${esc(label)}</span><strong>${esc(value)}</strong><small>${esc(detail)}</small></div>`).join("");
+  $("#network-info").innerHTML = `<section class="network-hero"><div class="network-hero-copy"><span class="network-eyebrow">当前网络</span><div class="network-title-row"><h2>${esc(network.name)}</h2><span class="network-health" data-state="${esc(healthTone)}">${icon(healthIcon)}${esc(healthLabel)}</span></div><p class="network-id">${esc(network.id)} · ${esc(deviceStatus)}</p></div><div class="network-hero-meta"><span>最近通信</span><strong>${esc(dashboard.lastCommunication ? age(dashboard.lastCommunication) : "未观测")}</strong><small>${network.online ? "网络正在接收 OC 心跳" : "等待 OpenComputers 恢复"}</small></div></section><section class="network-metrics" aria-label="网络摘要">${metricHTML}</section><div class="network-dashboard-grid"><section class="network-panel network-capabilities-panel"><div class="network-panel-heading"><div><span class="network-eyebrow">能力矩阵</span><h2>服务能力</h2></div><span class="network-panel-count">${dashboard.serviceCount} / 5</span></div><div class="network-capabilities">${capabilityHTML}</div></section><section class="network-panel network-facts-panel"><div class="network-panel-heading"><div><span class="network-eyebrow">同步观测</span><h2>运行事实</h2></div><i data-lucide="activity" aria-hidden="true"></i></div><div class="network-facts">${factHTML}</div></section></div><section class="network-panel network-devices-panel" aria-label="OC 节点"><div class="network-panel-heading"><div><span class="network-eyebrow">设备编排</span><h2>OC 节点</h2><span class="muted">每台设备的连接、角色与库存同步状态</span></div><span class="network-panel-count">${esc(deviceStatus)}</span></div><div class="device-cards">${deviceCards}</div><div class="network-device-table"><div class="network-table-head"><span>设备</span><span>角色</span><span>状态</span><span>最近通信</span><span>库存观测</span><span>会话</span></div>${deviceRows}</div></section>`;
   renderDashboard();
   paint();
 }
 
+function networkRecoveryHTML(status) {
+  const action = status.action === "refresh"
+    ? `<button type="button" class="secondary" data-network-recovery="refresh"><i data-lucide="refresh-cw"></i>${esc(status.actionLabel)}</button>`
+    : status.action === "reconnect"
+      ? `<button type="button" class="secondary" data-network-recovery="reconnect"><i data-lucide="radio-tower"></i>${esc(status.actionLabel)}</button>`
+      : status.action === "settings"
+        ? `<button type="button" class="secondary" data-network-recovery="settings"><i data-lucide="settings"></i>${esc(status.actionLabel)}</button>`
+        : "";
+  return `<div class="network-recovery-copy"><strong>${esc(status.label)}</strong><span>${esc(status.detail)}</span></div>${action}`;
+}
+
 async function refreshNetwork() {
-  if (!state.network) return;
+  if (!state.network || state.networkLoading) return;
   const context = state.context;
+  state.networkLoading = true;
+  state.networkError = "";
+  state.networkErrorKind = "";
+  refreshHeader();
+  renderNetwork();
   try {
     const [value, devices] = await Promise.all([api.request(networkPath()), api.request(networkPath("/devices"))]);
     if (context !== state.context) return;
     const onlineChanged = state.network.online !== value.online;
     state.network = value;
     state.devices = devices;
+    state.networkSnapshotReady = true;
     refreshHeader();
     renderNetwork();
     if (onlineChanged && !$("#draft-panel").contains(document.activeElement)) renderDraft();
     if (onlineChanged && !$("#detail-panel").contains(document.activeElement)) renderDetail();
-  } catch (error) { if (context === state.context && state.view === "network") toast(errorText(error), true, "network"); }
+  } catch (error) {
+    if (context !== state.context) return;
+    state.networkError = errorText(error) || "网络状态读取失败，请稍后重试。";
+    state.networkErrorKind = networkErrorKind(error);
+    refreshHeader();
+    if (state.view === "network") toast(state.networkError, true, "network");
+  } finally {
+    if (context === state.context) {
+      state.networkLoading = false;
+      renderNetwork();
+      refreshHeader();
+      renderConnectionDiagnostics();
+    }
+  }
+}
+
+function resetNetworkDialog() {
+  const form = $("#network-form");
+  if (form) form.reset();
+  const error = $("#network-form-error");
+  if (error) { error.textContent = ""; error.hidden = true; }
+  const result = $("#network-create-result");
+  if (result) result.hidden = true;
+  const token = $("#network-device-token");
+  if (token) token.textContent = "";
+  const submit = $("#create-network");
+  if (submit) { submit.disabled = false; submit.removeAttribute("aria-busy"); submit.innerHTML = `${icon("plus")}创建网络`; }
+  paint();
+}
+
+function openNetworkDialog() {
+  if (!state.member) { showLogin(); return; }
+  if (!state.member?.admin) { toast("当前账号没有创建网络权限。", true, "network"); return; }
+  resetNetworkDialog();
+  $("#network-dialog").showModal();
+  $("#network-name")?.focus();
+}
+
+async function createNetwork(event) {
+  event.preventDefault();
+  if (state.networkCreateBusy) return;
+  const form = new FormData(event.currentTarget);
+  const draft = normalizeNetworkDraft({
+    name: form.get("name"), server_group: form.get("server_group"), source: form.get("source"),
+  });
+  const error = $("#network-form-error");
+  if (!draft.ok) {
+    error.textContent = draft.error;
+    error.hidden = false;
+    return;
+  }
+  const submit = $("#create-network");
+  state.networkCreateBusy = true;
+  error.textContent = "";
+  error.hidden = true;
+  submit.disabled = true;
+  submit.setAttribute("aria-busy", "true");
+  $$("[data-close]", $("#network-dialog")).forEach(button => { button.disabled = true; });
+  submit.innerHTML = `${icon("refresh-cw")}正在创建…`;
+  paint();
+  try {
+    const result = networkCreateResult(await api.request("/api/v1/networks", { method: "POST", body: draft.value }));
+    if (!result.network) throw new Error("网络创建响应无效。");
+    state.networks = [...state.networks.filter(network => network.id !== result.network.id), result.network];
+    $("#network").innerHTML = state.networks.map(network => `<option value="${esc(network.id)}">${esc(network.name)}</option>`).join("");
+    $("#network").value = result.network.id;
+    await switchNetwork(result.network.id);
+    const token = $("#network-device-token");
+    token.textContent = result.deviceToken || "后端未返回设备令牌，请检查服务日志。";
+    $("#network-create-result").hidden = false;
+    submit.disabled = true;
+    submit.removeAttribute("aria-busy");
+    submit.innerHTML = `${icon("check")}已创建`;
+    toast("网络已创建，设备令牌仅显示一次。", false, "network");
+    paint();
+  } catch (requestError) {
+    error.textContent = errorText(requestError) || "网络创建失败，请稍后重试。";
+    error.hidden = false;
+    submit.disabled = false;
+    submit.removeAttribute("aria-busy");
+    submit.innerHTML = `${icon("plus")}创建网络`;
+    paint();
+  } finally {
+    state.networkCreateBusy = false;
+    $$("[data-close]", $("#network-dialog")).forEach(button => { button.disabled = false; });
+    renderNetwork();
+  }
+}
+
+function inventoryPageLimit() {
+  const fallback = 50;
+  if (matchMedia("(max-width: 900px)").matches) return fallback;
+  const wrap = $("#view-inventory .table-wrap");
+  if (!wrap || wrap.clientWidth < 100 || wrap.clientHeight < 100) return state.inventoryLimit || fallback;
+  const empty = $("#inventory-empty");
+  const wasEmptyVisible = empty && !empty.hidden;
+  if (wasEmptyVisible) empty.hidden = true;
+  const width = wrap.clientWidth;
+  const height = wrap.clientHeight;
+  if (wasEmptyVisible) empty.hidden = false;
+  const gap = 8;
+  const cardWidth = 92;
+  const cardHeight = 112;
+  const padding = 24;
+  const columns = Math.max(1, Math.floor((width - padding + gap) / (cardWidth + gap)));
+  const rows = Math.max(1, Math.floor((height - padding + gap) / (cardHeight + gap)));
+  wrap.style.setProperty("--inventory-rows", String(rows));
+  return Math.min(200, Math.max(12, columns * rows));
+}
+
+function refreshInventoryCapacity() {
+  const nextLimit = inventoryPageLimit();
+  if (nextLimit === state.inventoryLimit) return false;
+  state.inventoryLimit = nextLimit;
+  if (state.network && state.view === "inventory" && !state.inventoryLoading) loadInventory(true);
+  return true;
+}
+
+function inventoryQuerySpec(limit) {
+  return { search: state.search, sort: state.sort, filter: state.filter, limit };
+}
+
+function inventoryPageKey(cursor, spec) {
+  return JSON.stringify([spec.search, spec.sort, spec.filter, spec.limit, cursor]);
+}
+
+function requestInventoryPage(cursor, limit, signal, spec = inventoryQuerySpec(limit)) {
+  const key = inventoryPageKey(cursor, spec);
+  const cached = inventoryPageCache.get(key);
+  if (cached) return Promise.resolve(cached);
+  const pending = inventoryPageRequests.get(key);
+  if (pending) return pending;
+  const query = new URLSearchParams({ q: spec.search, sort: spec.sort, limit: String(spec.limit), consistency: spec.sort === "name" ? "live" : "strict" });
+  if (spec.filter) query.set("craftable", spec.filter);
+  if (cursor) query.set("cursor", cursor);
+  const request = api.request(networkPath(`/items?${query}`), signal ? { signal } : undefined)
+    .then(value => {
+      const page = { items: value.items || [], nextCursor: value.next_cursor || "" };
+      inventoryPageCache.set(key, page);
+      return page;
+    })
+    .finally(() => {
+      if (inventoryPageRequests.get(key) === request) inventoryPageRequests.delete(key);
+    });
+  inventoryPageRequests.set(key, request);
+  return request;
+}
+
+async function prefetchInventoryPages(cursor, generation, limit) {
+  const spec = inventoryQuerySpec(limit);
+  const controller = new AbortController();
+  inventoryPrefetchControllers.add(controller);
+  let nextCursor = cursor;
+  try {
+    for (let index = 0; index < INVENTORY_PREFETCH_DEPTH && nextCursor; index++) {
+      try {
+        const page = await requestInventoryPage(nextCursor, limit, controller.signal, spec);
+        nextCursor = page.nextCursor;
+      } catch {
+        return;
+      }
+    }
+  } finally {
+    inventoryPrefetchControllers.delete(controller);
+  }
 }
 
 async function loadInventory(reset = false) {
   if (!state.network) return;
-  if (reset) { state.page = 0; state.cursor = ""; state.cursors = [""]; }
+  const limit = inventoryPageLimit();
+  if (limit !== state.inventoryLimit) reset = true;
+  state.inventoryLimit = limit;
+  if (reset) {
+    clearTimeout(inventoryWheelDrainTimer);
+    inventoryWheelDrainTimer = 0;
+    for (const controller of inventoryPrefetchControllers) controller.abort();
+    inventoryPrefetchControllers.clear();
+    inventoryPageCache.clear();
+    inventoryPageRequests.clear();
+    state.page = 0;
+    state.cursor = "";
+    state.cursors = [""];
+    inventoryWheelAccumulation = 0;
+  }
   queryController?.abort();
   queryController = new AbortController();
   const generation = ++state.generation;
-  const query = new URLSearchParams({ q: state.search, sort: state.sort, limit: "50", consistency: state.sort === "name" ? "live" : "strict" });
-  if (state.filter) query.set("craftable", state.filter);
-  if (state.cursor) query.set("cursor", state.cursor);
+  const cursor = state.cursor;
+  const spec = inventoryQuerySpec(limit);
   state.inventoryLoading = true;
   renderInventory();
   try {
-    const value = await api.request(networkPath(`/items?${query}`), { signal: queryController.signal });
+    const value = await requestInventoryPage(cursor, limit, queryController.signal, spec);
     if (generation !== state.generation) return;
-    state.items = value.items || [];
-    state.nextCursor = value.next_cursor || "";
+    state.items = value.items;
+    state.nextCursor = value.nextCursor;
     state.items.forEach(item => state.itemCache.set(String(item.id), item));
     message("#inventory-message", "");
+    void prefetchInventoryPages(value.nextCursor, generation, limit);
   } catch (error) {
     if (generation !== state.generation || error.name === "AbortError") return;
+    inventoryWheelAccumulation = 0;
     message("#inventory-message", errorText(error));
     if (error.code === "view_changed") { state.nextCursor = ""; }
   } finally {
-    if (generation === state.generation) { state.inventoryLoading = false; renderInventory(); }
+    if (generation === state.generation) {
+      state.inventoryLoading = false;
+      renderInventory();
+      if (Math.abs(inventoryWheelAccumulation) >= INVENTORY_WHEEL_THRESHOLD) scheduleInventoryWheelDrain();
+    }
   }
+}
+
+function applyCachedInventoryPage(cursor, page) {
+  state.cursor = cursor;
+  state.items = page.items;
+  state.nextCursor = page.nextCursor;
+  state.items.forEach(item => state.itemCache.set(String(item.id), item));
+  state.inventoryLoading = false;
+  message("#inventory-message", "");
+  renderInventory();
+  void prefetchInventoryPages(page.nextCursor, state.generation, state.inventoryLimit);
+}
+
+function changeInventoryPage(direction) {
+  if (!state.network || state.inventoryLoading) return false;
+  if (direction < 0) {
+    if (state.page === 0) return false;
+    state.page--;
+    state.cursor = state.cursors[state.page];
+  } else {
+    if (!state.nextCursor) return false;
+    state.page++;
+    state.cursor = state.nextCursor;
+    state.cursors[state.page] = state.cursor;
+  }
+  const cached = inventoryPageCache.get(inventoryPageKey(state.cursor, inventoryQuerySpec(state.inventoryLimit)));
+  if (cached) {
+    applyCachedInventoryPage(state.cursor, cached);
+    return true;
+  }
+  loadInventory();
+  return true;
+}
+
+function inventoryWheelDelta(event) {
+  const raw = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
+  if (!raw) return 0;
+  const multiplier = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? window.innerHeight : 1;
+  return raw * multiplier;
+}
+
+function scheduleInventoryWheelDrain() {
+  if (inventoryWheelDrainTimer || state.inventoryLoading) return;
+  inventoryWheelDrainTimer = setTimeout(() => {
+    inventoryWheelDrainTimer = 0;
+    drainInventoryWheel();
+  }, 0);
+}
+
+function clearInventoryWheelDirection(direction) {
+  if ((direction > 0 && inventoryWheelAccumulation > 0) || (direction < 0 && inventoryWheelAccumulation < 0)) {
+    inventoryWheelAccumulation = 0;
+  }
+}
+
+function drainInventoryWheel() {
+  if (state.view !== "inventory" || matchMedia("(max-width: 900px)").matches) {
+    inventoryWheelAccumulation = 0;
+    return;
+  }
+  if (state.inventoryLoading || Math.abs(inventoryWheelAccumulation) < INVENTORY_WHEEL_THRESHOLD) return;
+  const direction = inventoryWheelAccumulation > 0 ? 1 : -1;
+  for (let pages = 0; pages < INVENTORY_WHEEL_MAX_PAGES_PER_FRAME && !state.inventoryLoading && Math.abs(inventoryWheelAccumulation) >= INVENTORY_WHEEL_THRESHOLD; pages++) {
+    if (!changeInventoryPage(direction)) {
+      clearInventoryWheelDirection(direction);
+      return;
+    }
+    inventoryWheelAccumulation -= direction * INVENTORY_WHEEL_THRESHOLD;
+  }
+  if (!state.inventoryLoading && Math.abs(inventoryWheelAccumulation) >= INVENTORY_WHEEL_THRESHOLD) scheduleInventoryWheelDrain();
 }
 
 async function patchVisibleInventory() {
@@ -880,17 +1431,25 @@ function connectStream() {
   clearTimeout(streamRefreshTimer);
   streamRefreshTimer = null;
   state.streamConnected = false;
+  state.streamState = "reconnecting";
+  refreshHeader();
   const network = state.network?.id;
   const context = state.context, pending = new Set();
-  if (!network) return;
+  if (!network) {
+    state.streamState = "closed";
+    renderConnectionDiagnostics();
+    return;
+  }
   const stream = new EventSource(networkPath("/events"));
   state.stream = stream;
-  stream.onopen = () => { if (context === state.context) { state.streamConnected = true; refreshHeader(); refreshJobs(); } };
+  stream.onopen = () => { if (context === state.context) { state.streamConnected = true; state.streamState = "connected"; refreshHeader(); if (state.view === "network") renderNetwork(); refreshJobs(); } };
   stream.onerror = () => {
     if (context !== state.context) return;
     state.streamConnected = false;
+    state.streamState = state.settings.reconnect ? "reconnecting" : "closed";
     if (!state.settings.reconnect) stream.close();
     refreshHeader();
+    if (state.view === "network") renderNetwork();
   };
   const update = event => {
     if (context !== state.context) return;
@@ -934,6 +1493,7 @@ async function switchNetwork(id) {
   clearTimeout(streamRefreshTimer);
   streamRefreshTimer = null;
   state.streamConnected = false;
+  state.streamState = "closed";
   cpuCallback = null;
   for (const dialog of ["cpu-dialog", "order-dialog", "job-dialog"]) if ($(`#${dialog}`).open) $(`#${dialog}`).close();
   state.network = network || null;
@@ -949,6 +1509,10 @@ async function switchNetwork(id) {
   state.activeOrderCount = 0;
   state.activeOrdersTruncated = false;
   state.devices = [];
+  state.networkLoading = false;
+  state.networkError = "";
+  state.networkErrorKind = "";
+  state.networkSnapshotReady = false;
   state.cpus = { cpus: [] };
   state.amount = "1";
   state.cpuName = "";
@@ -958,7 +1522,7 @@ async function switchNetwork(id) {
   state.draft = network ? readLocalDraft() : { version: 1, entries: [], receipts: {} };
   state.draftBlocked = !!state.draft.warning;
   jobs.reset(network ? { memberId: state.member.id, networkId: network.id } : null);
-  for (const id of ["#inventory-message", "#orders-message"]) message(id, "");
+  for (const id of ["#inventory-message", "#orders-message", "#network-feedback"]) message(id, "");
   refreshHeader(); renderInventory(); renderDetail(); renderDraft(); renderOrders(); renderCPUs(); renderNetwork();
   if (!network) return;
   try { localStorage.setItem("ae-orbit:last-network", network.id); } catch {}
@@ -1045,8 +1609,19 @@ $("#search").addEventListener("input", event => {
 });
 $("#sort").addEventListener("change", event => { state.sort = event.target.value; loadInventory(true); });
 $("#refresh-inventory").addEventListener("click", () => loadInventory(true));
-$("#prev-page").addEventListener("click", () => { if (state.page > 0) { state.page--; state.cursor = state.cursors[state.page]; loadInventory(); } });
-$("#next-page").addEventListener("click", () => { if (state.nextCursor) { state.page++; state.cursor = state.nextCursor; state.cursors[state.page] = state.cursor; loadInventory(); } });
+$("#prev-page").addEventListener("click", () => changeInventoryPage(-1));
+$("#next-page").addEventListener("click", () => changeInventoryPage(1));
+$(".catalog").addEventListener("wheel", event => {
+  if (matchMedia("(max-width: 900px)").matches || state.view !== "inventory") return;
+  const delta = inventoryWheelDelta(event);
+  if (!delta) return;
+  event.preventDefault();
+  inventoryWheelAccumulation = Math.min(
+    INVENTORY_WHEEL_MAX_BACKLOG,
+    Math.max(-INVENTORY_WHEEL_MAX_BACKLOG, inventoryWheelAccumulation + delta),
+  );
+  scheduleInventoryWheelDrain();
+}, { passive: false });
 $("#open-draft").addEventListener("click", () => openInspector("draft"));
 $("#detail-tab").addEventListener("click", () => openInspector("detail"));
 $("#draft-tab").addEventListener("click", () => openInspector("draft"));
@@ -1066,6 +1641,22 @@ $("#order-dialog").addEventListener("cancel", () => invalidateOrderDetail());
 $("#order-dialog").addEventListener("close", () => { if (!$("#order-dialog").open) invalidateOrderDetail(); });
 $("#refresh-cpus").addEventListener("click", () => refreshCPUs());
 $("#refresh-network").addEventListener("click", () => refreshNetwork());
+$("#add-network").addEventListener("click", () => openNetworkDialog());
+$("#network-form").addEventListener("submit", createNetwork);
+$("#network-dialog").addEventListener("cancel", event => { if (state.networkCreateBusy) event.preventDefault(); });
+$("#network-dialog").addEventListener("close", () => resetNetworkDialog());
+$("#copy-network-token").addEventListener("click", async event => {
+  const token = $("#network-device-token")?.textContent || "";
+  if (!token || token.startsWith("后端未返回")) return;
+  try {
+    await navigator.clipboard.writeText(token);
+    event.currentTarget.innerHTML = `${icon("check")}已复制`;
+    toast("设备令牌已复制，请立即保存。", false, "network");
+    paint();
+  } catch {
+    toast("浏览器拒绝访问剪贴板，请手动复制设备令牌。", true, "network");
+  }
+});
 $("#order-group").addEventListener("change", event => { state.orderGroup = event.target.value; renderOrders(); });
 $("#settings-detail").addEventListener("change", event => {
   const input = event.target;
@@ -1078,14 +1669,20 @@ $("#settings-detail").addEventListener("click", async event => {
   if (sessionAction === "test") {
     actionButton.disabled = true;
     actionButton.setAttribute("aria-busy", "true");
+    state.connectionTest = { status: "checking", checkedAt: new Date().toISOString(), message: "" };
+    renderConnectionDiagnostics();
     try {
       const member = await api.request("/api/v1/me");
       if (!member?.id) throw new Error("missing member");
       state.member = member;
+      state.connectionTest = { status: "ok", checkedAt: new Date().toISOString(), message: "" };
       toast("连接正常");
       renderSettings();
     } catch (error) {
-      toast(errorText(error) || "连接失败，请检查后端和当前会话。", true, "network");
+      const message = errorText(error) || "连接失败，请检查后端和当前会话。";
+      state.connectionTest = { status: "error", checkedAt: new Date().toISOString(), message };
+      toast(message, true, "network");
+      renderSettings();
     } finally {
       if (actionButton.isConnected) {
         actionButton.disabled = false;
@@ -1110,14 +1707,34 @@ $("#settings-sections").addEventListener("click", event => {
   const button = event.target.closest("[data-settings-section]");
   if (!button) return;
   state.settingsSection = button.dataset.settingsSection;
-  $("#settings-sections").querySelectorAll("[data-settings-section]").forEach(item => item.setAttribute("aria-current", String(item === button)));
+  $("#settings-sections").querySelectorAll("[data-settings-section]").forEach(item => {
+    item.setAttribute("aria-selected", String(item === button));
+    item.setAttribute("aria-current", String(item === button));
+  });
   renderSettings();
 });
 
+document.addEventListener("mouseover", event => {
+  const button = event.target.closest(".inventory-table .item-button");
+  if (!button || (event.relatedTarget instanceof Node && button.contains(event.relatedTarget))) return;
+  showInventoryHover(button);
+});
+document.addEventListener("mouseout", event => {
+  const button = event.target.closest(".inventory-table .item-button");
+  if (button && !(event.relatedTarget instanceof Node && button.contains(event.relatedTarget))) hideInventoryHover();
+});
 document.addEventListener("click", async event => {
   const button = event.target.closest("button");
   if (!button || button.disabled) return;
+  if (!button.closest(".inventory-table .item-button")) hideInventoryHover();
   const data = button.dataset;
+  if (data.networkRecovery) {
+    if (data.networkRecovery === "refresh") refreshNetwork();
+    if (data.networkRecovery === "reconnect") { connectStream(); refreshNetwork(); }
+    if (data.networkRecovery === "settings") showView("settings");
+    return;
+  }
+  if (data.networkRetry !== undefined) { refreshNetwork(); return; }
   if (data.view) showView(data.view);
   if ("filter" in data) {
     state.filter = data.filter;
@@ -1125,6 +1742,7 @@ document.addEventListener("click", async event => {
     loadInventory(true);
   }
   if (data.item) {
+    hideInventoryHover();
     state.selected = state.itemCache.get(data.item); state.amount = "1";
     renderDetail();
     $$("tr[data-id]").forEach(row => row.dataset.selected = String(row.dataset.id === data.item));
@@ -1268,9 +1886,12 @@ window.addEventListener("storage", event => {
   }
 });
 window.addEventListener("resize", () => {
+  hideInventoryHover();
   const sheet = matchMedia("(max-width:800px)").matches && $("#inspector").dataset.open === "true";
   $("#sheet-backdrop").hidden = !sheet;
   document.body.classList.toggle("sheet-open", sheet);
+  clearTimeout(inventoryResizeTimer);
+  inventoryResizeTimer = setTimeout(() => refreshInventoryCapacity(), 120);
 });
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible" && state.member && state.network) { refreshNetwork(); patchVisibleInventory(); refreshOrders(false); refreshJobs(); }

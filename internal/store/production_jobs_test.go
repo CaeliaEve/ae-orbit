@@ -46,6 +46,34 @@ func TestProductionJobAtomicAcceptanceAndReplay(t *testing.T) {
 	}
 }
 
+func TestProductionJobEntryCPUSelectionSurvivesAdmission(t *testing.T) {
+	s, admin, network, _, device, welcome, item := orderFixture(t)
+	if _, err := s.Pool().Exec(ctx, "UPDATE networks SET capabilities=capabilities || '{\"cpu_selection\":true}'::jsonb WHERE id=$1", network.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Pool().Exec(ctx, "UPDATE bridge_sessions SET capabilities=capabilities || '{\"cpu_selection\":true}'::jsonb WHERE id=$1", welcome.SessionID); err != nil {
+		t.Fatal(err)
+	}
+	in := jobInput(item, "job-cpu-001", "source-cpu-001")
+	in.Entries[0].CPUName = "Main CPU"
+	in.Entries[0].WaitForCPU = true
+	accepted, err := s.CreateProductionJob(ctx, admin.ID, network.ID, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.Poll(ctx, device, protocol.Poll{SessionID: welcome.SessionID, Sequence: 1, CPUs: &[]protocol.CPU{{ID: "1", Name: "Main CPU"}}}); err != nil {
+		t.Fatal(err)
+	}
+	orders, err := s.Orders(ctx, admin.ID, network.ID, "", 100)
+	if err != nil || len(orders) != 1 || orders[0].CPUName != "Main CPU" || !orders[0].WaitForCPU {
+		t.Fatalf("admission lost CPU policy: %+v %v", orders, err)
+	}
+	detail, err := s.ProductionJob(ctx, admin.ID, network.ID, accepted.Receipt.JobID)
+	if err != nil || len(detail.Entries) != 1 || detail.Entries[0].CPUName != "Main CPU" || !detail.Entries[0].WaitForCPU {
+		t.Fatalf("entry lost CPU policy: %+v %v", detail, err)
+	}
+}
+
 func TestProductionJobOverlapAtomicAndConcurrent(t *testing.T) {
 	s, admin, network, _, _, _, item := orderFixture(t)
 	var wg sync.WaitGroup

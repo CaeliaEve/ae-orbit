@@ -78,7 +78,7 @@ func (s *Store) PollV2(ctx context.Context, d Device, p protocol.Poll) (protocol
 				return err
 			}
 			if caps.Craft {
-				if err = s.assignCommands(ctx, tx, d.NetworkID, group, p.SessionID, caps, responseBytes, &ack); err != nil {
+				if err = s.assignCommands(ctx, tx, d.NetworkID, group, p.SessionID, caps, responseBytes, p.CPUs, p.CPUsTruncated, &ack); err != nil {
 					return err
 				}
 			}

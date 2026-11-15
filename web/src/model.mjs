@@ -49,6 +49,42 @@ export function formatQuantity(value) {
   }
 }
 
+const COMPACT_UNITS = ["", "K", "M", "B", "T", "Qa", "Qi"];
+
+export function formatCompactQuantity(value) {
+  try {
+    const quantity = decimal(value);
+    if (quantity < 1000n) return quantity.toString();
+
+    let unit = 0;
+    let divisor = 1n;
+    while (unit + 1 < COMPACT_UNITS.length && quantity >= divisor * 1000n) {
+      divisor *= 1000n;
+      unit += 1;
+    }
+
+    while (true) {
+      const whole = quantity / divisor;
+      const decimals = whole < 10n ? 2 : whole < 100n ? 1 : 0;
+      const scale = 10n ** BigInt(decimals);
+      const scaled = (quantity * scale + divisor / 2n) / divisor;
+
+      if (scaled >= 1000n * scale && unit + 1 < COMPACT_UNITS.length) {
+        divisor *= 1000n;
+        unit += 1;
+        continue;
+      }
+
+      const integer = scaled / scale;
+      if (decimals === 0) return `${integer}${COMPACT_UNITS[unit]}`;
+      const fraction = (scaled % scale).toString().padStart(decimals, "0").replace(/0+$/, "");
+      return `${integer}${fraction ? `.${fraction}` : ""}${COMPACT_UNITS[unit]}`;
+    }
+  } catch {
+    return "-";
+  }
+}
+
 function text(value, maximum, allowEmpty = false) {
   if (typeof value !== "string" || value.length > maximum ||
       (!allowEmpty && !value.trim()) || /[\u0000-\u001f\u007f]/.test(value)) {

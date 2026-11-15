@@ -98,7 +98,7 @@ func (s *Store) Poll(ctx context.Context, d Device, p protocol.Poll) (protocol.P
 			}
 		}
 		if caps.Craft {
-			if err = s.assignCommands(ctx, tx, d.NetworkID, group, p.SessionID, caps, responseBytes, &ack); err != nil {
+			if err = s.assignCommands(ctx, tx, d.NetworkID, group, p.SessionID, caps, responseBytes, p.CPUs, p.CPUsTruncated, &ack); err != nil {
 				return err
 			}
 		}
@@ -180,7 +180,19 @@ func (s *Store) acceptReports(ctx context.Context, tx pgx.Tx, networkID string, 
 	return nil
 }
 
-func (s *Store) assignCommands(ctx context.Context, tx pgx.Tx, networkID, group, session string, caps protocol.Capabilities, responseBytes int, ack *protocol.PollAck) error {
+func (s *Store) assignCommands(ctx context.Context, tx pgx.Tx, networkID, group, session string, caps protocol.Capabilities, responseBytes int, cpus *[]protocol.CPU, cpusTruncated bool, ack *protocol.PollAck) error {
+	if cpus == nil {
+		var snapshot []byte
+		if err := tx.QueryRow(ctx, "SELECT cpus,truncated FROM cpu_snapshots WHERE network_id=$1", networkID).Scan(&snapshot, &cpusTruncated); err == nil {
+			var observed []protocol.CPU
+			if err := json.Unmarshal(snapshot, &observed); err != nil {
+				return err
+			}
+			cpus = &observed
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+	}
 	var active, planning int
 	if err := tx.QueryRow(ctx, "SELECT count(*) FROM orders WHERE network_id=$1 AND state IN ('assigned','computing','running','needs_review')", networkID).Scan(&active); err != nil {
 		return err
@@ -192,7 +204,7 @@ func (s *Store) assignCommands(ctx context.Context, tx pgx.Tx, networkID, group,
 	if available <= 0 {
 		return nil
 	}
-	rows, err := tx.Query(ctx, `SELECT o.id,d.id,o.quantity,i.quantity,i.craftable,d.kind,d.name,d.damage,d.nbt,d.label,d.exact
+	rows, err := tx.Query(ctx, `SELECT o.id,d.id,o.quantity,i.quantity,i.craftable,d.kind,d.name,d.damage,d.nbt,d.label,d.exact,o.cpu_name,o.wait_for_cpu
         FROM orders o LEFT JOIN item_aliases a ON a.network_id=o.network_id AND a.alias_id=o.item_id
         JOIN item_definitions d ON d.network_id=o.network_id AND d.id=coalesce(a.canonical_id,o.item_id)
         JOIN inventory i ON i.network_id=d.network_id AND i.item_id=d.id
@@ -207,7 +219,7 @@ func (s *Store) assignCommands(ctx context.Context, tx pgx.Tx, networkID, group,
 	candidates := []candidate{}
 	for rows.Next() {
 		var c candidate
-		if err = rows.Scan(&c.command.OrderID, &c.command.ItemID, &c.command.Quantity, &c.command.CurrentQuantity, &c.craftable, &c.command.Item.Kind, &c.command.Item.Name, &c.command.Item.Damage, &c.command.Item.NBT, &c.command.Item.Label, &c.command.Item.Exact); err != nil {
+		if err = rows.Scan(&c.command.OrderID, &c.command.ItemID, &c.command.Quantity, &c.command.CurrentQuantity, &c.craftable, &c.command.Item.Kind, &c.command.Item.Name, &c.command.Item.Damage, &c.command.Item.NBT, &c.command.Item.Label, &c.command.Item.Exact, &c.command.CPUName, &c.command.WaitForCPU); err != nil {
 			rows.Close()
 			return err
 		}
@@ -220,6 +232,9 @@ func (s *Store) assignCommands(ctx context.Context, tx pgx.Tx, networkID, group,
 	changed := false
 	for _, candidate := range candidates {
 		c := candidate.command
+		if !canDispatchCPU(c, caps.CPUSelection, cpus, cpusTruncated) {
+			continue
+		}
 		c.AttemptID = newID()
 		reason := ""
 		if !candidate.craftable || !c.Item.Exact || c.Quantity > caps.MaxCraftQuantity {
@@ -249,6 +264,36 @@ func (s *Store) assignCommands(ctx context.Context, tx pgx.Tx, networkID, group,
 		return s.event(ctx, tx, networkID, "orders")
 	}
 	return nil
+}
+
+func canDispatchCPU(command protocol.Command, supported bool, cpus *[]protocol.CPU, truncated bool) bool {
+	if command.CPUName == "" && !command.WaitForCPU {
+		return true
+	}
+	// A reconnect can downgrade the OC capability after the order was created.
+	// Keep named requests queued until strict selection is available again.
+	if !supported {
+		return false
+	}
+	return !command.WaitForCPU || uniqueIdleCPU(cpus, truncated, command.CPUName)
+}
+
+// uniqueIdleCPU keeps a waiting target fail-closed when the observation has
+// duplicate names. The OC adapter applies the same rule before calling AE.
+func uniqueIdleCPU(cpus *[]protocol.CPU, truncated bool, name string) bool {
+	if cpus == nil || truncated {
+		return false
+	}
+	matches := 0
+	idle := false
+	for _, cpu := range *cpus {
+		if cpu.Name != name {
+			continue
+		}
+		matches++
+		idle = idle || !cpu.Busy
+	}
+	return matches == 1 && idle
 }
 
 func (s *Store) saveCPUs(ctx context.Context, tx pgx.Tx, networkID string, p protocol.Poll) error {

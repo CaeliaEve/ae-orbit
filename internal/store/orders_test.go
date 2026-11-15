@@ -37,9 +37,68 @@ func TestOrderIdempotencyAndCancel(t *testing.T) {
 	if !errors.Is(err, store.ErrConflict) {
 		t.Fatal("idempotency parameters ignored", err)
 	}
+	_, err = s.CreateOrder(ctx, a.ID, n.ID, protocol.OrderInput{ItemID: id, Quantity: 64, IdempotencyKey: "test-order-001", CPUName: "Main CPU"})
+	if !errors.Is(err, store.ErrConflict) {
+		t.Fatal("CPU policy was ignored by idempotency comparison", err)
+	}
 	canceled, err := s.CancelOrder(ctx, a.ID, n.ID, o.ID)
 	if err != nil || canceled.State != "canceled" {
 		t.Fatal(canceled, err)
+	}
+}
+
+func TestOrderCPUSelectionIsPersistedAndDispatched(t *testing.T) {
+	s, a, n, _, d, w, id := orderFixture(t)
+	if _, err := s.Pool().Exec(ctx, "UPDATE networks SET capabilities=capabilities || '{\"cpu_selection\":true}'::jsonb WHERE id=$1", n.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Pool().Exec(ctx, "UPDATE bridge_sessions SET capabilities=capabilities || '{\"cpu_selection\":true}'::jsonb WHERE id=$1", w.SessionID); err != nil {
+		t.Fatal(err)
+	}
+	o, err := s.CreateOrder(ctx, a.ID, n.ID, protocol.OrderInput{ItemID: id, Quantity: 64, IdempotencyKey: "targeted-order-001", CPUName: "Main CPU", WaitForCPU: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Order(ctx, a.ID, n.ID, o.ID)
+	if err != nil || got.CPUName != "Main CPU" || !got.WaitForCPU {
+		t.Fatalf("CPU policy was not persisted: %+v %v", got, err)
+	}
+	ack, err := s.Poll(ctx, d, protocol.Poll{SessionID: w.SessionID, Sequence: 1, CPUs: &[]protocol.CPU{{ID: "1", Name: "Main CPU"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ack.Commands) != 1 || ack.Commands[0].CPUName != "Main CPU" || !ack.Commands[0].WaitForCPU {
+		t.Fatalf("CPU policy was not dispatched: %+v", ack.Commands)
+	}
+}
+
+func TestOrderWaitForCPUStaysQueuedWhenNameIsAmbiguous(t *testing.T) {
+	s, a, n, _, d, w, id := orderFixture(t)
+	if _, err := s.Pool().Exec(ctx, "UPDATE networks SET capabilities=capabilities || '{\"cpu_selection\":true}'::jsonb WHERE id=$1", n.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Pool().Exec(ctx, "UPDATE bridge_sessions SET capabilities=capabilities || '{\"cpu_selection\":true}'::jsonb WHERE id=$1", w.SessionID); err != nil {
+		t.Fatal(err)
+	}
+	order, err := s.CreateOrder(ctx, a.ID, n.ID, protocol.OrderInput{
+		ItemID: id, Quantity: 64, IdempotencyKey: "ambiguous-cpu-001", CPUName: "Main CPU", WaitForCPU: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ack, err := s.Poll(ctx, d, protocol.Poll{SessionID: w.SessionID, Sequence: 1, CPUs: &[]protocol.CPU{
+		{ID: "1", Name: "Main CPU", Busy: true},
+		{ID: "2", Name: "Main CPU", Busy: false},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ack.Commands) != 0 {
+		t.Fatalf("ambiguous CPU target was dispatched: %+v", ack.Commands)
+	}
+	got, err := s.Order(ctx, a.ID, n.ID, order.ID)
+	if err != nil || got.State != "queued" {
+		t.Fatalf("ambiguous CPU target did not remain queued: %+v %v", got, err)
 	}
 }
 

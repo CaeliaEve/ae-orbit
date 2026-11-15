@@ -172,19 +172,47 @@ type InventoryAck struct {
 }
 
 type Item struct {
-	ID                      Quantity   `json:"id"`
-	CanonicalID             Quantity   `json:"canonical_id,omitempty"`
-	Kind                    string     `json:"kind"`
-	Name                    string     `json:"name"`
-	Damage                  int        `json:"damage"`
-	Label                   string     `json:"label"`
-	Exact                   bool       `json:"exact"`
-	Quantity                Quantity   `json:"quantity"`
-	Craftable               bool       `json:"craftable"`
-	ObservedAt              time.Time  `json:"observed_at"`
-	CraftableObservedAt     *time.Time `json:"craftable_observed_at,omitempty"`
-	CurrentSession          bool       `json:"current_session"`
-	CraftableCurrentSession bool       `json:"craftable_current_session"`
+	ID          Quantity `json:"id"`
+	CanonicalID Quantity `json:"canonical_id,omitempty"`
+	Kind        string   `json:"kind"`
+	Name        string   `json:"name"`
+	Damage      int      `json:"damage"`
+	Label       string   `json:"label"`
+	Exact       bool     `json:"exact"`
+	// NBT is an internal identity input for catalog matching. It is never
+	// serialized into browser responses.
+	NBT                     string       `json:"-"`
+	Catalog                 *CatalogItem `json:"catalog,omitempty"`
+	Quantity                Quantity     `json:"quantity"`
+	Craftable               bool         `json:"craftable"`
+	ObservedAt              time.Time    `json:"observed_at"`
+	CraftableObservedAt     *time.Time   `json:"craftable_observed_at,omitempty"`
+	CurrentSession          bool         `json:"current_session"`
+	CraftableCurrentSession bool         `json:"craftable_current_session"`
+}
+
+type CatalogItem struct {
+	LocalizedName   string         `json:"localized_name,omitempty"`
+	InternalName    string         `json:"internal_name,omitempty"`
+	UnlocalizedName string         `json:"unlocalized_name,omitempty"`
+	ModID           string         `json:"mod_id,omitempty"`
+	MaxDamage       int            `json:"max_damage,omitempty"`
+	MaxStackSize    int            `json:"max_stack_size,omitempty"`
+	ImageURL        string         `json:"image_url,omitempty"`
+	ImageState      string         `json:"image_state"`
+	Width           int            `json:"width,omitempty"`
+	Height          int            `json:"height,omitempty"`
+	Frames          []CatalogFrame `json:"frames,omitempty"`
+	Interpolate     bool           `json:"interpolate,omitempty"`
+	Tooltips        []string       `json:"tooltips,omitempty"`
+}
+
+type CatalogFrame struct {
+	X      int `json:"x"`
+	Y      int `json:"y"`
+	Width  int `json:"width"`
+	Height int `json:"height"`
+	Ticks  int `json:"ticks"`
 }
 
 type ItemPage struct {
@@ -414,18 +442,20 @@ type OrderInput struct {
 }
 
 type Order struct {
-	ID        string    `json:"id"`
-	NetworkID string    `json:"network_id"`
-	UserID    string    `json:"user_id"`
-	ItemID    Quantity  `json:"item_id"`
-	Quantity  Quantity  `json:"quantity"`
-	State     string    `json:"state"`
-	AttemptID string    `json:"attempt_id,omitempty"`
-	Reason    string    `json:"reason,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-	ExpiresAt time.Time `json:"expires_at"`
-	BatchID   string    `json:"batch_id,omitempty"`
+	ID         string    `json:"id"`
+	NetworkID  string    `json:"network_id"`
+	UserID     string    `json:"user_id"`
+	ItemID     Quantity  `json:"item_id"`
+	Quantity   Quantity  `json:"quantity"`
+	State      string    `json:"state"`
+	AttemptID  string    `json:"attempt_id,omitempty"`
+	Reason     string    `json:"reason,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+	ExpiresAt  time.Time `json:"expires_at"`
+	BatchID    string    `json:"batch_id,omitempty"`
+	CPUName    string    `json:"cpu_name,omitempty"`
+	WaitForCPU bool      `json:"wait_for_cpu,omitempty"`
 }
 
 type Network struct {

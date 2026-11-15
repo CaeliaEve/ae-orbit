@@ -44,22 +44,25 @@ An unfinished administrator review form stays connected while the same order
 still needs review; obsolete actions disappear after an authoritative read.
 No automatic refresh retries a mutation or changes an uncertain draft.
 
-## CPU selection is not yet safe on the installed bridge
+## CPU selection and waiting
 
-The installed `OpenComputers-1.12.68-GTNH.jar` was inspected with `javap`.
-Its `NetworkControl$Craftable.request` accepts a CPU name but resolves an
-unmatched name to `null`, allowing AE to choose automatically. The separate
-`getCpus` call is not an atomic guard against that fallback. Duplicate CPU names
-are also not a stable identity. CPU snapshot IDs are observation-local.
+The primary OC advertises `cpu_selection=true` when it has both CPU discovery
+and crafting support. A named target is accepted only when the latest CPU
+snapshot contains exactly one matching name. Duplicate names are treated as
+ambiguous; snapshot IDs are observation-local and are not persisted as target
+identities.
 
-The current adapter therefore reports `cpu_selection=false`. The service
-rejects a hello advertising `true`, rejects nonempty `cpu_name` or
-`wait_for_cpu=true` before enqueueing, and the Lua adapter independently rejects
-targeted commands before recipe lookup or `request`. Automatic orders remain
-unchanged. A strict CPU selector, busy-CPU waiting, and assignment migration are
-not implemented or advertised.
+`wait_for_cpu=false` sends the command to the OC immediately. The OC checks the
+target immediately before recipe lookup and rejects a missing, busy, or
+ambiguous CPU without calling the recipe or AE request path. `wait_for_cpu=true`
+keeps the order queued on the service until the backend observes exactly one
+idle match in a complete (not truncated) snapshot; the OC then repeats the same
+check and may wait between snapshots.
+Automatic orders omit both fields and retain the existing behavior. A target
+policy is part of idempotency and the durable production-job manifest, so a
+changed CPU name or waiting flag is a conflict rather than a silent rewrite.
 
-Enabling this capability requires a proven atomic native operation that rejects
-missing or ambiguous targets without choosing another CPU, plus a new verified
-execution/waiting contract. A dropdown and preflight observation alone are not
-sufficient. No game mod was modified as part of this frontend work.
+The native AE request is still subject to the game/mod's normal execution
+timing between the final observation and the request call. The bridge therefore
+fails closed before submission wherever it can observe an invalid target, and
+reports any uncertain native outcome through the existing order review state.

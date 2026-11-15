@@ -36,6 +36,35 @@ curl http://127.0.0.1:8080/readyz
 
 `init_env.py` 将两个随机凭据写入忽略的 `.env`，不会显示凭据或覆盖已有文件。初次构建需要下载 Go 依赖和容器镜像。数据库保存在 `pg_data` 卷，后端启动时自动执行迁移。
 
+### NESQL++ 物品目录与纹理
+
+运行时只接受 NESQL++ 的完整 `elysium.source` 数据集。原始导出目录作为只读输入，直接复制或挂载到被 `.local/` 忽略的目录；服务不会改写、删除或覆盖原始 Source。
+
+NESQL++ 必须完成一次 `images`/`full` 导出并最终生成 `manifest.json`，且 manifest 的 `scope.mode` 必须为 `complete`。仍处于 `elysium.capture`、`state=writing` 或 selection scope 的中间产物会被拒绝，不会被当成可用目录。
+
+```powershell
+New-Item -ItemType Directory -Force .local\catalog | Out-Null
+Copy-Item `
+  "E:\GTNH\.minecraft\versions\GT New Horizons 2.9.0\nesql\datasets\<source-id>\*" `
+  ".local\catalog\nesqlpp" -Recurse
+```
+
+NESQL++ 的 item identity、typed NBT、字符串和 `assets/*.png` 均在服务端原生读取。库存数量、可合成状态、CPU 和订单仍由 OC 实时数据拥有；缺失纹理只会标记为 `missing`，不会伪造占位图或回退到旧 NESQL。
+
+本机原生进程可设置：
+
+```powershell
+$env:AE_CATALOG_ROOT = "$PWD\.local\catalog\nesqlpp"
+```
+
+Compose 使用可选覆盖文件挂载 catalog（默认 Compose 不强制要求本地存在目录）：
+
+```powershell
+docker compose --env-file .env -f deploy/compose.yaml -f deploy/compose.catalog.yaml up -d --build
+```
+
+可通过 `AE_CATALOG_HOST_PATH` 指向服务器上的生成目录。catalog 图片接口受浏览器会话保护，并使用内容 `ETag` 和长期缓存。
+
 `/readyz` 正常返回 `{"status":"ready"}`。浏览器打开根路径，用成员或管理员访问令牌登录。日志和停止命令：
 
 ~~~sh
@@ -56,6 +85,23 @@ docker compose --env-file .env -f deploy/compose.yaml -f deploy/compose.https.ya
 Caddy 提供 HTTPS，并设置匹配的 `AE_PUBLIC_URL`。也可以使用已有 HTTPS 反向代理，转发到本机 8080 端口，关闭 SSE 响应缓冲。
 
 `AE_PUBLIC_URL` 必须是无路径、无末尾斜杠的源地址。非回环访问要求 HTTPS；OC 的 `url` 使用这个外部地址。MC 服务器的因特网卡访问规则需要允许它。
+
+### 重启恢复验收
+
+服务器或 Docker 重启后，可以用只读检查确认后端和两台 OC 已恢复。它不会创建网络、读取游戏硬件、修改库存或提交订单：
+
+~~~sh
+python scripts/recovery_check.py \
+  --origin https://ae.example.com \
+  --token "$AE_ADMIN_TOKEN" \
+  --network "$AE_NETWORK_ID" \
+  --expected-devices 2 \
+  --wait 120
+~~~
+
+输出 `"ready": true` 才表示后端已就绪、网络在线且两台设备都已回报心跳。若输出 `heartbeat_waiting`，通常是游戏还没有进入存档或 OC 所在区块尚未加载；若为 `oc_offline`，请在对应 OpenOS 终端执行 `rc ae-orbit status`，必要时执行 `rc ae-orbit start`。单 OC 网络将 `--expected-devices` 改为 `1`。
+
+网页的网络管理页会用同一套判定显示“后端不可达”“等待游戏心跳”“OC 桥接器离线”“事件流等待重连”等状态，并保留最近心跳时间，避免把服务器故障和游戏区块未加载混为一谈。
 
 ### 原生进程
 
@@ -97,7 +143,7 @@ npm run test:web
 
 结果不明的请求保持锁定，只按原请求键核对，不自动重发；查询 404 也不会解锁重下。只有明确拒绝且确认未受理的请求，才能由用户确认后以原键和原清单重发。任务页默认显示生产任务，可查看未完成、待处理及手动分页加载的历史，也可切换到旧的单项订单。暂停只停止后续调度；停止会撤回尚未派发的工作，不能取消游戏中已执行的合成。不显示估算进度或 ETA。
 
-当前安装的 OC 在指定名称失效时可能自动改用另一台 CPU，无法保证严格指定，因此此版本**仅启用自动分配**。CPU 观测可以查看，指定和等待按钮不启用；没有修改游戏模组。详见 [下单边界](contracts/frontend-orders.md)。
+指定 CPU 下单已经贯通前端、任务清单、后端队列与 OC 执行器。只有当前快照中名称唯一的 CPU 才能被指定；等待模式会在后端保持排队，直到该 CPU 唯一且空闲。OC 在配方查询和提交前再次校验目标，目标不存在或重名会失败，忙碌目标按策略等待或失败，不会静默改用自动分配。CPU 名称来自观测快照，名称重名时必须先在游戏内调整名称。详见 [下单边界](contracts/frontend-orders.md)。
 
 可复用 NEI 已导出的 `itempanel.csv`、`itempanel.json`、`item.csv` 与 `itempanel_icons/`：
 

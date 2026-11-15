@@ -12,6 +12,11 @@ func TestConfigRejectsUnsafeOrUnboundedSettings(t *testing.T) {
 	if c.Listen != "127.0.0.1:8080" || c.Store.MaxConnections < 1 {
 		t.Fatal(c.Listen)
 	}
+	base["AE_CATALOG_ROOT"] = "C:/catalog/nesqlpp"
+	c, err = Load(lookup)
+	if err != nil || c.CatalogRoot != "C:/catalog/nesqlpp" || c.Store.CatalogRoot != c.CatalogRoot {
+		t.Fatalf("catalog root was not propagated: %#v, %v", c, err)
+	}
 	for _, test := range []struct{ key, value string }{{"AE_ADMIN_TOKEN", "short"}, {"AE_DB_CONNECTIONS", "0"}, {"AE_BATCH_BYTES", "-1"}, {"AE_PUBLIC_URL", "http://public.example"}, {"AE_MAX_CONCURRENT", "999999"}} {
 		old := base[test.key]
 		base[test.key] = test.value

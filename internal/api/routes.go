@@ -112,8 +112,10 @@ func (s *Server) routes() {
 			fail(w, err)
 			return
 		}
+		s.enrichCatalog(r.PathValue("network"), value.Items)
 		respondInventory(w, r, value)
 	}))
+	s.mux.HandleFunc("GET /api/v1/networks/{network}/catalog/items/{item}/image", s.user(s.catalogImage))
 	s.mux.HandleFunc("GET /api/v1/networks/{network}/items/lookup", s.user(s.lookupItems))
 	s.mux.HandleFunc("POST /api/v1/networks/{network}/items/refresh", s.user(s.refreshItems))
 	s.mux.HandleFunc("GET /api/v1/networks/{network}/inventory-stats", s.user(func(w http.ResponseWriter, r *http.Request, m protocol.Member) {

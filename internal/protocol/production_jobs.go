@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -19,9 +20,11 @@ type ProductionJobControlInput struct {
 }
 
 type ProductionJobEntryInput struct {
-	EntryKey string   `json:"entry_key"`
-	ItemID   Quantity `json:"item_id"`
-	Quantity Quantity `json:"quantity"`
+	EntryKey   string   `json:"entry_key"`
+	ItemID     Quantity `json:"item_id"`
+	Quantity   Quantity `json:"quantity"`
+	CPUName    string   `json:"cpu_name,omitempty"`
+	WaitForCPU bool     `json:"wait_for_cpu,omitempty"`
 }
 
 type ProductionJobInput struct {
@@ -71,7 +74,9 @@ func (in ProductionJobInput) Normalize() (ProductionJobInput, error) {
 	}
 	seen := make(map[string]bool, len(in.Entries))
 	for _, entry := range in.Entries {
-		if !ProductionJobKeyValid(entry.EntryKey) || seen[entry.EntryKey] || entry.ItemID < 1 || entry.Quantity < 1 {
+		if !ProductionJobKeyValid(entry.EntryKey) || seen[entry.EntryKey] || entry.ItemID < 1 || entry.Quantity < 1 ||
+			!textOK(entry.CPUName, 0, 256) || (entry.CPUName != "" && strings.TrimSpace(entry.CPUName) == "") ||
+			strings.ContainsFunc(entry.CPUName, unicode.IsControl) || (entry.WaitForCPU && entry.CPUName == "") {
 			return ProductionJobInput{}, fmt.Errorf("invalid production job entry")
 		}
 		seen[entry.EntryKey] = true
@@ -95,7 +100,7 @@ func (in ProductionJobInput) ManifestDigest() string {
 		Name    string                    `json:"name"`
 		TTL     int                       `json:"ttl_seconds"`
 		Entries []ProductionJobEntryInput `json:"entries"`
-	}{1, in.Name, in.TTLSeconds, in.Entries})
+	}{2, in.Name, in.TTLSeconds, in.Entries})
 	sum := sha256.Sum256(payload)
 	return hex.EncodeToString(sum[:])
 }
@@ -139,6 +144,8 @@ type ProductionJobEntry struct {
 	RequestedItemID Quantity   `json:"requested_item_id"`
 	ItemID          Quantity   `json:"item_id"`
 	Quantity        Quantity   `json:"quantity"`
+	CPUName         string     `json:"cpu_name,omitempty"`
+	WaitForCPU      bool       `json:"wait_for_cpu,omitempty"`
 	State           string     `json:"state"`
 	Reason          string     `json:"reason,omitempty"`
 	OrderID         string     `json:"order_id,omitempty"`

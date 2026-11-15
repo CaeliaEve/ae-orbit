@@ -64,3 +64,23 @@ func TestProductionJobExactIntegers(t *testing.T) {
 		}
 	}
 }
+
+func TestProductionJobCPUSelectionIsPartOfIntent(t *testing.T) {
+	base := ProductionJobInput{RequestKey: "request-001", Entries: []ProductionJobEntryInput{{EntryKey: "source-001", ItemID: 1, Quantity: 64}}}
+	named := base
+	named.Entries = []ProductionJobEntryInput{{EntryKey: "source-001", ItemID: 1, Quantity: 64, CPUName: "Main CPU", WaitForCPU: true}}
+	if err := named.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if base.ManifestDigest() == named.ManifestDigest() {
+		t.Fatal("CPU policy was omitted from manifest digest")
+	}
+	for _, bad := range []ProductionJobInput{
+		{RequestKey: "request-001", Entries: []ProductionJobEntryInput{{EntryKey: "source-001", ItemID: 1, Quantity: 64, WaitForCPU: true}}},
+		{RequestKey: "request-001", Entries: []ProductionJobEntryInput{{EntryKey: "source-001", ItemID: 1, Quantity: 64, CPUName: " "}}},
+	} {
+		if err := bad.Validate(); err == nil {
+			t.Fatalf("invalid CPU policy accepted: %+v", bad)
+		}
+	}
+}

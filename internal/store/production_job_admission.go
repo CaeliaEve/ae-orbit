@@ -112,12 +112,17 @@ func (s *Store) admitProductionJobs(ctx context.Context, tx pgx.Tx, networkID st
 		j := jobs[examined]
 		var entryID string
 		var item, quantity protocol.Quantity
-		err = tx.QueryRow(ctx, `SELECT id,item_id,quantity FROM production_job_entries WHERE job_id=$1 AND state='pending' AND order_id='' ORDER BY ordinal LIMIT 1 FOR UPDATE`, j.id).Scan(&entryID, &item, &quantity)
+		var cpuName string
+		var waitForCPU bool
+		err = tx.QueryRow(ctx, `SELECT id,item_id,quantity,cpu_name,wait_for_cpu FROM production_job_entries WHERE job_id=$1 AND state='pending' AND order_id='' ORDER BY ordinal LIMIT 1 FOR UPDATE`, j.id).Scan(&entryID, &item, &quantity, &cpuName, &waitForCPU)
 		if errors.Is(err, pgx.ErrNoRows) {
 			continue
 		}
 		if err != nil {
 			return err
+		}
+		if (cpuName != "" || waitForCPU) && !caps.CPUSelection {
+			continue
 		}
 		selections++
 		if _, err = tx.Exec(ctx, `UPDATE networks SET jobs_admission_cursor_created_at=$2,jobs_admission_cursor_id=$3 WHERE id=$1`, networkID, j.created, j.id); err != nil {
@@ -163,7 +168,7 @@ func (s *Store) admitProductionJobs(ctx context.Context, tx pgx.Tx, networkID st
 			markProductionJobChanged(tx, networkID, j.id)
 			continue
 		}
-		order, err := s.enqueueOrder(ctx, tx, j.owner, networkID, protocol.OrderInput{ItemID: canonical, Quantity: quantity, TTLSeconds: j.ttl, IdempotencyKey: "production-order:" + newID(), BatchID: j.id}, entryID)
+		order, err := s.enqueueOrder(ctx, tx, j.owner, networkID, protocol.OrderInput{ItemID: canonical, Quantity: quantity, TTLSeconds: j.ttl, IdempotencyKey: "production-order:" + newID(), BatchID: j.id, CPUName: cpuName, WaitForCPU: waitForCPU}, entryID)
 		if err != nil {
 			return err
 		}

@@ -27,6 +27,11 @@ cases = [
     ("ProductionJobInput", {"request_key": "manifest-001", "entries": [
         {"entry_key": "source-001", "item_id": "9007199254740993", "quantity": "64"}]}, True),
     ("ProductionJobInput", {"request_key": "manifest-001", "entries": [
+        {"entry_key": "source-001", "item_id": "1", "quantity": "64", "cpu_name": "Main CPU", "wait_for_cpu": True}]}, True),
+    ("ProductionJobEntry", {"id": "entry", "entry_key": "source-001", "ordinal": 0,
+                             "requested_item_id": "1", "item_id": "1", "quantity": "64",
+                             "cpu_name": "Main CPU", "wait_for_cpu": True, "state": "queued"}, True),
+    ("ProductionJobInput", {"request_key": "manifest-001", "entries": [
         {"entry_key": "source-001", "item_id": "1", "quantity": 64}]}, False),
     ("ProductionJobInput", {"request_key": "manifest-001", "cpu_name": "CPU", "entries": [
         {"entry_key": "source-001", "item_id": "1", "quantity": "64"}]}, False),
@@ -68,12 +73,18 @@ cases = [
     ("PollAckV2", {key: value for key, value in poll_ack.items() if key != "reads"}, False),
     ("PollAckV2", {**poll_ack, "verify": []}, False),
     ("PollAckV2", {**poll_ack, "refresh": []}, False),
+    ("Capabilities", {"cpu_selection": True}, True),
+    ("OrderInput", {"item_id": "1", "quantity": "64", "idempotency_key": "order-001",
+                    "cpu_name": "Main CPU", "wait_for_cpu": True}, True),
+    ("Command", {"order_id": "order", "attempt_id": "attempt", "item_id": "1",
+                  "item": {"kind": "item", "name": "minecraft:stone", "damage": 0, "label": "Stone", "exact": True},
+                  "quantity": "64", "current_quantity": "0", "cpu_name": "Main CPU", "wait_for_cpu": True}, True),
 ]
 for name, value, expected in cases:
     schema = {"$ref": f"#/components/schemas/{name}", "components": document["components"]}
     valid = Draft202012Validator(schema).is_valid(value)
     assert valid == expected, f"{name}: expected valid={expected}: {value}"
-for name in ("compose.yaml", "compose.https.yaml"):
+for name in ("compose.yaml", "compose.https.yaml", "compose.catalog.yaml"):
     config = yaml.safe_load((root / "deploy" / name).read_text(encoding="utf-8"))
     assert isinstance(config["services"], dict)
 print(f"PASS OpenAPI schema and {len(actual)} HTTP operations; deployment YAML parses.")

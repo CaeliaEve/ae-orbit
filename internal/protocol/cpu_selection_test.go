@@ -48,11 +48,11 @@ func TestCPUSelectionCapabilityIsExplicitAndReserved(t *testing.T) {
 		t.Fatalf("missing explicit unsupported capability: %s, %v", raw, err)
 	}
 	hello.Capabilities.CPUSelection = true
-	if hello.Validate() == nil {
-		t.Fatal("service accepted strict CPU selection without a strict execution contract")
+	if err := hello.Validate(); err != nil {
+		t.Fatalf("strict CPU selection capability was rejected: %v", err)
 	}
 	hello.Protocol = 2
-	if hello.ValidateV2() == nil {
-		t.Fatal("v2 bypassed the strict CPU selection capability gate")
+	if err := hello.ValidateV2(); err != nil {
+		t.Fatalf("v2 rejected strict CPU selection capability: %v", err)
 	}
 }

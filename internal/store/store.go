@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/CaeliaEve/ae-orbit/internal/catalog"
 	"github.com/CaeliaEve/ae-orbit/internal/protocol"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -33,6 +34,7 @@ var ErrClientUpgradeRequired = errors.New("client_upgrade_required")
 
 type Options struct {
 	MaxConnections  int32
+	CatalogRoot     string
 	Limits          protocol.Limits
 	MaxQueuedOrders int
 	ActiveWindow    int
@@ -50,6 +52,7 @@ func DefaultOptions() Options {
 type Store struct {
 	pool          *pgxpool.Pool
 	options       Options
+	catalog       *catalog.Catalog
 	cursorKey     [32]byte
 	notifications eventNotifications
 	performance   databaseMetrics
@@ -86,15 +89,21 @@ func Open(ctx context.Context, dsn string, options Options) (*Store, error) {
 		return nil, err
 	}
 	s.pool = p
+	if s.catalog, err = catalog.OpenNESQLPP(options.CatalogRoot); err != nil {
+		p.Close()
+		return nil, fmt.Errorf("open catalog: %w", err)
+	}
 	if _, err = rand.Read(s.cursorKey[:]); err != nil {
+		_ = s.catalog.Close()
 		p.Close()
 		return nil, err
 	}
 	return s, nil
 }
-func (s *Store) Close()              { s.pool.Close() }
-func (s *Store) Pool() *pgxpool.Pool { return s.pool }
-func (s *Store) Options() Options    { return s.options }
+func (s *Store) Close()                    { _ = s.catalog.Close(); s.pool.Close() }
+func (s *Store) Pool() *pgxpool.Pool       { return s.pool }
+func (s *Store) Options() Options          { return s.options }
+func (s *Store) Catalog() *catalog.Catalog { return s.catalog }
 
 func (s *Store) transaction(ctx context.Context, fn func(pgx.Tx) error) (err error) {
 	started := time.Now()

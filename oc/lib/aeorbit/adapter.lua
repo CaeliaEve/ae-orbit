@@ -21,11 +21,31 @@ function M.new(me,config)
   assert(M.has_method(me,"getItemInNetwork"),"adapter: missing getItemInNetwork; requires OC 1.12.47-GTNH+ (table/NBT API)")
   local adapter={me=me,identity_bytes=config.identity_bytes or 4096,cpu_limit=config.cpu_limit or 16,cpu_generation="0",
     nbt_cache=cache.new(64,32768)}
+  local function cpu_name(raw)
+    return tostring(raw and raw.name or ""):sub(1,256)
+  end
+  local function cpu_snapshot()
+    if not M.has_method(me,"getCpus") then return nil,"CPU selection is unavailable" end
+    local ok,values=pcall(me.getCpus)
+    if not ok then cancel.rethrow(values) end
+    if type(values)~="table" then return nil,"CPU snapshot unavailable" end
+    return values
+  end
+  local function wait_for_cpu(seconds)
+    local wait=config.wait
+    if type(wait)~="function" then wait=config.sleep end
+    if type(wait)~="function" then return false,"CPU is busy and waiting is unavailable" end
+    local ok,reason=pcall(wait,seconds)
+    if not ok then cancel.rethrow(reason) end
+    if not ok then return false,tostring(reason or "CPU wait failed") end
+    return true
+  end
   function adapter:capabilities()
     if worker then
       return {inventory=true,craft=false,cpu_output=false,cpu_selection=false,exact_quantities=true,quantity_refresh=true}
     end
-    return {inventory=true,craft=M.has_method(me,"getCraftable"),cpu_output=M.has_method(me,"getCpus"),cpu_selection=false,
+    return {inventory=true,craft=M.has_method(me,"getCraftable"),cpu_output=M.has_method(me,"getCpus"),
+      cpu_selection=M.has_method(me,"getCraftable") and M.has_method(me,"getCpus"),
       exact_quantities=true,quantity_refresh=true,max_craft_quantity=quantity.maximum(),enumeration="volatile_iterator"}
   end
   function adapter:key(raw)
@@ -136,11 +156,46 @@ function M.new(me,config)
     return recipe~=nil
   end
   function adapter:craft(command)
-    -- OC 1.12.68's name selector falls back to automatic when no CPU matches.
-    -- Never turn an unsupported strict target into an automatic request.
-    if (command.cpu_name~=nil and command.cpu_name~="") or
-      (command.wait_for_cpu~=nil and command.wait_for_cpu~=false) then
-      return nil,"strict CPU selection is unavailable",false
+    if command.cpu_name~=nil and type(command.cpu_name)~="string" then
+      return nil,"invalid CPU target",false
+    end
+    if command.wait_for_cpu~=nil and type(command.wait_for_cpu)~="boolean" then
+      return nil,"invalid CPU wait flag",false
+    end
+    local target=command.cpu_name
+    local waiting=command.wait_for_cpu==true
+    if target=="" then target=nil end
+    if waiting and not target then
+      return nil,"wait_for_cpu requires cpu_name",false
+    end
+    if target then
+      local deadline
+      if config.cpu_wait_timeout~=nil then
+        assert(type(config.cpu_wait_timeout)=="number" and config.cpu_wait_timeout>=0,
+          "adapter: invalid CPU wait timeout")
+        local now=config.now
+        deadline=type(now)=="function" and now()+config.cpu_wait_timeout or nil
+      end
+      while true do
+        local values,reason=cpu_snapshot()
+        if not values then return nil,reason,false end
+        local matches,busy=0,false
+        for _,raw in ipairs(values) do
+          if cpu_name(raw)==target then
+            matches=matches+1
+            busy=busy or raw.busy==true
+          end
+        end
+        if matches==0 then return nil,"requested CPU not found",false end
+        if matches>1 then return nil,"requested CPU is ambiguous",false end
+        if not busy then break end
+        if not waiting then return nil,"requested CPU is busy",false end
+        if deadline and type(config.now)=="function" and config.now()>=deadline then
+          return nil,"timed out waiting for requested CPU",false
+        end
+        local waited,wait_reason=wait_for_cpu(config.cpu_wait_interval or 0.1)
+        if not waited then return nil,wait_reason,false end
+      end
     end
     local ok,detail=pcall(self.from_definition,self,command.item)
     if not ok then cancel.rethrow(detail) end
@@ -152,7 +207,10 @@ function M.new(me,config)
     if not available then cancel.rethrow(craftable) end
     if not available then return nil,"recipe lookup failed",false end
     if not craftable then return nil,reason or "recipe is unavailable",false end
-    local submitted,handle=pcall(function() return craftable.request(amount) end)
+    local submitted,handle=pcall(function()
+      if target then return craftable.request(amount,true,target) end
+      return craftable.request(amount)
+    end)
     if not submitted then cancel.rethrow(handle) end
     if not submitted or not handle then return nil,"request returned no reliable tracking handle",true end
     return handle,nil,true

@@ -48,5 +48,6 @@ func (s *Server) lookupItems(w http.ResponseWriter, r *http.Request, member prot
 		fail(w, err)
 		return
 	}
+	s.enrichCatalog(r.PathValue("network"), result.Items)
 	respondInventory(w, r, result)
 }

@@ -493,6 +493,31 @@ paths:
           content: {application/json: {schema: {$ref: '#/components/schemas/ItemLookup'}}}
         '406': {$ref: '#/components/responses/Error'}
         default: {$ref: '#/components/responses/Error'}
+  /api/v1/networks/{network}/catalog/items/{item}/image:
+    parameters:
+      - {$ref: '#/components/parameters/NetworkID'}
+      - name: item
+        in: path
+        required: true
+        schema: {$ref: '#/components/schemas/PositiveQuantity'}
+    get:
+      operationId: getCatalogItemImage
+      tags: [Inventory]
+      description: |
+        Returns the immutable PNG registered for one cached inventory item. The item ID is
+        checked against the member's network before the catalog record is resolved. Missing,
+        ambiguous, unsafe or NBT-unmatched records return not_found; arbitrary archive paths
+        are never exposed. Responses are private, immutable and support ETag revalidation.
+      responses:
+        '200':
+          description: Catalog PNG.
+          headers:
+            ETag: {schema: {type: string}}
+            Cache-Control: {schema: {type: string}}
+          content:
+            image/png: {schema: {type: string, format: binary}}
+        '304': {description: ETag matched; response has no body.}
+        default: {$ref: '#/components/responses/Error'}
   /api/v1/networks/{network}/items/refresh:
     parameters: [{$ref: '#/components/parameters/NetworkID'}]
     post:
@@ -577,8 +602,11 @@ paths:
         Reuse the same member/network/idempotency_key and parameters for retries.
         A parameter mismatch, including batch_id, returns 409. Default queue TTL is 3600 seconds.
         Idempotency remains available while the order is retained (terminal history: 30 days).
-        Nonempty cpu_name or wait_for_cpu=true currently returns 409 capability_unavailable
-        without enqueueing: the installed OC selector cannot guarantee strict CPU assignment.
+        A named CPU requires the network capability cpu_selection=true. The target
+        name must be unique in the latest complete CPU snapshot; wait_for_cpu=true keeps
+        the order queued until that unique target is observed idle. Truncated
+        snapshots are never sufficient for waiting admission. Missing, busy,
+        or ambiguous targets never fall back to automatic assignment.
         A transport failure is not proof that submission failed; use the read-only by-key
         endpoint to reconcile the intent before deciding any further action.
       parameters: [{$ref: '#/components/parameters/CSRF'}, {$ref: '#/components/parameters/Origin'}]
@@ -915,6 +943,8 @@ components:
               entry_key: {$ref: '#/components/schemas/ProductionJobKey'}
               item_id: {$ref: '#/components/schemas/PositiveQuantity'}
               quantity: {$ref: '#/components/schemas/PositiveQuantity'}
+              cpu_name: {type: string, maxLength: 256, description: 'Optional CPU name. It must be unique in the latest complete snapshot; duplicate names are ambiguous.'}
+              wait_for_cpu: {type: boolean, default: false, description: 'When true, requires cpu_name and keeps the entry queued until that unique CPU is observed idle in a complete snapshot.'}
     ProductionJobControlInput:
       type: object
       additionalProperties: false
@@ -969,6 +999,8 @@ components:
         requested_item_id: {$ref: '#/components/schemas/PositiveQuantity'}
         item_id: {$ref: '#/components/schemas/PositiveQuantity'}
         quantity: {$ref: '#/components/schemas/PositiveQuantity'}
+        cpu_name: {type: string, maxLength: 256, description: 'Persisted CPU target, when selected.'}
+        wait_for_cpu: {type: boolean, default: false, description: 'Whether admission waits for the selected CPU to be observed idle.'}
         state: {type: string, enum: [pending, rejected, queued, assigned, computing, running, needs_review, done, failed, canceled, expired]}
         reason: {type: string}
         order_id: {$ref: '#/components/schemas/ID'}
@@ -1131,7 +1163,7 @@ components:
         quantity_refresh: {type: boolean, description: Supports the independent quantity-only refresh lane. A new boot is required to change negotiated capabilities.}
         craft: {type: boolean}
         cpu_output: {type: boolean}
-        cpu_selection: {type: boolean, const: false, description: 'Reserved fail-closed capability. Absent or false means strict assignment and waiting are unavailable. Current service rejects true in both bridge protocols.'}
+        cpu_selection: {type: boolean, description: 'The primary OC supports strict named CPU selection when true. Targets must be unique; duplicate, missing, or busy targets never fall back to automatic assignment.'}
         exact_quantities: {type: boolean}
         max_craft_quantity: {$ref: '#/components/schemas/Quantity'}
         enumeration: {type: string, maxLength: 64}
@@ -1198,6 +1230,37 @@ components:
         craftable_observed_at: {type: string, format: date-time, description: Server acceptance time of the latest recipe observation. Omitted when unknown; quantity-only readings do not refresh this time.}
         current_session: {type: boolean, description: Quantity source is still its owning device's current valid session; independent of primary availability and age.}
         craftable_current_session: {type: boolean, description: Recipe source is still its owning device's current valid session.}
+        catalog: {$ref: '#/components/schemas/CatalogItem'}
+    CatalogItem:
+      type: object
+      additionalProperties: false
+      required: [image_state]
+      properties:
+        localized_name: {type: string}
+        internal_name: {type: string}
+        unlocalized_name: {type: string}
+        mod_id: {type: string}
+        max_damage: {type: integer, minimum: 0}
+        max_stack_size: {type: integer, minimum: 0}
+        image_url: {type: string, format: uri-reference}
+        image_state: {type: string, enum: [available, missing]}
+        width: {type: integer, minimum: 1}
+        height: {type: integer, minimum: 1}
+        frames:
+          type: array
+          maxItems: 4096
+          items:
+            type: object
+            additionalProperties: false
+            required: [x, y, width, height, ticks]
+            properties:
+              x: {type: integer, minimum: 0}
+              y: {type: integer, minimum: 0}
+              width: {type: integer, minimum: 1}
+              height: {type: integer, minimum: 1}
+              ticks: {type: integer, minimum: 1}
+        interpolate: {type: boolean}
+        tooltips: {type: array, maxItems: 64, items: {type: string}}
     ItemPage:
       type: object
       required: [items, revision]
@@ -1261,8 +1324,8 @@ components:
         idempotency_key: {type: string, minLength: 8, maxLength: 128}
         ttl_seconds: {type: integer, minimum: 0, maximum: 86400, default: 3600}
         batch_id: {type: string, maxLength: 128, description: 'Optional client-generated batch label, persisted across devices after submission. Empty for legacy single orders. Part of the idempotency parameter comparison.'}
-        cpu_name: {type: string, maxLength: 256, description: 'Reserved strict target name. Nonempty values currently return capability_unavailable; never silently fall back to automatic assignment.'}
-        wait_for_cpu: {type: boolean, default: false, description: 'Requires a nonempty cpu_name. Currently unsupported and never creates an automatic order.'}
+        cpu_name: {type: string, maxLength: 256, description: 'Optional CPU name. It must be unique in the latest complete snapshot; duplicate names are ambiguous.'}
+        wait_for_cpu: {type: boolean, default: false, description: 'Requires a nonempty cpu_name and waits for that unique CPU to be observed idle in a complete snapshot.'}
     Order:
       type: object
       required: [id, network_id, user_id, item_id, quantity, state, created_at, updated_at, expires_at]
@@ -1279,6 +1342,8 @@ components:
         updated_at: {type: string, format: date-time}
         expires_at: {type: string, format: date-time}
         batch_id: {type: string, maxLength: 128}
+        cpu_name: {type: string, maxLength: 256}
+        wait_for_cpu: {type: boolean}
     OrderEvent:
       type: object
       required: [id, state, reason, attempt_id, created_at]
@@ -1510,8 +1575,8 @@ components:
         item: {$ref: '#/components/schemas/Definition'}
         quantity: {$ref: '#/components/schemas/PositiveQuantity'}
         current_quantity: {$ref: '#/components/schemas/Quantity'}
-        cpu_name: {type: string, maxLength: 256, description: 'Reserved strict target. Current service does not emit this field; the adapter rejects nonempty values before submission.'}
-        wait_for_cpu: {type: boolean, default: false, description: 'Reserved strict waiting flag. The adapter rejects true before submission.'}
+        cpu_name: {type: string, maxLength: 256, description: 'CPU target carried through the command when the order uses a named CPU.'}
+        wait_for_cpu: {type: boolean, default: false, description: 'The OC waits for the named CPU when true; missing, busy, or ambiguous targets fail closed.'}
     Verification:
       type: object
       required: [id, item, craftable]

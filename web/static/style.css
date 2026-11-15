@@ -457,6 +457,12 @@ main,
   width: 23px;
   height: 23px;
 }
+.item-image.item-image-sprite {
+  background-repeat: no-repeat;
+  background-position: 0 0;
+  image-rendering: pixelated;
+  overflow: hidden;
+}
 .freshness {
   display: block;
   font-size: 10px;
@@ -959,6 +965,14 @@ dialog::backdrop {
   font-size: 11px;
   color: var(--muted);
   margin-top: 4px;
+}
+.cpu-option-reason {
+  display: block;
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+  font-style: normal;
 }
 .cpu-option:hover:not(:disabled) {
   background: var(--selected);
@@ -1697,10 +1711,6 @@ main {
   font-size: 20px;
 }
 
-.eyebrow {
-  display: none;
-}
-
 .heading-actions {
   align-items: center;
 }
@@ -1941,7 +1951,19 @@ main {
 }
 
 .metric-card:first-child strong {
+  color: #f0f2f5;
+}
+
+#dashboard-network-card[data-state="online"] strong {
   color: var(--green);
+}
+
+#dashboard-network-card[data-state="offline"] strong {
+  color: var(--amber);
+}
+
+#dashboard-network-card[data-state="idle"] strong {
+  color: var(--muted);
 }
 
 .metric-meta {
@@ -3086,10 +3108,32 @@ body { background:#0b0d0f; }
 .network-table-row { font-size:16px; border-bottom:1px solid #292e34; }
 .network-table-row:last-child { border-bottom:0; }
 .cpu-overview { display:grid; grid-template-columns:180px 220px minmax(0,1fr); align-items:center; gap:28px; padding:24px 28px; border:1px solid #353a41; border-radius:10px; background:#171a1e; }
-.cpu-donut { width:142px; height:142px; border-radius:50%; display:grid; place-content:center; text-align:center; background:radial-gradient(circle at center,#171a1e 57%,transparent 58%), conic-gradient(#dfe4e8 var(--value),#3a4149 0); }
+.cpu-donut { width:142px; height:142px; border-radius:50%; display:grid; place-content:center; text-align:center; background:radial-gradient(circle at center,#171a1e 57%,transparent 58%), conic-gradient(#dfe4e8 0%,#3a4149 0); }
+.cpu-donut.level-5 { background:radial-gradient(circle at center,#171a1e 57%,transparent 58%), conic-gradient(#dfe4e8 5%,#3a4149 0); }
+.cpu-donut.level-10 { background:radial-gradient(circle at center,#171a1e 57%,transparent 58%), conic-gradient(#dfe4e8 10%,#3a4149 0); }
+.cpu-donut.level-15 { background:radial-gradient(circle at center,#171a1e 57%,transparent 58%), conic-gradient(#dfe4e8 15%,#3a4149 0); }
+.cpu-donut.level-20 { background:radial-gradient(circle at center,#171a1e 57%,transparent 58%), conic-gradient(#dfe4e8 20%,#3a4149 0); }
+.cpu-donut.level-25 { background:radial-gradient(circle at center,#171a1e 57%,transparent 58%), conic-gradient(#dfe4e8 25%,#3a4149 0); }
+.cpu-donut.level-30 { background:radial-gradient(circle at center,#171a1e 57%,transparent 58%), conic-gradient(#dfe4e8 30%,#3a4149 0); }
+.cpu-donut.level-35 { background:radial-gradient(circle at center,#171a1e 57%,transparent 58%), conic-gradient(#dfe4e8 35%,#3a4149 0); }
+.cpu-donut.level-40 { background:radial-gradient(circle at center,#171a1e 57%,transparent 58%), conic-gradient(#dfe4e8 40%,#3a4149 0); }
+.cpu-donut.level-45 { background:radial-gradient(circle at center,#171a1e 57%,transparent 58%), conic-gradient(#dfe4e8 45%,#3a4149 0); }
+.cpu-donut.level-50 { background:radial-gradient(circle at center,#171a1e 57%,transparent 58%), conic-gradient(#dfe4e8 50%,#3a4149 0); }
+.cpu-donut.level-55 { background:radial-gradient(circle at center,#171a1e 57%,transparent 58%), conic-gradient(#dfe4e8 55%,#3a4149 0); }
+.cpu-donut.level-60 { background:radial-gradient(circle at center,#171a1e 57%,transparent 58%), conic-gradient(#dfe4e8 60%,#3a4149 0); }
+.cpu-donut.level-65 { background:radial-gradient(circle at center,#171a1e 57%,transparent 58%), conic-gradient(#dfe4e8 65%,#3a4149 0); }
+.cpu-donut.level-70 { background:radial-gradient(circle at center,#171a1e 57%,transparent 58%), conic-gradient(#dfe4e8 70%,#3a4149 0); }
+.cpu-donut.level-75 { background:radial-gradient(circle at center,#171a1e 57%,transparent 58%), conic-gradient(#dfe4e8 75%,#3a4149 0); }
+.cpu-donut.level-80 { background:radial-gradient(circle at center,#171a1e 57%,transparent 58%), conic-gradient(#dfe4e8 80%,#3a4149 0); }
+.cpu-donut.level-85 { background:radial-gradient(circle at center,#171a1e 57%,transparent 58%), conic-gradient(#dfe4e8 85%,#3a4149 0); }
+.cpu-donut.level-90 { background:radial-gradient(circle at center,#171a1e 57%,transparent 58%), conic-gradient(#dfe4e8 90%,#3a4149 0); }
+.cpu-donut.level-95 { background:radial-gradient(circle at center,#171a1e 57%,transparent 58%), conic-gradient(#dfe4e8 95%,#3a4149 0); }
+.cpu-donut.level-100 { background:radial-gradient(circle at center,#171a1e 57%,transparent 58%), conic-gradient(#dfe4e8 100%,#3a4149 0); }
 .cpu-donut strong { font-size:32px; } .cpu-donut small { font-size:15px; color:#929ba6; } .cpu-donut span { font-size:12px; color:#929ba6; }
 .cpu-legend { display:grid; gap:12px; } .cpu-legend div { display:flex; justify-content:space-between; border-bottom:1px solid #30353b; padding-bottom:8px; } .cpu-legend b { font-size:20px; } .cpu-legend span { color:#929ba6; }
 .load-bars { display:flex; align-items:end; gap:5px; height:100px; margin-top:14px; } .load-bars i { flex:1; min-width:5px; background:#7e8994; border-radius:2px 2px 0 0; }
+.load-bar.level-18 { height:18%; } .load-bar.level-23 { height:23%; } .load-bar.level-28 { height:28%; }
+.load-bar.level-72 { height:72%; } .load-bar.level-78 { height:78%; } .load-bar.level-84 { height:84%; } .load-bar.level-90 { height:90%; }
 @media (max-width:1100px){ .page-heading,.dashboard-grid,.dashboard-columns,.workbench,.search-row,.filters { padding-left:28px; padding-right:28px; } .view-orders #jobs-panel,.view-orders #legacy-panel,.view-cpus #cpu-list,.view-network #network-info,.view-network #network-table,.view-network .network-toolbar,.view-cpus #cpu-overview { margin-left:28px; margin-right:28px; } .inventory-table tbody { grid-template-columns:repeat(4,minmax(0,1fr)); } }
 @media (max-width:800px){ .app-frame { margin:0; min-height:100vh; border-radius:0; border:0; } .page-heading { padding:28px 16px 18px; } .page-heading h1 { font-size:34px; } .dashboard-grid,.dashboard-columns,.workbench,.search-row,.filters { padding-left:16px; padding-right:16px; } .inventory-table tbody { grid-template-columns:repeat(2,minmax(0,1fr)); } .view-orders #jobs-panel,.view-orders #legacy-panel,.view-cpus #cpu-list,.view-network #network-info,.view-network #network-table,.view-network .network-toolbar,.view-cpus #cpu-overview { margin-left:16px; margin-right:16px; } .cpu-overview { grid-template-columns:120px 1fr; } .cpu-load { grid-column:1/-1; } }
 :root {
@@ -3275,12 +3319,6 @@ main,
   color: #f1f2f4;
   font-size: 24px;
   letter-spacing: .01em;
-}
-.eyebrow {
-  color: #727982;
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: .12em;
 }
 .heading-actions {
   display: flex;
@@ -4317,10 +4355,6 @@ body {
   font-size: 20px;
 }
 
-.eyebrow {
-  display: none;
-}
-
 .dashboard-grid {
   gap: 18px;
   padding: 0 0 22px;
@@ -4348,7 +4382,7 @@ body {
 }
 
 .metric-card:first-child strong {
-  color: #39ff48;
+  color: #f0f2f5;
 }
 
 .metric-meta {

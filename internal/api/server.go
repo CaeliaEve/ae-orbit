@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/CaeliaEve/ae-orbit/internal/catalog"
 	"github.com/CaeliaEve/ae-orbit/internal/store"
 	"github.com/CaeliaEve/ae-orbit/internal/telemetry"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -34,6 +35,7 @@ func DefaultOptions() Options {
 
 type Server struct {
 	db             *store.Store
+	catalog        *catalog.Catalog
 	options        Options
 	mux            *http.ServeMux
 	requests       chan struct{}
@@ -47,8 +49,18 @@ type Server struct {
 }
 
 func New(db *store.Store, options Options) *Server {
-	s := &Server{db: db, options: options, mux: http.NewServeMux(), requests: make(chan struct{}, options.MaxConcurrent), streams: make(chan struct{}, options.MaxStreams), deviceInFlight: map[string]int{}, started: time.Now()}
+	var value *catalog.Catalog
+	if db != nil {
+		value = db.Catalog()
+	}
+	s := &Server{db: db, catalog: value, options: options, mux: http.NewServeMux(), requests: make(chan struct{}, options.MaxConcurrent), streams: make(chan struct{}, options.MaxStreams), deviceInFlight: map[string]int{}, started: time.Now()}
 	s.routes()
+	return s
+}
+
+func NewWithCatalog(db *store.Store, options Options, value *catalog.Catalog) *Server {
+	s := New(db, options)
+	s.catalog = value
 	return s
 }
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {

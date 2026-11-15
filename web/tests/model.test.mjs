@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import * as model from "../src/model.mjs";
 import {
-  newId, normalizeQuantity, formatQuantity, storageKey, loadDraft, saveDraft,
+  newId, normalizeQuantity, formatQuantity, formatCompactQuantity, storageKey, loadDraft, saveDraft,
   addDraft, updateDraft, removeDraft, markSubmitting, completeSubmission,
 } from "../src/model.mjs";
 
@@ -53,6 +53,25 @@ test("quantity formatting does not round large inventories", () => {
   assert.equal(formatQuantity("0"), "0");
   assert.equal(formatQuantity(undefined), "-");
   assert.equal(formatQuantity(Number.MAX_SAFE_INTEGER + 1), "-");
+});
+
+test("compact quantity formatting stays exact while keeping inventory cells readable", () => {
+  for (const [value, expected] of [
+    ["0", "0"],
+    ["999", "999"],
+    ["1000", "1K"],
+    ["1250", "1.25K"],
+    ["12500", "12.5K"],
+    ["164000", "164K"],
+    ["1249999", "1.25M"],
+    ["2400000000", "2.4B"],
+    ["9223372036854775807", "9.22Qi"],
+  ]) {
+    assert.equal(formatCompactQuantity(value), expected, `compact: ${value}`);
+  }
+  assert.equal(formatCompactQuantity(undefined), "-");
+  assert.equal(formatCompactQuantity("1e3"), "-");
+  assert.equal(formatCompactQuantity(Number.MAX_SAFE_INTEGER + 1), "-");
 });
 
 test("draft keys are isolated by both member and network", () => {

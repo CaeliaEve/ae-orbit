@@ -12,6 +12,14 @@ function decimal(value) {
   requireValue(typeof value === "string" && /^(0|[1-9][0-9]{0,18})$/.test(value) && BigInt(value) <= MAX_INT);
   return value;
 }
+function cpuPolicy(cpuName, waitForCPU) {
+  const name = cpuName === undefined ? "" : cpuName;
+  const wait = waitForCPU === undefined ? false : waitForCPU;
+  requireValue(typeof name === "string" && !/[\u0000-\u001f\u007f]/.test(name) &&
+    new TextEncoder().encode(name).length <= 256 && (name === "" || name.trim() !== ""), "Invalid CPU policy.");
+  requireValue(typeof wait === "boolean" && (!wait || name !== ""), "Waiting requires a named CPU.");
+  return { cpu_name: name, wait_for_cpu: wait };
+}
 function clone(value) { return JSON.parse(JSON.stringify(value)); }
 function freeze(value) {
   if (value && typeof value === "object") { Object.values(value).forEach(freeze); Object.freeze(value); }
@@ -29,12 +37,13 @@ export function createJobIntent({ memberId, networkId, requestKey, entries, name
   requireValue(Array.isArray(entries) && entries.length > 0 && entries.length <= 500);
   const seen = new Set();
   const manifestEntries = entries.map(row => {
-    requireValue(row.status === "draft" && row.cpu_name === "" && row.wait_for_cpu === false, "Job rows require editable default CPU policy.");
+    requireValue(row.status === "draft", "Job rows require an editable draft.");
     requireValue(row.item?.exact === true && row.item.craftable === true);
     id(row.id);
     const entryKey = key(`draft-${row.id}`);
     requireValue(!seen.has(entryKey)); seen.add(entryKey);
-    return { entry_key: entryKey, item_id: normalizeQuantity(row.item.id), quantity: normalizeQuantity(row.quantity) };
+    return { entry_key: entryKey, item_id: normalizeQuantity(row.item.id), quantity: normalizeQuantity(row.quantity),
+      ...cpuPolicy(row.cpu_name, row.wait_for_cpu) };
   });
   const manifest = { request_key: requestKey, name, ttl_seconds: ttlSeconds || 3600, entries: manifestEntries };
   requireValue(new TextEncoder().encode(JSON.stringify(manifest)).length <= 262144);
@@ -46,11 +55,18 @@ function validateIntent(value) {
   if (value.state === "rejected") requireValue(isDefiniteRejection(value.rejection), "Invalid rejection evidence.");
   requireValue(Array.isArray(value.draftIds) && value.manifest && Array.isArray(value.manifest.entries) &&
     value.draftIds.length === value.manifest.entries.length, "Missing persisted manifest associations.");
+  const entries = value.manifest.entries.map(entry => {
+    requireValue(entry && typeof entry === "object" && !Array.isArray(entry), "Invalid persisted manifest entry.");
+    requireValue(Object.keys(entry).every(field => ["entry_key", "item_id", "quantity", "cpu_name", "wait_for_cpu"].includes(field)),
+      "Unexpected persisted manifest entry field.");
+    return { ...entry, ...cpuPolicy(entry.cpu_name, entry.wait_for_cpu) };
+  });
   const canonical = createJobIntent({ memberId: value.memberId, networkId: value.networkId,
     requestKey: value.requestKey, name: value.manifest.name, ttlSeconds: value.manifest.ttl_seconds,
-    entries: value.draftIds.map((rowId, i) => ({ id: rowId, status: "draft", cpu_name: "", wait_for_cpu: false,
-      item: { id: value.manifest.entries[i]?.item_id, exact: true, craftable: true }, quantity: value.manifest.entries[i]?.quantity })) });
-  requireValue(JSON.stringify(canonical.manifest) === JSON.stringify(value.manifest), "Invalid persisted immutable manifest.");
+    entries: value.draftIds.map((rowId, i) => ({ id: rowId, status: "draft", ...cpuPolicy(entries[i].cpu_name, entries[i].wait_for_cpu),
+      item: { id: entries[i]?.item_id, exact: true, craftable: true }, quantity: entries[i]?.quantity })) });
+  const manifest = { ...value.manifest, entries };
+  requireValue(JSON.stringify(canonical.manifest) === JSON.stringify(manifest), "Invalid persisted immutable manifest.");
   if (value.state === "accepted" || value.jobId !== undefined || value.digest !== undefined || value.archived !== undefined) {
     id(value.jobId);
     requireValue(typeof value.digest === "string" && /^[a-f0-9]{64}$/.test(value.digest) && typeof value.archived === "boolean",
@@ -60,7 +76,7 @@ function validateIntent(value) {
     requireValue(Array.isArray(value.conflictJobIds) && value.conflictJobIds.length <= 500);
     value.conflictJobIds.forEach(id);
   }
-  return value;
+  return { ...value, manifest };
 }
 
 function validateControl(operation) {
@@ -136,7 +152,7 @@ export function createJobJournal(storage, scope) {
       for (let i = 0; i < intent.draftIds.length; i++) {
         const row = draft.entries.find(row => row.id === intent.draftIds[i]);
         const expected = intent.manifest.entries[i];
-        requireValue(row?.status === "draft" && row.cpu_name === "" && row.wait_for_cpu === false &&
+        requireValue(row?.status === "draft" && row.cpu_name === expected.cpu_name && row.wait_for_cpu === expected.wait_for_cpu &&
           row.item.id === expected.item_id && row.quantity === expected.quantity, "Draft claim is locked or changed.");
       }
       // Per-request entries survive independent writers; claims retain the exact old order key.
@@ -234,8 +250,10 @@ export function verifyJobAcceptance(intent, response, context) {
       const expected = intent.manifest.entries[ordinal];
       id(entry.id); requireValue(!ids.has(entry.id)); ids.add(entry.id);
       normalizeQuantity(entry.item_id);
+      const policy = cpuPolicy(entry.cpu_name, entry.wait_for_cpu);
       requireValue(entry.ordinal === ordinal && entry.entry_key === expected.entry_key &&
-        entry.requested_item_id === expected.item_id && entry.quantity === expected.quantity && STATES.includes(entry.state));
+        entry.requested_item_id === expected.item_id && entry.quantity === expected.quantity &&
+        policy.cpu_name === expected.cpu_name && policy.wait_for_cpu === expected.wait_for_cpu && STATES.includes(entry.state));
     });
   }
   return { jobId: receipt.job_id, digest: receipt.manifest_digest, archived: receipt.archived };

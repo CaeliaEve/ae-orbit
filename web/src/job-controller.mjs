@@ -14,15 +14,24 @@ export function validateJobDetail(value, scope, jobId) {
   if (summary.id !== jobId || summary.network_id !== scope.networkId || !Array.isArray(value.entries) ||
       value.entries.length !== Number(summary.total)) throw new Error("Invalid job detail.");
   const seen = new Set(), counts = Object.fromEntries(Object.keys(summary.counts).map(key => [key, 0]));
-  value.entries.forEach((entry, ordinal) => {
+  const entries = structuredClone(value.entries);
+  entries.forEach((entry, ordinal) => {
     if (typeof entry.id !== "string" || !/^[A-Za-z0-9_.:-]{1,128}$/.test(entry.id) || seen.has(entry.id) ||
         entry.ordinal !== ordinal || !(entry.state in counts) || typeof entry.entry_key !== "string" ||
         (entry.order_id !== undefined && !/^[A-Za-z0-9_.:-]{1,128}$/.test(entry.order_id))) throw new Error("Invalid job entry.");
     seen.add(entry.id); counts[entry.state]++;
     normalizeQuantity(entry.item_id); normalizeQuantity(entry.requested_item_id); normalizeQuantity(entry.quantity);
+    const cpuName = entry.cpu_name === undefined ? "" : entry.cpu_name;
+    const waitForCPU = entry.wait_for_cpu === undefined ? false : entry.wait_for_cpu;
+    if (typeof cpuName !== "string" || cpuName.length > 256 || /[\u0000-\u001f\u007f]/.test(cpuName) ||
+        (cpuName !== "" && cpuName.trim() === "") || typeof waitForCPU !== "boolean" || (waitForCPU && !cpuName)) {
+      throw new Error("Invalid job CPU policy.");
+    }
+    entry.cpu_name = cpuName;
+    entry.wait_for_cpu = waitForCPU;
   });
   if (Object.keys(counts).some(key => String(counts[key]) !== summary.counts[key])) throw new Error("Invalid entry counts.");
-  return { summary, entries: structuredClone(value.entries) };
+  return { summary, entries };
 }
 
 export function createJobController({ storage, request, makeKey = newId, lock = (_key, work) => work(), onChange = () => {} }) {

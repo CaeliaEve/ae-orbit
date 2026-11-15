@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createJobController, overlayJobClaims } from "../src/job-controller.mjs";
+import { createJobController, overlayJobClaims, validateJobDetail } from "../src/job-controller.mjs";
 import { jobDetailHTML } from "../src/job-view.mjs";
 import { saveDraft, loadDraft, storageKey } from "../src/model.mjs";
 const scope = { memberId: "member-1", networkId: "network-1" };
@@ -10,6 +10,15 @@ function setup(handler) {
   const values = new Map();
   const storage = { get length(){return values.size;}, key:i=>[...values.keys()][i], getItem:k=>values.get(k)??null, setItem:(k,v)=>values.set(k,v), removeItem:k=>values.delete(k) };
   saveDraft(storage, storageKey(scope.memberId,scope.networkId), {entries:[row("source-001"),row("source-002")]});
+  const requests=[];
+  const controller=createJobController({storage, request:async(path,options={})=>{requests.push({path,...options}); return handler(path,options);}, makeKey:()=> "manifest-001"});
+  controller.reset(scope);
+  return {controller,storage,requests};
+}
+function setupWithCPU(handler) {
+  const values = new Map();
+  const storage = { get length(){return values.size;}, key:i=>[...values.keys()][i], getItem:k=>values.get(k)??null, setItem:(k,v)=>values.set(k,v), removeItem:k=>values.delete(k) };
+  saveDraft(storage, storageKey(scope.memberId,scope.networkId), {entries:[{...row("source-001"),cpu_name:"CPU A",wait_for_cpu:true}]});
   const requests=[];
   const controller=createJobController({storage, request:async(path,options={})=>{requests.push({path,...options}); return handler(path,options);}, makeKey:()=> "manifest-001"});
   controller.reset(scope);
@@ -33,6 +42,24 @@ test("single and batch submissions each send one immutable jobs manifest and cle
     assert.equal(requests.find(r=>r.method==="POST").body.entries.length,ids.length);
     assert.equal(loadDraft(storage,storageKey(scope.memberId,scope.networkId)).entries.length,2-ids.length);
   }
+});
+test("submission sends and restores per-entry CPU policy", async () => {
+  const {controller, requests} = setupWithCPU((path, o) => o.method === "POST" ? receipt(o.body) : path.endsWith("/jobs") ? snapshot : {changes:[],next_after:"0",watermark:"0",has_more:false,reset:false});
+  await controller.sync();
+  await controller.submit(["source-001"]);
+  const manifest = requests.find(r => r.method === "POST").body;
+  assert.deepEqual(manifest.entries[0], {
+    entry_key: "draft-source-001", item_id: "1", quantity: "64", cpu_name: "CPU A", wait_for_cpu: true,
+  });
+  assert.deepEqual(controller.local().draft.entries, []);
+});
+test("job detail validates and displays authoritative CPU policy", () => {
+  const detail = receipt({entries:[{entry_key:"draft-source-001",item_id:"1",quantity:"64",cpu_name:"CPU A",wait_for_cpu:true}]}).job;
+  detail.entries[0].cpu_name = "CPU A";
+  detail.entries[0].wait_for_cpu = true;
+  const helpers={itemFor:()=>({label:"Stone"}),itemImage:()=>"",quantity:String,dateTime:String,icon:()=>""};
+  assert.equal(validateJobDetail(detail, scope, "job-1").entries[0].cpu_name, "CPU A");
+  assert.match(jobDetailHTML(detail,{controls:[]},{id:scope.memberId},helpers), /CPU A/);
 });
 test("unsupported snapshot fails closed without a legacy fallback",async()=>{
   const {controller,requests}=setup(()=>{throw Object.assign(new Error("missing"),{status:404});});
@@ -156,8 +183,8 @@ test("definite initial rejection permits one explicit same-key retry, then ambig
   assert.equal(controller.local().intents[0].state,"uncertain");
   await assert.rejects(()=>controller.retryRejected("manifest-001"));
   assert.deepEqual(requests.filter(r=>r.method==="POST").map(r=>r.body),[
-    {request_key:"manifest-001",name:"",ttl_seconds:3600,entries:[{entry_key:"draft-source-001",item_id:"1",quantity:"64"}]},
-    {request_key:"manifest-001",name:"",ttl_seconds:3600,entries:[{entry_key:"draft-source-001",item_id:"1",quantity:"64"}]},
+    {request_key:"manifest-001",name:"",ttl_seconds:3600,entries:[{entry_key:"draft-source-001",item_id:"1",quantity:"64",cpu_name:"",wait_for_cpu:false}]},
+    {request_key:"manifest-001",name:"",ttl_seconds:3600,entries:[{entry_key:"draft-source-001",item_id:"1",quantity:"64",cpu_name:"",wait_for_cpu:false}]},
   ]);
 });
 test("each definite capacity rejection permits another explicit exact-key resend until accepted",async()=>{

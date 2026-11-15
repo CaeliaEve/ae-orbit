@@ -4,7 +4,8 @@ The backend accepts immutable manifests and admits them incrementally through
 the existing order queue. Quantities are additional craft amounts, not inventory
 targets. Acceptance is atomic; execution is not. The frontend submits new
 single and batch intents through one immutable job manifest. Legacy orders, display
-batch labels, OC protocol, CPU-targeting gates and game behavior are unchanged.
+batch labels, OC protocol and game behavior remain unchanged; each entry may now
+carry an explicit CPU target policy.
 
 ## Requests And Receipts
 
@@ -19,7 +20,8 @@ X-CSRF-Token. Network viewers can read snapshot, history, detail and changes.
   "request_key": "manifest-001",
   "name": "Stone",
   "ttl_seconds": 3600,
-  "entries": [{"entry_key": "source-001", "item_id": "1", "quantity": "64"}]
+  "entries": [{"entry_key": "source-001", "item_id": "1", "quantity": "64",
+               "cpu_name": "Main CPU", "wait_for_cpu": true}]
 }
 ```
 
@@ -27,9 +29,11 @@ Keys are 8-128 ASCII letters/digits/underscore/hyphen/period/colon. Entries are
 ordered, distinct by source key and never merged by equal item. There must be
 1-500 entries. Names default to empty and allow at most 128 valid UTF-8 bytes,
 without control characters. TTL omitted or zero normalizes to 3600; explicit
-nonzero TTL is 1-86400 seconds and starts on admission. Unknown fields, including
-CPU-policy fields, are rejected. Item IDs and quantities are positive exact
-decimal strings in the signed 64-bit range.
+nonzero TTL is 1-86400 seconds and starts on admission. `cpu_name` is optional
+and must be a nonblank string of at most 256 UTF-8 bytes. `wait_for_cpu=true`
+requires `cpu_name`; both fields are part of the immutable manifest digest.
+Unknown fields are rejected. Item IDs and quantities are positive exact decimal
+strings in the signed 64-bit range.
 
 First acceptance returns 201; exact normalized replay returns 200. Both return
 `{"receipt":{"job_id":"...","manifest_digest":"...","archived":false},"job":{...}}`.
@@ -163,9 +167,10 @@ editable detail, and never creates a new job.
 ## Validation And Deployment
 
 Offline PostgreSQL/HTTP/simulator tests establish durable acceptance, admission,
-identity, authorization, controls, synchronization and process restart semantics.
-They do not establish real AE throughput, TPS, CPU targeting or native-handle
-recovery. No deployment or live migration is implied by local validation.
+identity, authorization, controls, synchronization, CPU-policy persistence and
+process restart semantics. They do not establish real AE throughput, TPS,
+native timing races or native-handle recovery. No deployment or live migration
+is implied by local validation.
 
 Deployment requires explicit approval, a database backup and stopping the old
 writer first. Run one backend writer only. Rollback after accepted jobs requires

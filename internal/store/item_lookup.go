@@ -37,7 +37,7 @@ func (s *Store) ItemsByID(ctx context.Context, userID, networkID string, ids []p
 	if err = tx.QueryRow(ctx, "SELECT revision,current_session FROM networks WHERE id=$1", networkID).Scan(&result.Revision, &session); err != nil {
 		return result, notFound(err)
 	}
-	rows, err := tx.Query(ctx, `SELECT requested.id,CASE WHEN requested.id<>d.id THEN d.id ELSE 0 END,d.kind,d.name,d.damage,d.label,d.exact,i.quantity,i.craftable,
+	rows, err := tx.Query(ctx, `SELECT requested.id,CASE WHEN requested.id<>d.id THEN d.id ELSE 0 END,d.kind,d.name,d.damage,d.label,d.exact,d.nbt,i.quantity,i.craftable,
         i.observed_at,i.craftable_observed_at,`+quantityCurrentSessionSQL+`,`+recipeCurrentSessionSQL+`
         FROM item_definitions requested
         LEFT JOIN item_aliases a ON a.network_id=requested.network_id AND a.alias_id=requested.id
@@ -50,7 +50,7 @@ func (s *Store) ItemsByID(ctx context.Context, userID, networkID string, ids []p
 	items := make(map[protocol.Quantity]protocol.Item, len(unique))
 	for rows.Next() {
 		var item protocol.Item
-		if err = rows.Scan(&item.ID, &item.CanonicalID, &item.Kind, &item.Name, &item.Damage, &item.Label, &item.Exact,
+		if err = rows.Scan(&item.ID, &item.CanonicalID, &item.Kind, &item.Name, &item.Damage, &item.Label, &item.Exact, &item.NBT,
 			&item.Quantity, &item.Craftable, &item.ObservedAt, &item.CraftableObservedAt, &item.CurrentSession, &item.CraftableCurrentSession); err != nil {
 			rows.Close()
 			return result, err

@@ -15,6 +15,7 @@ local function valid_command(command)
   if item.nbt~=nil and type(item.nbt)~="string" then return false end
   if command.cpu_name~=nil and type(command.cpu_name)~="string" then return false end
   if command.wait_for_cpu~=nil and type(command.wait_for_cpu)~="boolean" then return false end
+  if command.wait_for_cpu==true and (type(command.cpu_name)~="string" or command.cpu_name=="") then return false end
   local ok,err=pcall(quantity.validate,command.quantity)
   if not ok then cancel.rethrow(err) end
   return ok
