@@ -12,6 +12,9 @@ __pycache__/
 *.pyc
 /node_modules/
 
+# Playwright MCP browser snapshots, console logs, and screenshots.
+/.playwright-mcp/
+
 # Live OC credentials and state belong outside the source tree.
 /oc/config.lua
 /oc/config.live.lua
