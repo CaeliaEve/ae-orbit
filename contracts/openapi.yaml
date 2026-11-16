@@ -493,6 +493,20 @@ paths:
           content: {application/json: {schema: {$ref: '#/components/schemas/ItemLookup'}}}
         '406': {$ref: '#/components/responses/Error'}
         default: {$ref: '#/components/responses/Error'}
+  /catalog-assets/texture-pack.zip:
+    get:
+      operationId: getTexturePack
+      tags: [Inventory]
+      description: Optional public, immutable-ish browser texture pack configured by AE_TEXTURE_PACK_PATH.
+      responses:
+        '200':
+          description: AE Orbit browser texture pack ZIP.
+          headers:
+            Cache-Control: {schema: {type: string}}
+          content:
+            application/zip: {schema: {type: string, format: binary}}
+        '404': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
   /api/v1/networks/{network}/catalog/items/{item}/image:
     parameters:
       - {$ref: '#/components/parameters/NetworkID'}
@@ -1243,6 +1257,7 @@ components:
         max_damage: {type: integer, minimum: 0}
         max_stack_size: {type: integer, minimum: 0}
         image_url: {type: string, format: uri-reference}
+        image_key: {type: string, description: Stable texture-pack asset path.}
         image_state: {type: string, enum: [available, missing]}
         width: {type: integer, minimum: 1}
         height: {type: integer, minimum: 1}

@@ -1,0 +1,6 @@
+services:
+  api:
+    environment:
+      AE_TEXTURE_PACK_PATH: /var/lib/ae-orbit/texture-pack/ae-orbit-textures.zip
+    volumes:
+      - ${AE_TEXTURE_PACK_HOST_PATH:-../.local/catalog/ae-orbit-textures.zip}:/var/lib/ae-orbit/texture-pack/ae-orbit-textures.zip:ro

@@ -78,6 +78,13 @@ html[data-inventory-layout="wide"] .inventory-table tbody { --inventory-card-min
 .github-card { max-width: none; }
 .setting-actions { display: flex; flex-wrap: wrap; gap: 8px; padding: 16px 0 4px; }
 .setting-actions button { min-height: 36px; }
+.texture-pack-controls { display: grid; gap: 10px; padding: 12px 0 2px; }
+.setting-input { display: grid; gap: 6px; }
+.setting-input > span { color: var(--muted); font-size: 12px; }
+.setting-input input { width: 100%; min-height: 38px; padding: 0 11px; border: 1px solid var(--rule); border-radius: 6px; background: var(--surface-2); color: var(--text); font: inherit; }
+.texture-pack-status { margin-top: 12px; padding: 9px 11px; border: 1px solid var(--rule); border-radius: 6px; color: var(--muted); font-size: 12px; }
+.texture-pack-status[data-state="ready"] { border-color: #4d6654; color: #b5d0ba; }
+.texture-pack-status[data-state="error"] { border-color: #764b4b; color: #e0aaaa; }
 
 /* Network management: a compact operations dashboard with one clear hierarchy. */
 .view-network #network-info.network-dashboard {

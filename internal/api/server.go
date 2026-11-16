@@ -21,12 +21,13 @@ import (
 )
 
 type Options struct {
-	Origin         string
-	SecureCookies  bool
-	MaxConcurrent  int
-	MaxStreams     int
-	RequestTimeout time.Duration
-	StreamInterval time.Duration
+	Origin          string
+	SecureCookies   bool
+	TexturePackPath string
+	MaxConcurrent   int
+	MaxStreams      int
+	RequestTimeout  time.Duration
+	StreamInterval  time.Duration
 }
 
 func DefaultOptions() Options {

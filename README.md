@@ -38,9 +38,9 @@ curl http://127.0.0.1:8080/readyz
 
 ### NESQL++ 物品目录与纹理
 
-运行时只接受 NESQL++ 的完整 `elysium.source` 数据集。原始导出目录作为只读输入，直接复制或挂载到被 `.local/` 忽略的目录；服务不会改写、删除或覆盖原始 Source。
+运行时只接受经过校验的 NESQL++ `elysium.source` 数据集。原始导出目录作为只读输入，直接复制或挂载到被 `.local/` 忽略的目录；服务不会改写、删除或覆盖原始 Source。
 
-NESQL++ 必须完成一次 `images`/`full` 导出并最终生成 `manifest.json`，且 manifest 的 `scope.mode` 必须为 `complete`。仍处于 `elysium.capture`、`state=writing` 或 selection scope 的中间产物会被拒绝，不会被当成可用目录。
+完整导出（`scope.mode=complete`）可直接使用；库存纹理专用导出也可使用 `scope.mode=selection`，但必须同时声明 `assets`、`items`、`strings`，并且每个物品的 icon、asset 记录和 PNG 文件都能闭环校验。仍处于 `elysium.capture`、`state=writing` 或缺少必要集合的中间产物会被拒绝，不会被当成可用目录。
 
 ```powershell
 New-Item -ItemType Directory -Force .local\catalog | Out-Null
@@ -64,6 +64,31 @@ docker compose --env-file .env -f deploy/compose.yaml -f deploy/compose.catalog.
 ```
 
 可通过 `AE_CATALOG_HOST_PATH` 指向服务器上的生成目录。catalog 图片接口受浏览器会话保护，并使用内容 `ETag` 和长期缓存。
+
+### 浏览器纹理包（可选）
+
+如果希望用户只下载一次纹理并在浏览器本地复用，可以从 NESQL++ 源目录生成 ZIP。原始导出目录不会被改写：
+
+```powershell
+python scripts/build_texture_pack.py `
+  ".local\catalog\nesqlpp" `
+  --output ".local\catalog\ae-orbit-textures.zip"
+```
+
+将生成的 ZIP 放到静态文件服务或 CDN 后，在网页的“设置 → 纹理资源”中选择“指定纹理包 URL”并加载；也可以直接选择“导入本地 ZIP”。本地导入会保存到当前浏览器的 Cache Storage，刷新后仍可使用。纹理包只包含 PNG 和清单，不包含库存数量、访问令牌或 OC 数据。
+
+使用 Compose 时也可以把 ZIP 挂载到后端，由设置页的“加载服务器纹理包”按钮提供下载：
+
+```powershell
+$env:AE_TEXTURE_PACK_HOST_PATH = "$PWD\.local\catalog\ae-orbit-textures.zip"
+docker compose --env-file .env `
+  -f deploy\compose.yaml `
+  -f deploy\compose.catalog.yaml `
+  -f deploy\compose.texture-pack.yaml `
+  up -d --build
+```
+
+服务器默认仍使用按需纹理。纹理包是可选的离线/低带宽模式，适合固定版本的目录；移动端或首次访问用户较多时，不建议强制下载完整纹理包。生成脚本会输出 SHA-256，可用于部署后的完整性校验。
 
 `/readyz` 正常返回 `{"status":"ready"}`。浏览器打开根路径，用成员或管理员访问令牌登录。日志和停止命令：
 

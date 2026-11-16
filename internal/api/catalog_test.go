@@ -79,6 +79,9 @@ func TestCatalogMetadataAndImageEndpoint(t *testing.T) {
 	if len(page.Items[0].Catalog.Frames) != 1 || !page.Items[0].Catalog.Interpolate {
 		t.Fatalf("catalog animation metadata = %#v", page.Items[0].Catalog)
 	}
+	if page.Items[0].Catalog.ImageKey != "item/minecraft/stone~0.png" {
+		t.Fatalf("catalog image key = %q", page.Items[0].Catalog.ImageKey)
+	}
 	imagePath := page.Items[0].Catalog.ImageURL
 	response := sendServer(t, server, "GET", imagePath, adminToken, "")
 	data, err := io.ReadAll(response.Body)
@@ -103,6 +106,33 @@ func TestCatalogMetadataAndImageEndpoint(t *testing.T) {
 	second.Body.Close()
 	if second.StatusCode != http.StatusNotModified {
 		t.Fatalf("ETag response = %d", second.StatusCode)
+	}
+}
+
+func TestTexturePackEndpointIsOptionalAndCacheable(t *testing.T) {
+	f := setup(t)
+	pack := filepath.Join(t.TempDir(), "textures.zip")
+	if err := os.WriteFile(pack, []byte("zip-bytes"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	options := api.DefaultOptions()
+	options.Origin = "http://localhost"
+	options.SecureCookies = false
+	options.TexturePackPath = pack
+	server := httptest.NewServer(api.New(f.db, options))
+	t.Cleanup(server.Close)
+
+	response, err := server.Client().Get(server.URL + "/catalog-assets/texture-pack.zip")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, readErr := io.ReadAll(response.Body)
+	response.Body.Close()
+	if readErr != nil || response.StatusCode != http.StatusOK || string(data) != "zip-bytes" {
+		t.Fatalf("texture pack = %d, %q, %v", response.StatusCode, data, readErr)
+	}
+	if response.Header.Get("Cache-Control") != "public, max-age=86400, must-revalidate" {
+		t.Fatalf("texture pack cache header = %q", response.Header.Get("Cache-Control"))
 	}
 }
 

@@ -1,4 +1,5 @@
 const text = value => typeof value === "string" ? value.trim() : "";
+const GAME_TICK_MS = 1000 / 20;
 
 export function catalogDisplayName(item) {
   return text(item?.label) || text(item?.catalog?.localized_name) || text(item?.name);
@@ -54,4 +55,54 @@ export function catalogAnimation(item) {
       && x + frameWidth <= width && y + frameHeight <= height;
   });
   return frames.length === catalog.frames.length ? { width, height, frames, interpolate: catalog.interpolate === true } : null;
+}
+
+export function catalogImageURL(item) {
+  const catalog = item?.catalog;
+  return catalog?.image_state === "available" && typeof catalog.image_url === "string" && catalog.image_url
+    ? catalog.image_url
+    : "";
+}
+
+export function animationFrameAt(animation, elapsedMs) {
+  if (!animation || !Array.isArray(animation.frames) || animation.frames.length < 2) return null;
+  const cycleTicks = animation.frames.reduce((total, frame) => total + frame.ticks, 0);
+  if (!Number.isInteger(cycleTicks) || cycleTicks < 1) return null;
+  const elapsed = Math.max(0, Number(elapsedMs) || 0);
+  const cycleMs = cycleTicks * GAME_TICK_MS;
+  const elapsedTicks = (elapsed % cycleMs) / GAME_TICK_MS;
+  let remaining = elapsedTicks;
+  for (let index = 0; index < animation.frames.length; index += 1) {
+    const frame = animation.frames[index];
+    if (remaining < frame.ticks) {
+      return {
+        index,
+        frame,
+        next: animation.frames[(index + 1) % animation.frames.length],
+        tick: remaining,
+        progress: remaining / frame.ticks,
+        cycleTicks,
+      };
+    }
+    remaining -= frame.ticks;
+  }
+  return null;
+}
+
+export function spriteLayout(animation, targetWidth, targetHeight, frame = animation?.frames?.[0]) {
+  if (!animation || !Array.isArray(animation.frames) || !animation.frames.length) return null;
+  const width = Number(targetWidth);
+  const height = Number(targetHeight);
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0
+    || !frame?.width || !frame?.height) return null;
+  const scale = Math.min(width / frame.width, height / frame.height);
+  const renderedWidth = frame.width * scale;
+  const renderedHeight = frame.height * scale;
+  return {
+    scale,
+    backgroundWidth: animation.width * scale,
+    backgroundHeight: animation.height * scale,
+    offsetX: (width - renderedWidth) / 2,
+    offsetY: (height - renderedHeight) / 2,
+  };
 }

@@ -1,3 +1,5 @@
+import { defaultTexturePackSettings, normalizeTexturePackSettings } from "./texture-pack.mjs";
+
 export const SETTINGS_KEY = "ae-orbit:settings:v1";
 
 export const defaultSettings = Object.freeze({
@@ -8,6 +10,7 @@ export const defaultSettings = Object.freeze({
   syncNotifications: false,
   reconnect: true,
   rememberSession: true,
+  ...defaultTexturePackSettings,
 });
 
 const booleanKeys = ["taskNotifications", "networkNotifications", "syncNotifications", "reconnect", "rememberSession"];
@@ -16,7 +19,7 @@ const layoutValues = new Set(["auto", "dense", "wide"]);
 
 export function normalizeSettings(value) {
   const source = value && typeof value === "object" ? value : {};
-  const settings = { ...defaultSettings };
+  const settings = { ...defaultSettings, ...normalizeTexturePackSettings(source) };
   if (densityValues.has(source.density)) settings.density = source.density;
   if (layoutValues.has(source.inventoryLayout)) settings.inventoryLayout = source.inventoryLayout;
   for (const key of booleanKeys) if (typeof source[key] === "boolean") settings[key] = source[key];

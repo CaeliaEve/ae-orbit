@@ -458,10 +458,27 @@ main,
   height: 23px;
 }
 .item-image.item-image-sprite {
+  position: relative;
   background-repeat: no-repeat;
   background-position: 0 0;
   image-rendering: pixelated;
   overflow: hidden;
+  --sprite-next-image: none;
+  --sprite-next-size: auto;
+  --sprite-next-position: 0 0;
+  --sprite-next-opacity: 0;
+}
+.item-image.item-image-sprite::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: var(--sprite-next-image);
+  background-repeat: no-repeat;
+  background-size: var(--sprite-next-size);
+  background-position: var(--sprite-next-position);
+  image-rendering: pixelated;
+  opacity: var(--sprite-next-opacity);
+  pointer-events: none;
 }
 .freshness {
   display: block;

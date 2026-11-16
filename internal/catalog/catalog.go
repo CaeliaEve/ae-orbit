@@ -222,14 +222,22 @@ func openElysiumSource(root string, manifestBytes []byte) (*Catalog, error) {
 	}
 	if manifest.Format != "elysium.source" || manifest.Revision < 41 ||
 		manifest.State != "" && manifest.State != "complete" ||
-		manifest.Scope.Mode != "complete" {
+		manifest.Scope.Mode != "complete" && manifest.Scope.Mode != "selection" {
 		return nil, ErrIncompleteSource
 	}
+	imageSelection := manifest.Scope.Mode == "selection"
 	collections := make(map[string]struct{}, len(manifest.Scope.Collections))
 	for _, collection := range manifest.Scope.Collections {
 		collections[collection] = struct{}{}
 	}
-	for _, required := range []string{"assets", "items"} {
+	requiredCollections := []string{"assets", "items"}
+	if imageSelection {
+		// A selection export is admitted only as an immutable image catalog.
+		// Strings are required so the UI can resolve names/tooltips without
+		// reaching for a second, potentially mismatched source.
+		requiredCollections = append(requiredCollections, "strings")
+	}
+	for _, required := range requiredCollections {
 		if _, ok := collections[required]; !ok {
 			return nil, ErrIncompleteSource
 		}
@@ -266,7 +274,7 @@ func openElysiumSource(root string, manifestBytes []byte) (*Catalog, error) {
 			stringFiles = append(stringFiles, path)
 		}
 	}
-	if len(itemFiles) == 0 {
+	if len(itemFiles) == 0 || len(assetRecordFiles) == 0 || imageSelection && len(stringFiles) == 0 {
 		return nil, ErrIncompleteSource
 	}
 	if err := readSourceRows(root, stringFiles, func(row map[string]json.RawMessage) error {
@@ -308,6 +316,9 @@ func openElysiumSource(root string, manifestBytes []byte) (*Catalog, error) {
 		meta, err := parseAssetMeta(row, path)
 		if err != nil {
 			return err
+		}
+		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(path))); err != nil {
+			return fmt.Errorf("%w: missing NESQL++ asset file %s", ErrIncompleteSource, path)
 		}
 		if prior, exists := source.sourceAssetMeta[id]; exists && !sameAssetMeta(prior, meta) {
 			return fmt.Errorf("conflicting NESQL++ asset metadata %s", id)
@@ -381,7 +392,11 @@ func openElysiumSource(root string, manifestBytes []byte) (*Catalog, error) {
 					item.Frames = cloneFrames(meta.Frames)
 					item.Interpolate = meta.Interpolate
 				}
+			} else if imageSelection {
+				return fmt.Errorf("%w: unresolved NESQL++ item icon %s", ErrIncompleteSource, icon)
 			}
+		} else if imageSelection {
+			return fmt.Errorf("%w: NESQL++ item %s has no icon", ErrIncompleteSource, id)
 		}
 		if _, exists := source.sourceItems[id]; exists {
 			return fmt.Errorf("duplicate NESQL++ item id %s", id)
@@ -599,15 +614,18 @@ func (c *Catalog) resolveText(id string) string {
 }
 
 func (c *Catalog) assetPath(icon string) string {
-	if path, err := safeSourceAssetPath(icon); err == nil {
-		if _, err := os.Stat(filepath.Join(c.root, filepath.FromSlash(path))); err == nil {
-			c.sourceAssets[path] = struct{}{}
-			return path
-		}
-	}
 	if path := c.sourceAssetPaths[icon]; path != "" {
 		if _, err := os.Stat(filepath.Join(c.root, filepath.FromSlash(path))); err == nil {
 			return path
+		}
+	}
+	if path, err := safeSourceAssetPath(icon); err == nil {
+		// Accept a path-shaped icon only when it also has a parsed asset
+		// record. This keeps selection sources from bypassing asset metadata.
+		if _, registered := c.sourceAssetMeta[path]; registered {
+			if _, err := os.Stat(filepath.Join(c.root, filepath.FromSlash(path))); err == nil {
+				return path
+			}
 		}
 	}
 	return ""
@@ -725,6 +743,7 @@ func (item Item) Public(state string) protocol.CatalogItem {
 		ModID:           item.ModID,
 		MaxDamage:       item.MaxDamage,
 		MaxStackSize:    item.MaxStackSize,
+		ImageKey:        item.ImagePath,
 		ImageState:      state,
 		Width:           item.ImageWidth,
 		Height:          item.ImageHeight,

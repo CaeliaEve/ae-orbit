@@ -43,6 +43,7 @@ func (s *Server) routes() {
 		}
 		respond(w, 200, map[string]string{"status": "ready"})
 	})
+	s.mux.HandleFunc("GET /catalog-assets/texture-pack.zip", s.texturePack)
 	s.mux.HandleFunc("POST /api/v1/session", s.login)
 	s.mux.HandleFunc("DELETE /api/v1/session", s.user(s.logout))
 	s.mux.HandleFunc("GET /api/v1/me", s.user(func(w http.ResponseWriter, r *http.Request, m protocol.Member) { respond(w, 200, m) }))

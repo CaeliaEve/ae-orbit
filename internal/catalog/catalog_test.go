@@ -157,6 +157,11 @@ func writeJSONLSource(t *testing.T, root, kind string, rows ...map[string]any) {
 
 func writeElysiumSource(t *testing.T, root string, rows map[string][]map[string]any, assets map[string][]byte) {
 	t.Helper()
+	writeElysiumSourceWithScope(t, root, rows, assets, "complete", []string{"assets", "items", "strings"})
+}
+
+func writeElysiumSourceWithScope(t *testing.T, root string, rows map[string][]map[string]any, assets map[string][]byte, mode string, collections []string) {
+	t.Helper()
 	for kind, values := range rows {
 		writeJSONLSource(t, root, kind, values...)
 	}
@@ -181,7 +186,7 @@ func writeElysiumSource(t *testing.T, root string, rows map[string][]map[string]
 	manifest := map[string]any{
 		"format":   "elysium.source",
 		"revision": 41,
-		"scope":    map[string]any{"mode": "complete", "collections": []string{"assets", "items", "strings"}},
+		"scope":    map[string]any{"mode": mode, "collections": collections},
 		"files":    files,
 	}
 	data, err := json.Marshal(manifest)
@@ -190,6 +195,85 @@ func writeElysiumSource(t *testing.T, root string, rows map[string][]map[string]
 	}
 	if err = os.WriteFile(filepath.Join(root, "manifest.json"), data, 0600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestOpenNESQLPPAllowsVerifiedImageSelection(t *testing.T) {
+	root := t.TempDir()
+	assetPath := "assets/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png"
+	itemID, err := nbt.NESQLItemID("minecraft:stone", 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeElysiumSourceWithScope(t, root, map[string][]map[string]any{
+		"assets":  {{"id": "asset_stone", "path": assetPath, "width": 16, "height": 16}},
+		"strings": {{"id": "text_stone", "locale": "en_US", "text": "Stone"}},
+		"items": {{
+			"id": itemID, "registry": "minecraft:stone", "meta": 0,
+			"name": "text_stone", "icon": "asset_stone",
+		}},
+	}, map[string][]byte{assetPath: {137, 80, 78, 71}}, "selection", []string{"assets", "items", "strings"})
+
+	catalog, err := OpenNESQLPP(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer catalog.Close()
+	item, state, ok := catalog.Lookup("minecraft:stone", 0, "")
+	if !ok || state != "available" || item.ImagePath != assetPath {
+		t.Fatalf("selection lookup = %#v, %s, %v", item, state, ok)
+	}
+}
+
+func TestOpenNESQLPPRejectsImageSelectionWithoutRequiredCollections(t *testing.T) {
+	root := t.TempDir()
+	assetPath := "assets/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.png"
+	itemID, err := nbt.NESQLItemID("minecraft:stone", 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeElysiumSourceWithScope(t, root, map[string][]map[string]any{
+		"assets": {{"id": "asset_stone", "path": assetPath, "width": 16, "height": 16}},
+		"items":  {{"id": itemID, "registry": "minecraft:stone", "meta": 0, "icon": "asset_stone"}},
+	}, map[string][]byte{assetPath: {1, 2, 3}}, "selection", []string{"assets", "items"})
+
+	if _, err = OpenNESQLPP(root); !errors.Is(err, ErrIncompleteSource) {
+		t.Fatalf("selection without strings error = %v", err)
+	}
+}
+
+func TestOpenNESQLPPRejectsSelectionWithUnresolvedIcon(t *testing.T) {
+	root := t.TempDir()
+	itemID, err := nbt.NESQLItemID("minecraft:stone", 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeElysiumSourceWithScope(t, root, map[string][]map[string]any{
+		"assets":  {{"id": "asset_other", "path": "assets/cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.png", "width": 16, "height": 16}},
+		"strings": {{"id": "text_stone", "locale": "en_US", "text": "Stone"}},
+		"items":   {{"id": itemID, "registry": "minecraft:stone", "meta": 0, "name": "text_stone", "icon": "asset_missing"}},
+	}, map[string][]byte{"assets/cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.png": {1, 2, 3}}, "selection", []string{"assets", "items", "strings"})
+
+	if _, err = OpenNESQLPP(root); !errors.Is(err, ErrIncompleteSource) {
+		t.Fatalf("selection with unresolved icon error = %v", err)
+	}
+}
+
+func TestOpenNESQLPPRejectsSelectionWithMissingAssetFile(t *testing.T) {
+	root := t.TempDir()
+	assetPath := "assets/dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd.png"
+	itemID, err := nbt.NESQLItemID("minecraft:stone", 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeElysiumSourceWithScope(t, root, map[string][]map[string]any{
+		"assets":  {{"id": "asset_stone", "path": assetPath, "width": 16, "height": 16}},
+		"strings": {{"id": "text_stone", "locale": "en_US", "text": "Stone"}},
+		"items":   {{"id": itemID, "registry": "minecraft:stone", "meta": 0, "name": "text_stone", "icon": "asset_stone"}},
+	}, nil, "selection", []string{"assets", "items", "strings"})
+
+	if _, err = OpenNESQLPP(root); !errors.Is(err, ErrIncompleteSource) {
+		t.Fatalf("selection with missing asset error = %v", err)
 	}
 }
 

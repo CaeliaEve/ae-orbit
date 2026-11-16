@@ -199,6 +199,7 @@ type CatalogItem struct {
 	MaxDamage       int            `json:"max_damage,omitempty"`
 	MaxStackSize    int            `json:"max_stack_size,omitempty"`
 	ImageURL        string         `json:"image_url,omitempty"`
+	ImageKey        string         `json:"image_key,omitempty"`
 	ImageState      string         `json:"image_state"`
 	Width           int            `json:"width,omitempty"`
 	Height          int            `json:"height,omitempty"`

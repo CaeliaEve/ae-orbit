@@ -12,19 +12,22 @@ import (
 )
 
 type Config struct {
-	Listen      string
-	DatabaseURL string
-	AdminToken  string
-	PublicURL   string
-	CatalogRoot string
-	Store       store.Options
-	HTTP        api.Options
+	Listen          string
+	DatabaseURL     string
+	AdminToken      string
+	PublicURL       string
+	CatalogRoot     string
+	TexturePackPath string
+	Store           store.Options
+	HTTP            api.Options
 }
 
 func Load(env func(string) string) (Config, error) {
 	c := Config{Listen: "127.0.0.1:8080", DatabaseURL: env("AE_DATABASE_URL"), AdminToken: env("AE_ADMIN_TOKEN"), PublicURL: "http://127.0.0.1:8080", Store: store.DefaultOptions(), HTTP: api.DefaultOptions()}
 	c.CatalogRoot = env("AE_CATALOG_ROOT")
+	c.TexturePackPath = env("AE_TEXTURE_PACK_PATH")
 	c.Store.CatalogRoot = c.CatalogRoot
+	c.HTTP.TexturePackPath = c.TexturePackPath
 	if value := env("AE_LISTEN"); value != "" {
 		c.Listen = value
 	}

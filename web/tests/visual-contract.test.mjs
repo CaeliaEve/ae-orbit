@@ -144,3 +144,12 @@ test("settings tabs and mobile brand expose valid navigation semantics", () => {
   assert.match(compactCSS, /\.mobile-brand\s*\{/);
   assert.match(compactCSS, /\.cpu-overview\s*\{[\s\S]*?grid-template-columns:\s*1fr/);
 });
+
+test("texture settings expose server, URL, and local import paths", () => {
+  assert.match(indexHTML, /data-settings-section="textures"/);
+  assert.match(indexHTML, /id="texture-pack-file"/);
+  assert.match(appSource, /data-setting="textureSource"/);
+  assert.match(appSource, /data-texture-pack-action="load-server"/);
+  assert.match(appSource, /data-texture-pack-action="choose-local"/);
+  assert.match(appSource, /saveCachedTexturePack/);
+});

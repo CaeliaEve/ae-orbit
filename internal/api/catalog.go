@@ -11,6 +11,35 @@ import (
 	"github.com/CaeliaEve/ae-orbit/internal/store"
 )
 
+func (s *Server) texturePack(w http.ResponseWriter, r *http.Request) {
+	if s.options.TexturePackPath == "" {
+		fail(w, store.ErrNotFound)
+		return
+	}
+	file, err := os.Open(s.options.TexturePackPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			fail(w, store.ErrNotFound)
+			return
+		}
+		fail(w, err)
+		return
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() {
+		fail(w, store.ErrNotFound)
+		return
+	}
+	if info.Size() > 1<<30 {
+		fail(w, store.ErrInvalid)
+		return
+	}
+	w.Header().Set("Cache-Control", "public, max-age=86400, must-revalidate")
+	w.Header().Set("Content-Type", "application/zip")
+	http.ServeContent(w, r, "texture-pack.zip", info.ModTime(), file)
+}
+
 func (s *Server) enrichCatalog(network string, items []protocol.Item) {
 	if s.catalog == nil {
 		return

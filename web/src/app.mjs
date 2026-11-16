@@ -15,6 +15,13 @@ import {
   updateDraft, removeDraft, completeSubmission, networkQualityLabel,
 } from "./model.mjs";
 import { loadSettings, saveSettings } from "./settings.mjs";
+import {
+  clearCachedTexturePack,
+  createTexturePackStore,
+  loadCachedTexturePack,
+  loadTexturePackURL,
+  saveCachedTexturePack,
+} from "./texture-pack.mjs";
 import { clearSession, loadSession, saveSession } from "./session.mjs";
 import { connectionTestTone, connectionTestText } from "./connection-status.mjs";
 import { deviceState, healthSummary, networkDeviceSummary, roleLabel } from "./device-status.mjs";
@@ -28,7 +35,15 @@ import {
 import { connectionDiagnostics, streamStateTone, streamStateText } from "./connection-diagnostics.mjs";
 import { networkErrorKind, networkRecoveryState } from "./network-recovery.mjs";
 import { cpuDisplayName, cpuSelectionState, cpuOutputText } from "./cpu-ui.mjs";
-import { catalogAnimation, catalogDisplayName, catalogFacts, catalogSource, catalogTooltips } from "./inventory-catalog.mjs";
+import {
+  animationFrameAt,
+  catalogAnimation,
+  catalogDisplayName,
+  catalogFacts,
+  catalogSource,
+  catalogTooltips,
+  spriteLayout,
+} from "./inventory-catalog.mjs";
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -39,6 +54,7 @@ const icon = name => `<i data-lucide="${name}" aria-hidden="true"></i>`;
 const icons = { Orbit, Network, LogOut, Boxes, ListChecks, Cpu, RadioTower, RefreshCw, Search, ListPlus, ChevronLeft, ChevronRight, ChevronDown, X, Plus, Minus, Package, Trash2, Check, Clock, CircleAlert, LogIn, ArrowUpRight, Server, Send, Pause, Play, Square, LayoutDashboard, Settings, Github, Bell, Activity, Monitor, SlidersHorizontal, Code2, FileText, CircleHelp, Copy, WifiOff };
 const paint = () => createIcons({ icons });
 const api = createAPI();
+const texturePack = createTexturePackStore();
 const state = {
   member: null, network: null, networks: [], view: "dashboard", items: [], itemCache: new Map(),
   orders: [], devices: [], cpus: { cpus: [] }, icons: {}, filter: "", sort: "name", search: "",
@@ -50,6 +66,7 @@ const state = {
   activeOrderCount: 0, activeOrdersTruncated: false, detailId: "", detailGeneration: 0,
   taskMode: "jobs", jobFilter: "unsettled", jobStorageError: false,
   settings: loadSettings(), settingsSection: "display", session: null,
+  texturePackStatus: texturePack.status(), texturePackLoading: false, texturePackError: "",
   connectionTest: { status: "idle", checkedAt: "", message: "" },
   networkLoading: false, networkError: "", networkErrorKind: "", networkSnapshotReady: false, networkCreateBusy: false,
 };
@@ -104,9 +121,98 @@ function applySettings() {
   if (remember) remember.checked = state.settings.rememberSession;
 }
 
+function textureAssetURL(item) {
+  const imageKey = item?.catalog?.image_key;
+  if (state.settings.textureSource !== "server" && imageKey) {
+    const localURL = texturePack.resolve(imageKey);
+    if (localURL) return localURL;
+  }
+  return item?.catalog?.image_state === "available" && typeof item.catalog.image_url === "string"
+    ? item.catalog.image_url
+    : "";
+}
+
+function refreshTexturePackState() {
+  state.texturePackStatus = texturePack.status();
+  renderInventory();
+  renderDetail();
+  hideInventoryHover();
+}
+
+async function applyTexturePackURL(url, notify = true) {
+  const normalized = String(url || "").trim();
+  if (!normalized) throw new Error("请输入纹理包 URL。");
+  state.texturePackLoading = true;
+  state.texturePackError = "";
+  renderSettings();
+  try {
+    const bytes = await loadTexturePackURL(normalized);
+    const pathname = new URL(normalized, location.href).pathname;
+    const label = decodeURIComponent(pathname.split("/").filter(Boolean).at(-1) || "纹理包");
+    await texturePack.loadArchive(bytes, label);
+    state.settings = saveSettings(localStorage, {
+      ...state.settings, textureSource: "url", texturePackURL: normalized,
+    });
+    refreshTexturePackState();
+    if (notify) toast(`纹理包已加载：${label}`);
+  } catch (error) {
+    state.texturePackError = error?.message || "纹理包加载失败。";
+    texturePack.clear();
+    refreshTexturePackState();
+    if (notify) toast(`${state.texturePackError} 已回退到服务器纹理。`, true);
+    throw error;
+  } finally {
+    state.texturePackLoading = false;
+    renderSettings();
+  }
+}
+
+async function applyTexturePackFile(file) {
+  if (!file) return;
+  state.texturePackLoading = true;
+  state.texturePackError = "";
+  renderSettings();
+  try {
+    const bytes = await file.arrayBuffer();
+    await texturePack.loadArchive(bytes, file.name);
+    await saveCachedTexturePack(bytes);
+    state.settings = saveSettings(localStorage, {
+      ...state.settings, textureSource: "local", texturePackURL: "",
+    });
+    refreshTexturePackState();
+    toast(`本地纹理包已加载：${file.name}`);
+  } catch (error) {
+    state.texturePackError = error?.message || "纹理包加载失败。";
+    texturePack.clear();
+    refreshTexturePackState();
+    toast(`${state.texturePackError} 已回退到服务器纹理。`, true);
+  } finally {
+    state.texturePackLoading = false;
+    renderSettings();
+  }
+}
+
+function textureSettingsHTML() {
+  const status = state.texturePackLoading
+    ? "正在读取纹理包…"
+    : state.texturePackStatus.loaded
+      ? `${state.texturePackStatus.label} · ${state.texturePackStatus.assetCount.toLocaleString("zh-CN")} 个资源`
+      : state.texturePackError || "当前使用服务器按需纹理";
+  return `<div class="setting-field"><span><strong>纹理来源</strong><small>默认按需读取；纹理包会缓存在当前浏览器，减少重复下载。</small></span><select data-setting="textureSource" aria-label="纹理来源"><option value="server" ${state.settings.textureSource === "server" ? "selected" : ""}>服务器按需加载</option><option value="url" ${state.settings.textureSource === "url" ? "selected" : ""}>指定纹理包 URL</option><option value="local" ${state.settings.textureSource === "local" ? "selected" : ""}>本地已导入纹理包</option></select></div>
+    <div class="texture-pack-controls" ${state.settings.textureSource === "url" ? "" : "hidden"}><label class="setting-input"><span>纹理包地址</span><input id="texture-pack-url" type="url" value="${esc(state.settings.texturePackURL)}" placeholder="https://example.com/ae-orbit-textures.zip" autocomplete="off"></label><div class="setting-actions"><button type="button" class="secondary" data-texture-pack-action="load-url" ${state.texturePackLoading ? "disabled" : ""}>${icon("download")}加载并应用</button></div></div>
+    <div class="setting-actions"><button type="button" class="secondary" data-texture-pack-action="load-server" ${state.texturePackLoading ? "disabled" : ""}>${icon("server")}加载服务器纹理包</button><button type="button" class="secondary" data-texture-pack-action="choose-local" ${state.texturePackLoading ? "disabled" : ""}>${icon("upload")}导入本地 ZIP</button><button type="button" class="secondary" data-texture-pack-action="clear" ${state.texturePackStatus.loaded ? "" : "disabled"}>${icon("trash-2")}清除纹理包</button></div>
+    <div class="texture-pack-status" role="status" data-state="${state.texturePackError ? "error" : state.texturePackStatus.loaded ? "ready" : "idle"}">${esc(status)}</div>`;
+}
+
 function updateSettings(patch) {
   try {
     state.settings = saveSettings(localStorage, { ...state.settings, ...patch });
+    if (patch.textureSource === "server") {
+      texturePack.clear();
+      clearCachedTexturePack().catch(() => {});
+      state.texturePackError = "";
+      refreshTexturePackState();
+    }
     applySettings();
     if (Object.prototype.hasOwnProperty.call(patch, "rememberSession")) {
       if (state.settings.rememberSession && state.session) saveSession(localStorage, sessionStorage, state.session, true);
@@ -206,6 +312,11 @@ function renderSettings() {
       description: "选择哪些状态变化通过页面提示反馈。错误提示始终保留。",
       body: settingControl("taskNotifications", "任务状态", "提交、核对和控制操作完成时提示。", state.settings.taskNotifications) + settingControl("networkNotifications", "网络异常", "网络刷新或连接状态异常时提示。", state.settings.networkNotifications) + settingControl("syncNotifications", "同步提示", "库存和事件流更新时提示，默认关闭以减少打扰。", state.settings.syncNotifications),
     },
+    textures: {
+      title: "纹理资源",
+      description: "使用服务器按需纹理，或导入可复用的本地纹理包。",
+      body: textureSettingsHTML(),
+    },
     connection: {
       title: "连接与凭据",
       description: "管理服务连接、自动重连和浏览器会话。",
@@ -252,13 +363,14 @@ function itemImage(item) {
 }
 
 function itemTextureSource(item) {
-  if (item?.catalog?.image_url && item.catalog.image_state === "available") {
+  const imageURL = textureAssetURL(item);
+  if (imageURL) {
     const animation = catalogAnimation(item);
     if (animation) {
       scheduleSpriteAnimation();
-      return `<span class="item-image item-image-sprite" data-sprite-item="${esc(item.id)}" data-sprite-url="${esc(item.catalog.image_url)}" data-sheet-width="${animation.width}" data-sheet-height="${animation.height}" role="img" aria-label="${esc(catalogDisplayName(item))}"></span>`;
+      return `<span class="item-image item-image-sprite" data-sprite-item="${esc(item.id)}" data-sprite-url="${esc(imageURL)}" data-sheet-width="${animation.width}" data-sheet-height="${animation.height}" role="img" aria-label="${esc(catalogDisplayName(item))}"></span>`;
     }
-    return `<img class="item-image" src="${esc(item.catalog.image_url)}" width="32" height="32" alt="" loading="lazy">`;
+    return `<img class="item-image" src="${esc(imageURL)}" width="32" height="32" alt="" loading="lazy">`;
   }
   const filename = item?.kind === "item" ? state.icons[`${item.name}@${item.damage}`] : null;
   if (typeof filename === "string" && /^[a-f0-9]{64}\.png$/.test(filename)) {
@@ -279,22 +391,22 @@ function animateSpriteImages(timestamp) {
     const item = itemFor(element.dataset.spriteItem);
     const animation = catalogAnimation(item);
     if (!animation) continue;
-    const frameWidth = animation.frames[0].width;
-    const frameHeight = animation.frames[0].height;
-    const scale = Math.min(32 / frameWidth, 32 / frameHeight);
-    const cycle = animation.frames.reduce((total, frame) => total + frame.ticks, 0);
-    let tick = Math.floor(timestamp / 50) % cycle;
-    let frame = animation.frames[0];
-    for (const candidate of animation.frames) {
-      if (tick < candidate.ticks) {
-        frame = candidate;
-        break;
-      }
-      tick -= candidate.ticks;
-    }
-    element.style.backgroundImage = `url("${element.dataset.spriteUrl}")`;
-    element.style.backgroundSize = `${animation.width * scale}px ${animation.height * scale}px`;
-    element.style.backgroundPosition = `${-frame.x * scale}px ${-frame.y * scale}px`;
+    const selected = animationFrameAt(animation, timestamp);
+    if (!selected) continue;
+    const rect = element.getBoundingClientRect();
+    const targetWidth = rect.width || element.offsetWidth || 32;
+    const targetHeight = rect.height || element.offsetHeight || 32;
+    const layout = spriteLayout(animation, targetWidth, targetHeight, selected.frame);
+    const nextLayout = spriteLayout(animation, targetWidth, targetHeight, selected.next);
+    if (!layout || !nextLayout) continue;
+    const image = `url("${element.dataset.spriteUrl}")`;
+    element.style.backgroundImage = image;
+    element.style.backgroundSize = `${layout.backgroundWidth}px ${layout.backgroundHeight}px`;
+    element.style.backgroundPosition = `${layout.offsetX - selected.frame.x * layout.scale}px ${layout.offsetY - selected.frame.y * layout.scale}px`;
+    element.style.setProperty("--sprite-next-image", image);
+    element.style.setProperty("--sprite-next-size", `${nextLayout.backgroundWidth}px ${nextLayout.backgroundHeight}px`);
+    element.style.setProperty("--sprite-next-position", `${nextLayout.offsetX - selected.next.x * nextLayout.scale}px ${nextLayout.offsetY - selected.next.y * nextLayout.scale}px`);
+    element.style.setProperty("--sprite-next-opacity", animation.interpolate ? String(selected.progress) : "0");
   }
   scheduleSpriteAnimation();
 }
@@ -517,6 +629,86 @@ function renderInventory() {
   $("#page-label").textContent = `第 ${state.page + 1} 页 · 本页 ${state.items.length} 项`;
   paint();
   scheduleSpriteAnimation();
+}
+
+function patchInventoryRows() {
+  const tbody = $("#inventory-rows");
+  const rows = [...tbody.children];
+  if (rows.length !== state.items.length || rows.some((row, index) => row.dataset.id !== String(state.items[index]?.id))) {
+    return false;
+  }
+  rows.forEach((row, index) => {
+    const item = state.items[index];
+    const button = $(".item-button", row);
+    if (!button) return;
+    row.dataset.selected = String(state.selected?.id === item.id);
+    button.classList.toggle("missing-texture", !itemHasTexture(item));
+    button.setAttribute("aria-label", `${item.label || item.name}，库存 ${formatQuantity(item.quantity)}`);
+    const image = $(".item-image, .missing-image", button);
+    const nextURL = textureAssetURL(item);
+    const nextTexture = itemTextureSource(item);
+    const keepAnimatedImage = image?.classList.contains("item-image-sprite")
+      && Boolean(catalogAnimation(item))
+      && image.dataset.spriteUrl === nextURL;
+    const keepStaticImage = image?.tagName === "IMG"
+      && (image.getAttribute("src") === nextURL
+        || (!nextURL && image.getAttribute("src")?.startsWith("/assets/nei/")));
+    const keepMissingImage = image?.classList.contains("missing-image") && !nextTexture;
+    if (!keepAnimatedImage && !keepStaticImage) {
+      if (!keepMissingImage) {
+        if (image) image.outerHTML = nextTexture;
+        else button.insertAdjacentHTML("afterbegin", nextTexture);
+      }
+    }
+    const name = $(".item-name", button);
+    if (name) name.textContent = item.label || item.name;
+    const meta = $(".item-meta", button);
+    if (meta) meta.textContent = `${item.name.split(":")[0]}${item.craftable ? " · 可合成" : ""}${!item.exact ? " · 身份待确认" : ""}`;
+    const stock = $(".stock-value", row);
+    if (stock) {
+      stock.classList.toggle("long-number", String(item.quantity).length > 12);
+      stock.classList.toggle("stale", !item.current_session);
+      stock.title = formatQuantity(item.quantity);
+      stock.innerHTML = compactQuantityHTML(item.quantity);
+    }
+    const freshness = $(".freshness", row);
+    if (freshness) {
+      freshness.classList.toggle("stale", !item.current_session);
+      freshness.textContent = item.current_session ? age(item.observed_at) : "库存待同步";
+    }
+    const quickAdd = $("[data-quick-add]", row);
+    if (quickAdd) {
+      quickAdd.disabled = !(item.craftable && item.exact && !state.draftBlocked && !state.busy && !state.preparing);
+    }
+  });
+  $("#inventory-empty").hidden = state.items.length > 0;
+  $("#page-label").textContent = `第 ${state.page + 1} 页 · 本页 ${state.items.length} 项`;
+  paint();
+  scheduleSpriteAnimation();
+  return true;
+}
+
+function patchSelectedDetail(item) {
+  if (!item) return;
+  const stock = $(".detail-stock", $("#detail-panel"));
+  if (stock) {
+    stock.classList.toggle("long-number", String(item.quantity ?? "0").length > 12);
+    stock.innerHTML = quantityHTML(item.quantity ?? "0");
+  }
+  const facts = $$(".detail-facts .fact", $("#detail-panel"));
+  if (facts[0]?.lastElementChild) facts[0].lastElementChild.textContent = item.current_session ? age(item.observed_at) : "待同步";
+}
+
+function detailNeedsRender(before, after) {
+  if (!before || !after) return true;
+  return before.id !== after.id
+    || before.label !== after.label
+    || before.name !== after.name
+    || before.damage !== after.damage
+    || before.craftable !== after.craftable
+    || before.craftable_current_session !== after.craftable_current_session
+    || before.exact !== after.exact
+    || textureAssetURL(before) !== textureAssetURL(after);
 }
 
 function renderDetail() {
@@ -1412,6 +1604,7 @@ async function patchVisibleInventory() {
   try {
     const value = await lookupItems(state.items.map(i => i.id).concat(state.selected?.id || []));
     if (!value) return;
+    const previousSelected = state.selected;
     const live = new Map(value.items.map(i => [String(i.id), i]));
     state.items = state.items.map(item => live.get(String(item.id)) || item);
     if (state.selected && live.has(String(state.selected.id))) state.selected = live.get(String(state.selected.id));
@@ -1419,9 +1612,12 @@ async function patchVisibleInventory() {
     const focused = document.activeElement;
     const focusKind = focused?.dataset?.quickAdd ? "data-quick-add" : "data-item";
     const focusItem = focused?.dataset?.item || focused?.dataset?.quickAdd;
-    renderInventory();
+    if (!patchInventoryRows()) renderInventory();
     if (focusItem) $(`[${focusKind}="${CSS.escape(focusItem)}"]`)?.focus({ preventScroll: true });
-    if (!$("#detail-panel").contains(document.activeElement) && state.inspector === "detail") renderDetail();
+    if (state.inspector === "detail" && state.selected) {
+      if (detailNeedsRender(previousSelected, state.selected)) renderDetail();
+      else patchSelectedDetail(state.selected);
+    }
   } catch {}
 }
 
@@ -1658,12 +1854,58 @@ $("#copy-network-token").addEventListener("click", async event => {
   }
 });
 $("#order-group").addEventListener("change", event => { state.orderGroup = event.target.value; renderOrders(); });
-$("#settings-detail").addEventListener("change", event => {
+$("#settings-detail").addEventListener("change", async event => {
   const input = event.target;
   if (input.dataset.setting === "inventoryLayout") updateSettings({ inventoryLayout: input.value });
+  if (input.dataset.setting === "textureSource") {
+    updateSettings({ textureSource: input.value });
+    if (input.value === "url" && state.settings.texturePackURL) {
+      applyTexturePackURL(state.settings.texturePackURL, false).catch(() => {});
+    } else if (input.value === "local") {
+      try {
+        const bytes = await loadCachedTexturePack();
+        if (!bytes) throw new Error("未找到已保存的本地纹理包。");
+        await texturePack.loadArchive(bytes, "本地纹理包");
+        state.texturePackError = "";
+        refreshTexturePackState();
+        renderSettings();
+      } catch (error) {
+        state.texturePackError = error?.message || "本地纹理包无法读取。";
+        renderSettings();
+      }
+    }
+  }
   if (input.dataset.setting && input.type === "checkbox") updateSettings({ [input.dataset.setting]: input.checked });
 });
 $("#settings-detail").addEventListener("click", async event => {
+  const textureAction = event.target.closest("[data-texture-pack-action]")?.dataset.texturePackAction;
+  if (textureAction === "load-url") {
+    const url = $("#texture-pack-url")?.value.trim() || "";
+    try {
+      await applyTexturePackURL(url);
+    } catch {}
+    return;
+  }
+  if (textureAction === "load-server") {
+    try {
+      await applyTexturePackURL("/catalog-assets/texture-pack.zip");
+    } catch {}
+    return;
+  }
+  if (textureAction === "choose-local") {
+    $("#texture-pack-file")?.click();
+    return;
+  }
+  if (textureAction === "clear") {
+    texturePack.clear();
+    clearCachedTexturePack().catch(() => {});
+    state.texturePackError = "";
+    state.settings = saveSettings(localStorage, { ...state.settings, textureSource: "server", texturePackURL: "" });
+    refreshTexturePackState();
+    renderSettings();
+    toast("已清除本地纹理包");
+    return;
+  }
   const actionButton = event.target.closest("[data-session-action]");
   const sessionAction = actionButton?.dataset.sessionAction;
   if (sessionAction === "test") {
@@ -1703,6 +1945,13 @@ $("#settings-detail").addEventListener("click", async event => {
   updateSettings({ [button.dataset.settingValue]: button.dataset.value });
 });
 $("#remember-session").addEventListener("change", event => updateSettings({ rememberSession: event.target.checked }));
+$("#texture-pack-file").addEventListener("change", async event => {
+  try {
+    await applyTexturePackFile(event.target.files?.[0]);
+  } finally {
+    event.target.value = "";
+  }
+});
 $("#settings-sections").addEventListener("click", event => {
   const button = event.target.closest("[data-settings-section]");
   if (!button) return;
@@ -1911,6 +2160,26 @@ async function start() {
     const response = await fetch("/assets/nei/manifest.json", { credentials: "same-origin" });
     if (response.ok) { const value = await response.json(); if (value.version === 1 && value.icons && typeof value.icons === "object") state.icons = value.icons; }
   } catch {}
+  if (state.settings.textureSource === "url" && state.settings.texturePackURL) {
+    try { await applyTexturePackURL(state.settings.texturePackURL, false); } catch {}
+  } else if (state.settings.textureSource === "local") {
+    try {
+      const bytes = await loadCachedTexturePack();
+      if (bytes) {
+        await texturePack.loadArchive(bytes, "本地纹理包");
+        refreshTexturePackState();
+      } else {
+        state.texturePackError = "未找到已保存的本地纹理包，已回退到服务器纹理。";
+        state.settings = saveSettings(localStorage, { ...state.settings, textureSource: "server" });
+        renderSettings();
+      }
+    } catch {
+      state.texturePackError = "本地纹理包无法读取，已回退到服务器纹理。";
+      state.settings = saveSettings(localStorage, { ...state.settings, textureSource: "server" });
+      texturePack.clear();
+      renderSettings();
+    }
+  }
   try {
     const saved = loadSession(localStorage, sessionStorage, state.settings.rememberSession);
     if (saved) {

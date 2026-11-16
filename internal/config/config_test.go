@@ -13,8 +13,9 @@ func TestConfigRejectsUnsafeOrUnboundedSettings(t *testing.T) {
 		t.Fatal(c.Listen)
 	}
 	base["AE_CATALOG_ROOT"] = "C:/catalog/nesqlpp"
+	base["AE_TEXTURE_PACK_PATH"] = "C:/catalog/ae-orbit-textures.zip"
 	c, err = Load(lookup)
-	if err != nil || c.CatalogRoot != "C:/catalog/nesqlpp" || c.Store.CatalogRoot != c.CatalogRoot {
+	if err != nil || c.CatalogRoot != "C:/catalog/nesqlpp" || c.Store.CatalogRoot != c.CatalogRoot || c.TexturePackPath != "C:/catalog/ae-orbit-textures.zip" || c.HTTP.TexturePackPath != c.TexturePackPath {
 		t.Fatalf("catalog root was not propagated: %#v, %v", c, err)
 	}
 	for _, test := range []struct{ key, value string }{{"AE_ADMIN_TOKEN", "short"}, {"AE_DB_CONNECTIONS", "0"}, {"AE_BATCH_BYTES", "-1"}, {"AE_PUBLIC_URL", "http://public.example"}, {"AE_MAX_CONCURRENT", "999999"}} {
