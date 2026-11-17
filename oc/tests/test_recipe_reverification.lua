@@ -16,7 +16,7 @@ local a=adapter.new({
     return {}
   end,
 })
-local r=runner.new({},{adapter=a,client={request_bytes=4096},now=function() return clock end,free_memory=function() return 131072 end})
+local r=runner.new({scan_memory_floor=0},{adapter=a,client={request_bytes=4096},now=function() return clock end,free_memory=function() return 131072 end})
 r.next_scan=math.huge;r.credits=4
 r:on_item_changed(hint,true)
 local raw,cost=r:_next_raw()

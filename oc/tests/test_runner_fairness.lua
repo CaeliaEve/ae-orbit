@@ -65,7 +65,7 @@ local function fixture(credits, read_seconds, batch_seconds)
   local files={}
   local log=journal.new({read=function(path) return files[path] end,
     write=function(path,value) files[path]=value;return true end},"fairness",32768)
-  local bridge=runner.new({cache_entries=4,cache_bytes=2048,dirty_entries=8,dirty_bytes=4096,
+  local bridge=runner.new({cache_entries=4,cache_bytes=2048,dirty_entries=8,dirty_bytes=4096,scan_memory_floor=0,
     max_batch_bytes=2048,max_response_bytes=4096,scan_slice_seconds=0.05,scan_interval=60,batch_interval_seconds=batch_seconds},
     {adapter=adapter.new(me),client=client,journal=log,now=function() return clock end,
       free_memory=function() return observed.memory end,yield=function() end})

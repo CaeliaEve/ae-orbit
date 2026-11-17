@@ -66,7 +66,7 @@ function client:post(path,value)
 end
 local files={}
 local j=journal.new({read=function(p) return files[p] end,write=function(p,v) files[p]=v;return true end},"runner",32768)
-local r=runner.new({source="simulator",cache_entries=2,cache_bytes=512,dirty_entries=3,dirty_bytes=1024,max_batch_bytes=2048,max_response_bytes=4096,scan_interval=60,cpu_interval=10,scan_slice_seconds=0.1},
+local r=runner.new({source="simulator",cache_entries=2,cache_bytes=512,dirty_entries=3,dirty_bytes=1024,max_batch_bytes=2048,max_response_bytes=4096,scan_interval=60,cpu_interval=10,scan_slice_seconds=0.1,scan_memory_floor=0},
   {adapter=adapter.new(me),client=client,journal=j,now=function() return clock end,free_memory=function() return free_memory end,yield=function() end})
 r:start()
 for _=1,12 do r:tick();clock=clock+1 end

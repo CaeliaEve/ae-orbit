@@ -6,6 +6,7 @@ local read_diagnostics = require("aeorbit.read_diagnostics")
 local latency = require("aeorbit.latency")
 local cancel = require("aeorbit.cancel")
 local native_pcall=pcall
+local default_scan_memory_floor=2097152
 local function preserve_stop(ok,...)
   if not ok then cancel.rethrow((...)) end
   return ok,...
@@ -20,6 +21,13 @@ end
 local function fatal(code) error({code=code,message=code,fatal=true},0) end
 local function integer(value,minimum,maximum)
   return type(value)=="number" and value%1==0 and value>=minimum and value<=maximum
+end
+local function scan_memory_floor(config)
+  local value=config.scan_memory_floor
+  if value==nil then return default_scan_memory_floor end
+  assert(type(value)=="number" and value%1==0 and value>=0 and value<math.huge,
+    "runner: invalid scan memory floor")
+  return value
 end
 local function list(value,maximum)
   if type(value)~="table" or value==json.null or #value>maximum then return false end
@@ -47,6 +55,7 @@ function M.new(config,deps)
   local dirty_bytes=math.max(256,math.min(config.dirty_bytes or math.floor(memory/12),math.floor(memory/8)))
   local dirty_entries=config.dirty_entries or 128
   local verification_bytes=math.max(256,math.min(16384,math.floor(memory/32)))
+  local scan_floor=scan_memory_floor(config)
   local batch_delay=config.batch_interval_seconds or 0.25
   assert(type(batch_delay)=="number" and batch_delay>=0 and batch_delay<=1,"runner: invalid batch interval")
   local self={config=config,deps=deps,client=deps.client,adapter=deps.adapter,diagnostics={},diagnostic_samples=0,
@@ -55,7 +64,8 @@ function M.new(config,deps)
     refreshes=cache.new(8,verification_bytes),refresh_bytes=verification_bytes,refresh_reads=0,
     rechecks=cache.new(16,verification_bytes),batch_delay=batch_delay,ordinary_turn=0,
     statistics={batches=0,updates=0,bytes=0,credits_used=0,collect_millis=0},
-    dirty_bytes=dirty_bytes,dirty_entries=dirty_entries,inventory_seq="0",poll_seq="0",observation="0",
+    dirty_bytes=dirty_bytes,dirty_entries=dirty_entries,scan_memory_floor=scan_floor,
+    scan_memory_blocked=false,inventory_seq="0",poll_seq="0",observation="0",
     credits=0,next_scan=0,next_cpu=0,next_recipe_check=0,poll_delay=1,uploaded=0,first_scan_acked=false}
   function self:diagnose(code)
     if not self.diagnostics[code] then
@@ -386,6 +396,10 @@ function M.new(config,deps)
     if lane==nil then return nil,0 end
     if not self.iterator then
       if deps.now()<self.next_scan then return nil,0 end
+      if not self:_scan_memory_ready() then
+        self.next_scan=deps.now()+5
+        return nil,0
+      end
       local started=deps.now()
       local ok,iterator=pcall(self.adapter.iterator,self.adapter)
       if not ok then self:diagnose("scan_unavailable");self.next_scan=deps.now()+10;return nil,1 end
@@ -453,6 +467,16 @@ function M.new(config,deps)
     if deps.free_memory()<self.client.response_bytes*4+4096+reserved then
       self:diagnose("low_memory");collect_step(32);return false
     end
+    return true
+  end
+  function self:_scan_memory_ready()
+    if deps.free_memory()<self.scan_memory_floor then
+      if not self.scan_memory_blocked then self:diagnose("scan_deferred_low_memory") end
+      self.scan_memory_blocked=true
+      collect_step(32)
+      return false
+    end
+    self.scan_memory_blocked=false
     return true
   end
   function self:_send_staged()

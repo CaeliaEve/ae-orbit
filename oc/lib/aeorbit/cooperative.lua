@@ -14,9 +14,17 @@ local function pcall(...) return preserve_stop(native_pcall(...)) end
 local M={}
 local read_cycle={"order","refresh","refresh","background"}
 local read_sources={order="priority",refresh="refresh",background="recheck"}
+local default_scan_memory_floor=2097152
 local function fatal(code) error({code=code,message=code,fatal=true},0) end
 local function integer(value,minimum,maximum)
   return type(value)=="number" and value%1==0 and value>=minimum and value<=maximum
+end
+local function scan_memory_floor(config)
+  local value=config.scan_memory_floor
+  if value==nil then return default_scan_memory_floor end
+  assert(type(value)=="number" and value%1==0 and value>=0 and value<math.huge,
+    "cooperative: invalid scan memory floor")
+  return value
 end
 local function list(value,maximum)
   if type(value)~="table" or value==json.null or #value>maximum then return false end
@@ -35,12 +43,14 @@ function M.new(config,deps)
   local primary=role=="primary"
   local memory=deps.free_memory()
   local task_bytes=math.max(256,math.min(16384,math.floor(memory/16)))
+  local scan_floor=scan_memory_floor(config)
   local self={deps=deps,config=config,adapter=deps.adapter,client=deps.client,role=role,diagnostics={},diagnostic_samples=0,
     ids=cache.new(config.cache_entries or 256,math.max(256,math.min(config.cache_bytes or math.floor(memory/12),math.floor(memory/8)))),
     dirty=cache.new(16,task_bytes),tasks=cache.new(16,task_bytes),candidates=cache.new(16,task_bytes),
     attempts=cache.new(64,16384),
     grants=cache.new(64,16384),
-    task_bytes=task_bytes,inventory_seq="0",poll_seq="0",observation="0",credits=0,poll_delay=1,
+    task_bytes=task_bytes,scan_memory_floor=scan_floor,scan_memory_blocked=false,
+    inventory_seq="0",poll_seq="0",observation="0",credits=0,poll_delay=1,
     uploaded=0,next_scan=0,next_cpu=0,next_recipe_check=0,task_turn=true,read_opportunity=1}
   function self:diagnose(code)
     if not self.diagnostics[code] then
@@ -58,6 +68,15 @@ function M.new(config,deps)
   end
   function self:_memory_ready()
     return deps.free_memory()>=self.client.response_bytes*4+4096
+  end
+  function self:_scan_memory_ready()
+    if deps.free_memory()<self.scan_memory_floor then
+      if not self.scan_memory_blocked then self:diagnose("scan_deferred_low_memory") end
+      self.scan_memory_blocked=true
+      return false
+    end
+    self.scan_memory_blocked=false
+    return true
   end
   function self:_discovery_capacity()
     -- Lossy event hints must leave real admission room to obtain drain credits.
@@ -389,6 +408,10 @@ function M.new(config,deps)
     self.discovery_scan_turn=false
     self.credits=self.credits-1
     if not self.iterator then
+      if not self:_scan_memory_ready() then
+        self.next_scan=deps.now()+5
+        return nil,true
+      end
       local ok,value=pcall(self.adapter.iterator,self.adapter)
       if not ok then self:diagnose("scan_unavailable");self.next_scan=deps.now()+10;return nil,true end
       self.iterator=value

@@ -41,7 +41,7 @@ local function setup(protocol)
     cpus=function() return {} end,iterator=function() return function() return nil end end,
     recipe_status=function() return true end}
   local r=require(protocol==1 and "aeorbit.runner" or "aeorbit.cooperative").new(
-    {bridge_mode="cooperative",role="primary",max_response_bytes=4096},
+    {bridge_mode="cooperative",role="primary",max_response_bytes=4096,scan_memory_floor=0},
     {client=client.new(internet,{url="https://lifecycle.test",token=string.rep("x",32)},
       {now=function() return s.clock end,sleep=function(t) s.clock=s.clock+t end}),
       adapter=adapter,journal=log,now=function() return s.clock end,free_memory=function() return s.memory end})

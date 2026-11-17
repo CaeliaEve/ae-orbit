@@ -17,6 +17,7 @@ return function(options)
   end}
   if s.role=="primary" then
     me.allItems=function()
+      s.scans=(s.scans or 0)+1
       local index=0
       return function() index=index+1;return (s.catalog or {})[index] end
     end
@@ -85,7 +86,7 @@ return function(options)
       close=function() end}
   end}
   local config={bridge_mode="cooperative",role=s.role,max_response_bytes=4096,max_batch_bytes=4096,
-    scan_slice_seconds=options.slice or 0.05,scan_interval=60}
+    scan_slice_seconds=options.slice or 0.05,scan_interval=60,scan_memory_floor=0}
   for k,v in pairs(options.config or {}) do config[k]=v end
   local r=cooperative.new(config,{
     adapter=adapter.new(me,{role=s.role}),client=client.new(internet,{url="https://fixture.test",token=string.rep("x",32)},

@@ -10,7 +10,7 @@ local a=adapter.new({
   getCraftables=function() error("hot quantity observations must not scan recipes") end,
   getItemsInNetwork=function() error("full inventory array fallback is forbidden") end,
 })
-local r=runner.new({},{adapter=a,client={request_bytes=4096},free_memory=function() return 131072 end})
+local r=runner.new({scan_memory_floor=0},{adapter=a,client={request_bytes=4096},free_memory=function() return 131072 end})
 local observed=a:read(raw)
 assert(observed.size==30795 and observed.isCraftable==nil,"quantity lookup falsely claimed that a recipe was unavailable")
 assert(raw.isCraftable==false,"native result was mutated")

@@ -76,7 +76,8 @@ return function(options)
   end
   local files={}
   local log=journal.new({read=function(path) return files[path] end,write=function(path,value) files[path]=value;return true end},"inventory",32768)
-  local config={cache_entries=64,dirty_entries=4,dirty_bytes=2048,max_batch_bytes=client.request_bytes,scan_slice_seconds=0.05}
+  local config={cache_entries=64,dirty_entries=4,dirty_bytes=2048,max_batch_bytes=client.request_bytes,
+    scan_slice_seconds=0.05,scan_memory_floor=0}
   for key,value in pairs(options.config or {}) do config[key]=value end
   local r=runner.new(config,{client=client,adapter=adapter.new(me),journal=log,now=function() return s.clock end,
     free_memory=function() return s.memory end,yield=function() end})

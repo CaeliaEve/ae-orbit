@@ -13,6 +13,10 @@ return {
   cache_entries = 256,
   dirty_entries = 128,
   identity_bytes = 4096,
+  -- allItems() may allocate the complete native inventory before returning
+  -- its iterator. Defer discovery below this free-memory floor to avoid an
+  -- unrecoverable OpenComputers OOM; increase OC RAM for large AE networks.
+  scan_memory_floor = 2097152,
   scan_slice_seconds = 0.05,
   -- Aggregate ordinary observations across slices; priority confirmations flush immediately.
   batch_interval_seconds = 0.25,

@@ -63,7 +63,7 @@ local function fixture()
   local files={}
   local log=journal.new({read=function(path) return files[path] end,
     write=function(path,value) files[path]=value;return true end},"priority",32768)
-  local bridge=runner.new({cache_entries=4,cache_bytes=2048,dirty_entries=4,dirty_bytes=2048},
+  local bridge=runner.new({cache_entries=4,cache_bytes=2048,dirty_entries=4,dirty_bytes=2048,scan_memory_floor=0},
     {adapter=a,client=client,journal=log,now=function() return state.clock end,
       free_memory=function() return state.memory end,yield=function() end})
   bridge:start()
