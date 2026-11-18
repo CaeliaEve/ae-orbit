@@ -47,6 +47,21 @@ func (s *Store) PollV2(ctx context.Context, d Device, p protocol.Poll) (protocol
 			if err = s.filterCooperativeReplay(ctx, tx, d, p.SessionID, &ack); err != nil {
 				return err
 			}
+			plain, err := plainProfile(ctx, tx, d.NetworkID)
+			if err != nil {
+				return err
+			}
+			var caps protocol.Capabilities
+			if err = json.Unmarshal(capsJSON, &caps); err != nil {
+				return err
+			}
+			if plain && (!caps.NativeScanDisabled || !caps.EventsDisabled || !caps.ExactQuantities) {
+				ack.Reads = []protocol.ReadAssignment{}
+				ack.Commands = []protocol.Command{}
+				ack.ScanBudget = 0
+				ack.GrantID = ""
+				ack.GrantTTLMillis = 0
+			}
 			return touchDevice(ctx, tx, d, nil)
 		}
 		if p.Sequence != last+1 {
@@ -59,6 +74,11 @@ func (s *Store) PollV2(ctx context.Context, d Device, p protocol.Poll) (protocol
 		if err = json.Unmarshal(capsJSON, &caps); err != nil {
 			return err
 		}
+		plain, err := plainProfile(ctx, tx, d.NetworkID)
+		if err != nil {
+			return err
+		}
+		ready := !plain || (caps.NativeScanDisabled && caps.EventsDisabled && caps.ExactQuantities)
 		if d.Role == "primary" {
 			if err = s.acceptReports(ctx, tx, d.NetworkID, p); err != nil {
 				return err
@@ -77,7 +97,7 @@ func (s *Store) PollV2(ctx context.Context, d Device, p protocol.Poll) (protocol
 			if err = s.acceptReadHints(ctx, tx, d.NetworkID, p.Hints); err != nil {
 				return err
 			}
-			if caps.Craft {
+			if caps.Craft && ready {
 				if err = s.assignCommands(ctx, tx, d.NetworkID, group, p.SessionID, caps, responseBytes, p.CPUs, p.CPUsTruncated, &ack); err != nil {
 					return err
 				}
@@ -85,7 +105,7 @@ func (s *Store) PollV2(ctx context.Context, d Device, p protocol.Poll) (protocol
 		}
 		ack.Ack = p.Sequence
 		slots, queueBytes := 0, 0
-		if caps.Inventory && (caps.ExactQuantities || d.Role == "primary") && p.ReadSlots != nil && p.ReadBytes != nil {
+		if ready && caps.Inventory && (caps.ExactQuantities || d.Role == "primary") && p.ReadSlots != nil && p.ReadBytes != nil {
 			slots, queueBytes = *p.ReadSlots, *p.ReadBytes
 		}
 		ack.ScanBudget, ack.GrantID, ack.GrantTTLMillis, err = s.acquisitionGrant(ctx, tx, d, p.SessionID, group, slots, queueBytes, 2)
@@ -93,7 +113,7 @@ func (s *Store) PollV2(ctx context.Context, d Device, p protocol.Poll) (protocol
 			return err
 		}
 		if caps.ExactQuantities && ack.ScanBudget > 0 && slots > 0 && queueBytes > 0 {
-			if err = s.cooperativeReads(ctx, tx, d, p.SessionID, responseBytes, slots, queueBytes, &ack); err != nil {
+			if err = s.cooperativeReads(ctx, tx, d, p.SessionID, responseBytes, slots, queueBytes, plain, &ack); err != nil {
 				return err
 			}
 		}
@@ -171,7 +191,13 @@ func (s *Store) filterCooperativeReplay(ctx context.Context, tx pgx.Tx, d Device
 			return err
 		}
 		if live {
-			commands = append(commands, c)
+			var allowed bool
+			if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM item_definitions d WHERE d.network_id=$1 AND d.id=$2 AND `+catalogScopeSQL+`)`, d.NetworkID, int64(c.ItemID)).Scan(&allowed); err != nil {
+				return err
+			}
+			if allowed {
+				commands = append(commands, c)
+			}
 		}
 	}
 	ack.Commands = commands
@@ -189,8 +215,14 @@ func (s *Store) filterCooperativeReplay(ctx context.Context, tx pgx.Tx, d Device
 			expected = 2
 		}
 		if count == expected && ttl > 0 {
-			r.TTLMillis = min(r.TTLMillis, ttl)
-			reads = append(reads, r)
+			var allowed bool
+			if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM item_definitions d WHERE d.network_id=$1 AND d.id=$2 AND `+catalogScopeSQL+`)`, d.NetworkID, int64(r.ID)).Scan(&allowed); err != nil {
+				return err
+			}
+			if allowed {
+				r.TTLMillis = min(r.TTLMillis, ttl)
+				reads = append(reads, r)
+			}
 		}
 	}
 	ack.Reads = reads
@@ -209,8 +241,9 @@ func (s *Store) filterCooperativeReplay(ctx context.Context, tx pgx.Tx, d Device
 
 type cooperativeCandidate struct {
 	protocol.ReadAssignment
-	RequestID string
-	ExpiresAt time.Time
+	RequestID        string
+	ExpiresAt        time.Time
+	NextQuantityTurn int
 }
 
 const noActiveCooperativeQuantity = `NOT EXISTS(SELECT 1 FROM cooperative_read_fields f
@@ -237,12 +270,12 @@ func (s *Store) cooperativeCandidates(ctx context.Context, tx pgx.Tx, d Device, 
 		kind = "quantity_recipe"
 		query = `SELECT ` + columns + `r.token,now()+interval '30 seconds'
 			FROM inventory_rechecks r JOIN item_definitions d ON d.network_id=r.network_id AND d.id=r.item_id
-			WHERE r.network_id=$1 AND d.kind='item' AND d.exact AND r.next_attempt_at<=now() AND ` + noActiveCooperativeQuantity + ` AND ` + noActiveCooperativeRecipe + `
+			WHERE r.network_id=$1 AND ` + catalogScopeSQL + ` AND d.kind='item' AND d.exact AND r.next_attempt_at<=now() AND ` + noActiveCooperativeQuantity + ` AND ` + noActiveCooperativeRecipe + `
 			ORDER BY r.next_attempt_at,r.item_id LIMIT 32`
 	case "refresh":
 		query = `SELECT ` + columns + `r.token,least(r.expires_at,now()+interval '30 seconds')
 			FROM inventory_refreshes r JOIN item_definitions d ON d.network_id=r.network_id AND d.id=r.item_id
-			WHERE r.network_id=$1 AND d.kind='item' AND d.exact AND r.confirmed_at IS NULL AND r.expires_at>now()+interval '1 millisecond'
+			WHERE r.network_id=$1 AND ` + catalogScopeSQL + ` AND d.kind='item' AND d.exact AND r.confirmed_at IS NULL AND r.expires_at>now()+interval '1 millisecond'
 			AND r.next_attempt_at<=now() AND ` + noActiveCooperativeQuantity + `
 			ORDER BY r.next_attempt_at,r.item_id LIMIT 32`
 	default:
@@ -255,12 +288,17 @@ func (s *Store) cooperativeCandidates(ctx context.Context, tx pgx.Tx, d Device, 
 		}
 		query = `SELECT ` + columns + `'',now()+interval '30 seconds'
 			FROM inventory_schedule q JOIN item_definitions d ON d.network_id=q.network_id AND d.id=q.item_id
-			WHERE q.network_id=$1 AND d.kind='item' AND d.exact AND ` + due + `<=now() AND ` + noActiveCooperativeQuantity + `
+			WHERE q.network_id=$1 AND ` + catalogScopeSQL + ` AND d.kind='item' AND d.exact AND ` + due + `<=now() AND ` + noActiveCooperativeQuantity + `
 			AND NOT EXISTS(SELECT 1 FROM inventory_refreshes hot WHERE hot.network_id=q.network_id
 				AND hot.item_id=q.item_id AND hot.confirmed_at IS NULL AND hot.expires_at>now())
 			AND NOT EXISTS(SELECT 1 FROM inventory_rechecks urgent WHERE urgent.network_id=q.network_id AND urgent.item_id=q.item_id)`
 		if recipe {
 			query += ` AND ` + noActiveCooperativeRecipe
+			// Catalog discovery spends one exact quantity read per candidate.
+			// The primary separately maintains recipe/quantity evidence for stock.
+			query += ` AND (NOT EXISTS(SELECT 1 FROM network_inventory_profiles WHERE network_id=$1)
+				OR EXISTS(SELECT 1 FROM inventory i JOIN network_inventory_profiles profile ON profile.network_id=i.network_id
+				WHERE i.network_id=d.network_id AND i.item_id=d.id AND i.quantity>0 AND i.observed_at>=profile.enabled_at))`
 		}
 		query += ` ORDER BY ` + due + `,q.item_id LIMIT 64`
 	}
@@ -284,7 +322,7 @@ func (s *Store) cooperativeCandidates(ctx context.Context, tx pgx.Tx, d Device, 
 	return result, rows.Err()
 }
 
-func (s *Store) cooperativeReads(ctx context.Context, tx pgx.Tx, d Device, session string, responseBytes, slots, queueBytes int, ack *protocol.PollAck) error {
+func (s *Store) cooperativeReads(ctx context.Context, tx pgx.Tx, d Device, session string, responseBytes, slots, queueBytes int, plain bool, ack *protocol.PollAck) error {
 	var owned, fastOwned, networkActive int
 	if err := tx.QueryRow(ctx, `SELECT count(*) FILTER(WHERE f.device_id=$2),
 		count(*) FILTER(WHERE f.device_id=$2 AND f.purpose<>'background'),count(*)
@@ -302,12 +340,13 @@ func (s *Store) cooperativeReads(ctx context.Context, tx pgx.Tx, d Device, sessi
 	if _, err := tx.Exec(ctx, "INSERT INTO cooperative_rotation(network_id) VALUES($1) ON CONFLICT DO NOTHING", d.NetworkID); err != nil {
 		return err
 	}
-	var opportunity, background int
-	if err := tx.QueryRow(ctx, "SELECT opportunity,background_turn FROM cooperative_rotation WHERE network_id=$1", d.NetworkID).Scan(&opportunity, &background); err != nil {
+	var opportunity, background, quantityTurn int
+	if err := tx.QueryRow(ctx, "SELECT opportunity,background_turn,plain_quantity_turn FROM cooperative_rotation WHERE network_id=$1", d.NetworkID).Scan(&opportunity, &background, &quantityTurn); err != nil {
 		return err
 	}
 	budget := ack.ScanBudget
-	if d.Role == "primary" {
+	initialQueueBytes := queueBytes
+	if d.Role == "primary" && !plain {
 		if budget >= 8 {
 			budget -= 4
 		} else if background%2 == 0 {
@@ -322,7 +361,12 @@ func (s *Store) cooperativeReads(ctx context.Context, tx pgx.Tx, d Device, sessi
 	if err != nil {
 		return err
 	}
-	cold, err := s.cooperativeCandidates(ctx, tx, d, "background", d.Role == "primary" && background%2 == 1)
+	var cold []cooperativeCandidate
+	if plain {
+		cold, err = s.plainBackgroundCandidates(ctx, tx, d, quantityTurn)
+	} else {
+		cold, err = s.cooperativeCandidates(ctx, tx, d, "background", d.Role == "primary" && background%2 == 1)
+	}
 	if err != nil {
 		return err
 	}
@@ -354,6 +398,11 @@ func (s *Store) cooperativeReads(ctx context.Context, tx pgx.Tx, d Device, sessi
 		}
 		c := queue[0]
 		queues[category] = queue[1:]
+		if plain {
+			// The backend already owns catalog labels. Exact read identity does
+			// not need the Chinese display name retained and re-encoded in OC.
+			c.Item.Label = ""
+		}
 		if seen[c.ID] {
 			continue
 		}
@@ -389,10 +438,24 @@ func (s *Store) cooperativeReads(ctx context.Context, tx pgx.Tx, d Device, sessi
 			}
 		}
 		if !fits {
+			if plain && len(ack.Reads) > 0 && memory <= initialQueueBytes {
+				// This ordinary candidate fits an empty packet. Leave the tail
+				// due for the next poll instead of deferring an entire cold pool
+				// just because this packet has used its retained-byte budget.
+				alone := *ack
+				alone.Reads = []protocol.ReadAssignment{c.ReadAssignment}
+				encoded, _ := json.Marshal(alone)
+				if len(encoded) <= responseBytes {
+					break
+				}
+			}
 			if err = deferCooperativeCandidate(ctx, tx, d.NetworkID, c); err != nil {
 				return err
 			}
 			continue
+		}
+		if plain && category == "background" && c.NextQuantityTurn >= 0 {
+			quantityTurn = c.NextQuantityTurn
 		}
 		seen[c.ID] = true
 		fieldNames := []string{"quantity"}
@@ -411,6 +474,17 @@ func (s *Store) cooperativeReads(ctx context.Context, tx pgx.Tx, d Device, sessi
 				return err
 			}
 		}
+		// A candidate whose lookup fails or expires must yield its oldest queue
+		// position so other candidates can be discovered before the retry.
+		if category == "background" {
+			column := "next_quantity_at"
+			if c.Kind == "quantity_recipe" {
+				column = "next_verify_at"
+			}
+			if _, err = tx.Exec(ctx, "UPDATE inventory_schedule SET "+column+"=now()+interval '60 seconds' WHERE network_id=$1 AND item_id=$2 AND EXISTS(SELECT 1 FROM network_inventory_profiles WHERE network_id=$1)", d.NetworkID, int64(c.ID)); err != nil {
+				return err
+			}
+		}
 		queueBytes -= memory
 		budget -= cost
 		if category != "background" {
@@ -423,8 +497,9 @@ func (s *Store) cooperativeReads(ctx context.Context, tx pgx.Tx, d Device, sessi
 	// Helpers share task opportunities, but cannot advance the primary's
 	// discovery/quantity/recipe rotation through their polling cadence.
 	_, err = tx.Exec(ctx, `UPDATE cooperative_rotation SET opportunity=$2,
-		background_turn=(background_turn+CASE WHEN $3 THEN 1 ELSE 0 END)%2 WHERE network_id=$1`,
-		d.NetworkID, opportunity, d.Role == "primary")
+		background_turn=(background_turn+CASE WHEN $3 THEN 1 ELSE 0 END)%2,
+		plain_quantity_turn=CASE WHEN $4 THEN $5 ELSE plain_quantity_turn END WHERE network_id=$1`,
+		d.NetworkID, opportunity, d.Role == "primary", plain, quantityTurn)
 	return err
 }
 

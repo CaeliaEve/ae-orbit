@@ -36,6 +36,7 @@ class OpenOS:
         self.lua = module.LuaRuntime(unpack_returned_tuples=True)
         self.now = 0
         self.requests = []
+        self.service_origin = SERVICE
         self.handles = []
         self.overrides = {}
         self.rename_failure = None
@@ -150,8 +151,8 @@ class OpenOS:
             data = COMMIT
         elif url.startswith(RAW):
             data = self.sources[url[len(RAW):]]
-        elif url.startswith(SERVICE + "/oc/"):
-            data = self.sources[url[len(SERVICE + "/oc/"):]]
+        elif url.startswith(self.service_origin + "/oc/"):
+            data = self.sources[url[len(self.service_origin + "/oc/"):]]
         else:
             raise AssertionError("unexpected or unpinned download: " + url)
         overrides = self.overrides.get(url, {})
@@ -194,11 +195,13 @@ class OpenOS:
         self.write("/etc/ae-orbit.cfg", "return {token='keep-device-token'}\n")
         self.write("/var/lib/ae-orbit/journal.0", "keep execution history exactly")
 
-    def run_bridge(self, callable_subscription=False, subscription_error=False, worker=False):
+    def run_bridge(self, callable_subscription=False, subscription_error=False, worker=False, enable_events=None):
         """Exercise the real entry point and journal with a bounded runner harness."""
         for source, destination in DESTINATIONS.items():
             self.write(destination, self.sources[source])
         mode = ',bridge_mode="cooperative",role="quantity_worker"' if worker else ""
+        if enable_events is not None:
+            mode += ',enable_events=' + ('true' if enable_events else 'false')
         self.write("/etc/ae-orbit.cfg", 'return {me_address="test-me",state_dir="/var/lib/ae-orbit"' + mode + '}\n')
         self.lua.globals().TEST_ROOT = (ROOT / "oc").as_posix()
         self.lua.globals().callable_subscription = callable_subscription
@@ -264,7 +267,7 @@ class InstallerTests(unittest.TestCase):
         self.assertClosed()
 
     def test_bridge_subscribes_and_unsubscribes_with_oc_callable_method(self):
-        self.oc.run_bridge(callable_subscription=True)
+        self.oc.run_bridge(callable_subscription=True, enable_events=True)
         globals_ = self.oc.lua.globals()
         self.assertEqual(list(globals_.subscription_calls.values()), [True, False])
         self.assertNotIn("subscription_unavailable", list(globals_.bridge_diagnostics.values()))
@@ -276,9 +279,21 @@ class InstallerTests(unittest.TestCase):
         self.assertTrue(any("interrupted" in message for message in self.oc.messages))
 
     def test_bridge_reports_failed_subscription_without_stopping(self):
-        self.oc.run_bridge(callable_subscription=True, subscription_error=True)
+        self.oc.run_bridge(callable_subscription=True, subscription_error=True, enable_events=True)
         self.assertIn("subscription_unavailable", list(self.oc.lua.globals().bridge_diagnostics.values()))
         self.assertTrue(any("AE Orbit connected" in message for message in self.oc.messages))
+
+    def test_default_bridge_disables_persisted_oc_subscription(self):
+        self.oc.run_bridge(callable_subscription=True)
+        globals_ = self.oc.lua.globals()
+        self.assertEqual(list(globals_.subscription_calls.values()), [False])
+        self.assertIn("events_disabled", list(globals_.bridge_diagnostics.values()))
+        self.assertTrue(any("AE Orbit connected" in message for message in self.oc.messages))
+
+    def test_failed_native_unsubscribe_stops_before_connected(self):
+        self.oc.run_bridge(callable_subscription=True, subscription_error=True)
+        self.assertFalse(any("AE Orbit connected" in message for message in self.oc.messages))
+        self.assertTrue(any("event_failed" in message for message in self.oc.messages))
 
     def test_default_install_pins_all_files_and_creates_initial_config(self):
         self.oc.install()
@@ -321,7 +336,7 @@ class InstallerTests(unittest.TestCase):
     def test_existing_backend_download_mode_remains_available(self):
         self.oc.install(SERVICE + "/")
         self.assertInstalled()
-        self.assertTrue(all(url.startswith(SERVICE + "/oc/") for url in self.oc.requests))
+        self.assertTrue(all(url.startswith(self.oc.service_origin + "/oc/") for url in self.oc.requests))
 
     def test_updater_installed_on_disk_can_run_again(self):
         self.oc.install()
@@ -472,12 +487,20 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual(self.oc.snapshot(), {})
         self.assertClosed()
 
-    def test_untrusted_service_origin_is_rejected_before_network_or_disk_work(self):
-        for origin in ("http://ae.example.test", "https://user:secret@ae.example.test", "https://ae.example.test/path"):
+    def test_malformed_service_origin_is_rejected_before_network_or_disk_work(self):
+        for origin in ("ftp://ae.example.test", "https://user:secret@ae.example.test", "https://ae.example.test/path"):
             with self.subTest(origin=origin), self.assertRaises(Exception):
                 self.oc.install(origin)
         self.assertEqual(self.oc.requests, [])
         self.assertEqual(self.oc.snapshot(), {})
+
+    def test_configured_http_origin_installs_the_same_bounded_modules(self):
+        origin = SERVICE.replace("https://", "http://")
+        self.oc.service_origin = origin
+        self.oc.install(origin)
+        self.assertInstalled()
+        self.assertTrue(any(url.startswith(origin + "/oc/") for url in self.oc.requests))
+        self.assertClosed()
 
     def test_second_installer_cannot_modify_an_active_installation(self):
         self.oc.seed_upgrade()

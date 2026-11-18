@@ -12,6 +12,7 @@ return function(options)
   local function forbidden() error("worker crossed a primary-only hardware boundary") end
   local me={getItemInNetwork=function(detail)
     s.reads[#s.reads+1]={name=detail.name,at=s.clock}
+    s.clock=s.clock+(options.read_delay or 0)
     if s.fail_read and s.fail_read(detail) then error("hardware unavailable") end
     return {name=detail.name,damage=detail.damage,label=detail.label,size=s.stock[detail.name] or "42"}
   end}
@@ -19,7 +20,7 @@ return function(options)
     me.allItems=function()
       s.scans=(s.scans or 0)+1
       local index=0
-      return function() index=index+1;return (s.catalog or {})[index] end
+      return function() s.clock=s.clock+(options.read_delay or 0);index=index+1;return (s.catalog or {})[index] end
     end
     me.getCpus=function() s.cpu_reads=(s.cpu_reads or 0)+1;return {} end
     me.getCraftable=function(detail)
@@ -53,7 +54,7 @@ return function(options)
       assert(value.protocol==2)
       s.hello=value
       response={protocol=2,session_id="session",device_id="device",role=options.welcome_role or s.role,
-        inventory_ack="0",poll_ack="0",limits={batch_items=16,batch_bytes=4096,response_bytes=4096,
+        inventory_ack="0",poll_ack="0",limits={batch_items=options.batch_items or 16,batch_bytes=4096,response_bytes=4096,
           cpus=2,poll_millis=1000,read_slots=16,read_bytes=16384,diagnostic_samples=options.diagnostic_samples,
           background_recipe_inconclusive=options.background_recipe_inconclusive}}
     elseif path=="/bridge/v2/poll" then
@@ -67,6 +68,7 @@ return function(options)
       s.reads_ack={};s.commands={}
     elseif path=="/bridge/v2/inventory" then
       s.uploads[#s.uploads+1]={value=value,body=body}
+      s.clock=s.clock+(options.http_delay or 0)
       if s.fail_upload then s.fail_upload=false;error("lost inventory ack") end
       local bindings=json.array({})
       for index,update in ipairs(value.updates) do
@@ -89,7 +91,7 @@ return function(options)
     scan_slice_seconds=options.slice or 0.05,scan_interval=60,scan_memory_floor=0}
   for k,v in pairs(options.config or {}) do config[k]=v end
   local r=cooperative.new(config,{
-    adapter=adapter.new(me,{role=s.role}),client=client.new(internet,{url="https://fixture.test",token=string.rep("x",32)},
+    adapter=adapter.new(me,{role=s.role,inventory_mode=config.inventory_mode}),client=client.new(internet,{url="https://fixture.test",token=string.rep("x",32)},
       {now=function() return s.clock end,sleep=function(t) s.clock=s.clock+t end}),
     journal=journal.new({read=function(p) return s.files[p] end,write=function(p,v) s.files[p]=v;return true end},"journal",32768),
     now=function() return s.clock end,free_memory=function() return s.memory end,yield=function() end})

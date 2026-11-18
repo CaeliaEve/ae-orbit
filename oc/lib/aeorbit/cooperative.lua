@@ -14,7 +14,7 @@ local function pcall(...) return preserve_stop(native_pcall(...)) end
 local M={}
 local read_cycle={"order","refresh","refresh","background"}
 local read_sources={order="priority",refresh="refresh",background="recheck"}
-local default_scan_memory_floor=2097152
+local default_scan_memory_floor=524288
 local function fatal(code) error({code=code,message=code,fatal=true},0) end
 local function integer(value,minimum,maximum)
   return type(value)=="number" and value%1==0 and value>=minimum and value<=maximum
@@ -35,21 +35,29 @@ local function token(value)
   return type(value)=="string" and #value==32 and not value:find("[^0-9a-f]")
 end
 local function transient(value) return type(value)=="table" and value.fatal==false end
+local function account(self,name,amount)
+  self.statistics[name]=math.min(9007199254740991,self.statistics[name]+amount)
+end
 
 function M.new(config,deps)
   assert(config.bridge_mode=="cooperative","cooperative: explicit cooperative mode required")
   local role=config.role or "primary"
   assert(role=="primary" or role=="quantity_worker","cooperative: invalid role")
+  assert(config.inventory_mode==nil or config.inventory_mode=="iterator" or config.inventory_mode=="exact_only",
+    "cooperative: invalid inventory mode")
   local primary=role=="primary"
   local memory=deps.free_memory()
   local task_bytes=math.max(256,math.min(16384,math.floor(memory/16)))
   local scan_floor=scan_memory_floor(config)
+  local batch_delay=config.batch_interval_seconds or 0.25
+  assert(type(batch_delay)=="number" and batch_delay>=0 and batch_delay<=1,"cooperative: invalid batch interval")
   local self={deps=deps,config=config,adapter=deps.adapter,client=deps.client,role=role,diagnostics={},diagnostic_samples=0,
-    ids=cache.new(config.cache_entries or 256,math.max(256,math.min(config.cache_bytes or math.floor(memory/12),math.floor(memory/8)))),
+    ids=cache.new(config.cache_entries or 256,math.max(256,math.min(config.cache_bytes or math.floor(memory/12),math.floor(memory/3)))),
     dirty=cache.new(16,task_bytes),tasks=cache.new(16,task_bytes),candidates=cache.new(16,task_bytes),
     attempts=cache.new(64,16384),
     grants=cache.new(64,16384),
-    task_bytes=task_bytes,scan_memory_floor=scan_floor,scan_memory_blocked=false,
+    task_bytes=task_bytes,scan_memory_floor=scan_floor,scan_memory_blocked=false,batch_delay=batch_delay,
+    statistics={batches=0,updates=0,bytes=0,credits_used=0,collect_millis=0},
     inventory_seq="0",poll_seq="0",observation="0",credits=0,poll_delay=1,
     uploaded=0,next_scan=0,next_cpu=0,next_recipe_check=0,task_turn=true,read_opportunity=1}
   function self:diagnose(code)
@@ -67,7 +75,14 @@ function M.new(config,deps)
     self.read_diagnostics:record(code,source,raw,item_id,error_value,stage)
   end
   function self:_memory_ready()
-    return deps.free_memory()>=self.client.response_bytes*4+4096
+    local reserved=self.staged_inventory and self.staged_inventory.size*2 or 0
+    if self.carry then reserved=reserved+#self.carry.encoded*2 end
+    local ready=deps.free_memory()>=self.client.response_bytes*4+4096+reserved
+    if not ready and collectgarbage then
+      collectgarbage("collect")
+      ready=deps.free_memory()>=self.client.response_bytes*4+4096+reserved
+    end
+    return ready
   end
   function self:_scan_memory_ready()
     if deps.free_memory()<self.scan_memory_floor then
@@ -98,6 +113,8 @@ function M.new(config,deps)
       if not primary then
         capabilities={inventory=true,exact_quantities=true,quantity_refresh=true,craft=false,cpu_output=false}
       end
+      capabilities.native_scan_disabled=config.inventory_mode=="exact_only"
+      capabilities.events_disabled=config.inventory_mode=="exact_only"
       self.hello_body=json.encode({protocol=2,boot_id=self.boot_id,
         source=config.source or "oc",capabilities=capabilities,max_response_bytes=self.hello_response_bytes},self.client.request_bytes)
     end
@@ -126,13 +143,17 @@ function M.new(config,deps)
       deps.journal:save({boot_id=self.boot_id,attempts={},completed=json.array({})})
       self.tracker=tracker.new(self.adapter,deps.journal,16)
     end
+    if config.inventory_mode=="exact_only" then self:diagnose("native_scan_disabled") end
     self.started=true
   end
   function self:_health()
     local diagnostics=json.array({})
     local keys={};for key in pairs(self.diagnostics) do keys[#keys+1]=key end;table.sort(keys)
     for _,key in ipairs(keys) do diagnostics[#diagnostics+1]={code=key,count=self.diagnostics[key]} end
-    return {free_memory=quantity.from_number(deps.free_memory()),diagnostics=diagnostics}
+    local inventory={}
+    for name,value in pairs(self.statistics) do inventory[name]=quantity.from_number(value) end
+    return {free_memory=quantity.from_number(deps.free_memory()),diagnostics=diagnostics,
+      inventory=self.client.request_bytes>=2048 and inventory or nil}
   end
   function self:_hint(raw)
     local key=self.adapter:key(raw)
@@ -145,7 +166,7 @@ function M.new(config,deps)
     end
   end
   function self:on_item_changed(raw)
-    if not primary then return end
+    if not primary or config.enable_events==false or config.inventory_mode=="exact_only" then return end
     local ok=pcall(function()
       local detail=self.adapter:descriptor(raw)
       local key=self.adapter:key(detail)
@@ -328,7 +349,9 @@ function M.new(config,deps)
     local value={quantity=count,observation=self.observation,craftable=craftable==nil and json.null or craftable}
     if inconclusive then value.recipe_inconclusive=true end
     local entry={key=key,label=raw.label or raw.name,tag=raw.tag}
-    if task then value.id=task.id;value.assignment_id=task.assignment_id;entry.assignment_id=task.assignment_id
+    if task then
+      value.id=task.id;value.assignment_id=task.assignment_id;entry.assignment_id=task.assignment_id
+      entry.priority=task.purpose~="background";entry.deadline=task.deadline
     else value.item=self.adapter:definition(raw);entry.item=true end
     entry.encoded=json.encode(value,self.client.request_bytes)
     return entry
@@ -347,6 +370,7 @@ function M.new(config,deps)
           -- Rotate the lane before native work so failures cannot hold its next opportunity.
           self.tasks:get(entry.key)
           self.credits=self.credits-cost
+          account(self,"credits_used",cost)
           if task.kind=="quantity_recipe" then self.next_recipe_check=deps.now()+5 end
           local stage="quantity"
           local ok,result=pcall(function()
@@ -383,6 +407,7 @@ function M.new(config,deps)
     return nil,false
   end
   function self:_discover()
+    if config.inventory_mode=="exact_only" then return nil,false end
     if not primary or self:_available()<1 then return nil,false end
     local candidate=self.candidates.last
     while candidate and deps.now()<candidate.value.retry_at do candidate=candidate.previous end
@@ -390,6 +415,7 @@ function M.new(config,deps)
     if candidate and (not scan_ready or not self.discovery_scan_turn) then
       self.discovery_scan_turn=true
       self.credits=self.credits-1
+      account(self,"credits_used",1)
       local detail=candidate.value
       self.candidates:get(candidate.key)
       local stage="quantity"
@@ -407,11 +433,12 @@ function M.new(config,deps)
     if not scan_ready then return nil,false end
     self.discovery_scan_turn=false
     self.credits=self.credits-1
+    account(self,"credits_used",1)
+    if not self:_scan_memory_ready() then
+      if not self.iterator then self.next_scan=deps.now()+5 end
+      return nil,true
+    end
     if not self.iterator then
-      if not self:_scan_memory_ready() then
-        self.next_scan=deps.now()+5
-        return nil,true
-      end
       local ok,value=pcall(self.adapter.iterator,self.adapter)
       if not ok then self:diagnose("scan_unavailable");self.next_scan=deps.now()+10;return nil,true end
       self.iterator=value
@@ -423,7 +450,10 @@ function M.new(config,deps)
       return nil,true
     end
     local represented,result=pcall(function()
-      local known=self.ids:get(self.adapter:key(raw))
+      local key=self.adapter:key(raw)
+      local known=self.ids:get(key)
+      local staged=self.staged_inventory and self.staged_inventory.keys[key]
+      if staged and staged.label==(raw.label or raw.name) and (staged.tag or "")==(raw.tag or "") then return nil end
       if known and known.label==(raw.label or raw.name) and (known.tag or "")==(raw.tag or "") then
         self:_hint(raw);return nil
       end
@@ -456,48 +486,84 @@ function M.new(config,deps)
     for _,entry in ipairs(pending.entries) do
       if entry.assignment_id then self.tasks:remove(entry.assignment_id) end
     end
+    account(self,"batches",1);account(self,"updates",#pending.entries);account(self,"bytes",#pending.body)
     self.inventory_seq=ack.ack;self.uploaded=self.uploaded+#pending.entries;self.pending_inventory=nil
   end
-  function self:_upload(entry)
-    local entries=json.array({})
-    local updates=json.array({})
-    if entry then entries[1]=entry;updates[1]=json.decode(entry.encoded) end
+  function self:_send_staged()
+    local batch=self.staged_inventory
+    if not batch then return true end
+    if #batch.entries==0 and not self.scan_completed then self.staged_inventory=nil;return true end
+    if not self:_memory_ready() then return false end
     local sequence=quantity.increment(self.inventory_seq)
-    local body={session_id=self.session,sequence=sequence,updates=updates}
-    if self.scan_completed then body.scan_completed=true end
-    local ok,encoded=pcall(json.encode,body,math.min(self.client.request_bytes,math.max(512,math.floor(deps.free_memory()/8))))
-    if not ok then
-      self:diagnose("entry_exceeds_batch_budget")
-      if entry and entry.assignment_id then
-        local queued=self.tasks.entries[entry.assignment_id]
-        if queued then queued.value.in_flight=nil;queued.value.retry_at=deps.now()+1 end
-      end
-      return
-    end
+    local body='{"session_id":'..json.encode(self.session)..',"sequence":'..json.encode(sequence)..',"updates":['..table.concat(batch.encoded,",")..']'
+    if self.scan_completed then body=body..',"scan_completed":true' end
+    body=body.."}"
+    assert(#body<=batch.limit,"cooperative: batch exceeds negotiated limit")
     self.scan_completed=false
-    self.pending_inventory={body=encoded,sequence=sequence,entries=entries}
+    for _,entry in ipairs(batch.entries) do entry.encoded=nil end
+    self.pending_inventory={body=body,sequence=sequence,entries=batch.entries}
+    self.staged_inventory=nil
     self:_flush()
+    return true
   end
   function self:_inventory()
+    local started=deps.now()
+    local retrying=self.pending_inventory~=nil
     self:_flush()
     if not self:_memory_ready() then self:diagnose("low_memory");return false end
-    local started=deps.now()
-    while self:_available()>0 do
-      local entry,worked
-      if self.task_turn then entry,worked=self:_read_task() else entry,worked=self:_discover() end
-      self.task_turn=not self.task_turn
-      if not worked then
-        if self.task_turn then entry,worked=self:_read_task() else entry,worked=self:_discover() end
+    if retrying and deps.now()-started>=(config.scan_slice_seconds or 0.05) then
+      return self:_available()>0 or self.carry~=nil or self.staged_inventory~=nil
+    end
+    if self.staged_inventory and (started>=self.staged_inventory.deadline or (self:_available()<=0 and not self.carry)) then
+      if not self:_send_staged() then return false end
+      if deps.now()-started>=(config.scan_slice_seconds or 0.05) then return self:_available()>0 or self.carry~=nil end
+    end
+    while self:_available()>0 or self.carry do
+      local limit=math.min(self.client.request_bytes,math.max(512,math.floor(deps.free_memory()/8)))
+      if not self.staged_inventory then
+        self.staged_inventory={entries={},encoded={},keys={},size=256,limit=limit,deadline=deps.now()+self.batch_delay}
       end
-      if entry or self.scan_completed then self:_upload(entry) end
+      local batch=self.staged_inventory
+      local entry=self.carry;self.carry=nil
+      local worked=true
+      if not entry then
+        local before=deps.now()
+        if self.task_turn then entry,worked=self:_read_task() else entry,worked=self:_discover() end
+        self.task_turn=not self.task_turn
+        if not worked then
+          if self.task_turn then entry,worked=self:_read_task() else entry,worked=self:_discover() end
+        end
+        account(self,"collect_millis",math.max(0,math.floor((deps.now()-before)*1000+0.5)))
+      end
+      local send=false
+      if entry then
+        if #entry.encoded+256>limit then
+          self:diagnose("entry_exceeds_batch_budget")
+          local queued=entry.assignment_id and self.tasks.entries[entry.assignment_id]
+          if queued then queued.value.in_flight=nil;queued.value.retry_at=deps.now()+1 end
+        elseif batch.size+#entry.encoded+1>batch.limit then self.carry=entry;send=true
+        else
+          batch.entries[#batch.entries+1]=entry;batch.encoded[#batch.encoded+1]=entry.encoded
+          batch.keys[entry.key]=entry;batch.size=batch.size+#entry.encoded+1
+          if entry.deadline then batch.deadline=math.min(batch.deadline,entry.deadline-0.05) end
+          send=entry.priority==true
+        end
+      end
+      send=send or not worked or self.scan_completed or #batch.entries>=self.limits.batch_items or
+        deps.now()>=batch.deadline or (self:_available()<=0 and not self.carry)
+      if send and not self:_send_staged() then return false end
+      if #batch.entries==0 and not self.scan_completed and not self.carry then self.staged_inventory=nil end
       if not worked then return false end
       if deps.yield then deps.yield() end
-      if deps.now()-started>=(config.scan_slice_seconds or 0.05) then break end
+      if deps.now()-started>=(config.scan_slice_seconds or 0.05) then
+        if self.batch_delay==0 and not self:_send_staged() then return false end
+        break
+      end
     end
-    return self:_available()>0
+    return self:_available()>0 or self.carry~=nil or self.staged_inventory~=nil
   end
   function self:continue_inventory()
-    if self:_available()<=0 and not self.pending_inventory then return false end
+    if self:_available()<=0 and not self.pending_inventory and not self.staged_inventory and not self.carry then return false end
     local ok,result=pcall(self._inventory,self)
     if not ok then
       if not transient(result) then error(result,0) end

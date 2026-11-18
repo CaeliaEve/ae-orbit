@@ -444,6 +444,7 @@ paths:
         - {name: sort, in: query, schema: {type: string, enum: [name, quantity], default: name}}
         - {name: consistency, in: query, schema: {type: string, enum: [strict, live], default: strict}, description: Live consistency requires name sorting.}
         - {name: craftable, in: query, schema: {type: boolean}}
+        - {name: view, in: query, schema: {type: string, enum: [stock, all, observed]}, description: 'NESQL plain profile defaults to stock (confirmed positive observations since enablement). all includes explicitly unqueried candidates; only this profile supports all. Stock cursors enforce quantity revision even when live is requested.'}
         - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}
         - {name: cursor, in: query, schema: {type: string, maxLength: 4096}}
       responses:
@@ -587,6 +588,23 @@ paths:
                   entries: {type: string, pattern: '^(0|[1-9][0-9]*)$'}
                   craftable: {type: string, pattern: '^(0|[1-9][0-9]*)$'}
                   total_quantity: {type: string, pattern: '^(0|[1-9][0-9]*)$'}
+                  scope: {type: string, enum: [nesql_plain]}
+                  candidates: {type: string}
+                  checked: {type: string}
+                  zero: {type: string}
+                  pending: {type: string}
+                  oldest_observation: {type: string, format: date-time}
+                  last_observation: {type: string, format: date-time}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/networks/{network}/inventory-profile/nesql-plain:
+    parameters: [{$ref: '#/components/parameters/NetworkID'}]
+    post:
+      operationId: enablePlainInventoryProfile
+      tags: [Inventory]
+      description: 'Administrator only. Idempotently seed NESQL no-NBT metadata and exact-read schedules for a cooperative network. Does not create inventory observations. Old cache must be rechecked; legacy OC sessions receive no new reads or commands until an updated boot confirms disabled enumeration/events.'
+      parameters: [{$ref: '#/components/parameters/CSRF'}, {$ref: '#/components/parameters/Origin'}]
+      responses:
+        '200': {description: Scoped inventory statistics and candidate progress}
         default: {$ref: '#/components/responses/Error'}
   /api/v1/networks/{network}/cpus:
     parameters: [{$ref: '#/components/parameters/NetworkID'}]
@@ -1174,6 +1192,8 @@ components:
       additionalProperties: false
       properties:
         inventory: {type: boolean}
+        native_scan_disabled: {type: boolean, description: Native full inventory enumeration is disabled for this boot.}
+        events_disabled: {type: boolean, description: Native inventory event subscription was disabled before handshake.}
         quantity_refresh: {type: boolean, description: Supports the independent quantity-only refresh lane. A new boot is required to change negotiated capabilities.}
         craft: {type: boolean}
         cpu_output: {type: boolean}
@@ -1231,6 +1251,7 @@ components:
       type: object
       required: [id, kind, name, damage, label, exact, quantity, craftable, observed_at, current_session, craftable_current_session]
       properties:
+        quantity_known: {type: boolean, description: False means an unqueried NESQL plain candidate; its quantity field is a placeholder and must not be displayed as confirmed zero. Absent preserves legacy observed-item semantics.}
         id: {$ref: '#/components/schemas/PositiveQuantity'}
         canonical_id: {allOf: [{$ref: '#/components/schemas/PositiveQuantity'}], description: 'Present only when an ID lookup used a legacy alias. Stock belongs to this canonical item; aliases must not be added together.'}
         kind: {type: string, enum: [item, fluid]}
@@ -1280,6 +1301,7 @@ components:
       type: object
       required: [items, revision]
       properties:
+        scope: {type: string, enum: [nesql_plain]}
         items: {type: array, maxItems: 200, items: {$ref: '#/components/schemas/Item'}}
         revision: {$ref: '#/components/schemas/Quantity'}
         next_cursor: {type: string}

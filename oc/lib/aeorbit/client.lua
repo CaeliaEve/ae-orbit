@@ -32,9 +32,8 @@ local function response_length(headers)
 end
 function M.new(internet,config,clock)
   local url=assert(config.url):gsub("/+$","")
-  local secure=url:match("^https://[A-Za-z0-9%.%-%[%]:]+$")
-  local local_http=url:match("^http://127%.0%.0%.1:%d+$") or url:match("^http://localhost:%d+$")
-  assert(secure or local_http,"client: HTTPS origin required")
+  local valid_url=url:match("^https?://[A-Za-z0-9%.%-%[%]:]+$")
+  assert(valid_url,"client: valid origin required")
   assert(type(config.token)=="string" and #config.token>=32 and #config.token<=256,"client: invalid token")
   local function limit(name,default,integer)
     local value=config[name]

@@ -6,7 +6,7 @@ local read_diagnostics = require("aeorbit.read_diagnostics")
 local latency = require("aeorbit.latency")
 local cancel = require("aeorbit.cancel")
 local native_pcall=pcall
-local default_scan_memory_floor=2097152
+local default_scan_memory_floor=524288
 local function preserve_stop(ok,...)
   if not ok then cancel.rethrow((...)) end
   return ok,...
@@ -394,12 +394,12 @@ function M.new(config,deps)
       return value,cost
     end
     if lane==nil then return nil,0 end
+    if not self:_scan_memory_ready() then
+      if not self.iterator then self.next_scan=deps.now()+5 end
+      return nil,0
+    end
     if not self.iterator then
       if deps.now()<self.next_scan then return nil,0 end
-      if not self:_scan_memory_ready() then
-        self.next_scan=deps.now()+5
-        return nil,0
-      end
       local started=deps.now()
       local ok,iterator=pcall(self.adapter.iterator,self.adapter)
       if not ok then self:diagnose("scan_unavailable");self.next_scan=deps.now()+10;return nil,1 end

@@ -55,6 +55,23 @@ func (s *Store) IngestV2(ctx context.Context, d Device, b protocol.InventoryBatc
 		if !caps.Inventory {
 			return ErrCapability
 		}
+		plain, err := plainProfile(ctx, tx, d.NetworkID)
+		if err != nil {
+			return err
+		}
+		if plain {
+			if !caps.NativeScanDisabled || !caps.EventsDisabled || !caps.ExactQuantities {
+				return ErrClientUpgradeRequired
+			}
+			if b.ScanCompleted {
+				return ErrForbidden
+			}
+			for _, u := range b.Updates {
+				if u.Item != nil || u.AssignmentID == "" {
+					return ErrForbidden
+				}
+			}
+		}
 		if !caps.ExactQuantities {
 			for _, u := range b.Updates {
 				if u.AssignmentID != "" {
@@ -77,6 +94,17 @@ func (s *Store) IngestV2(ctx context.Context, d Device, b protocol.InventoryBatc
 			return err
 		}
 		ack.Bindings = bindings
+		if plain {
+			for _, id := range ids {
+				var allowed bool
+				if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM item_definitions d WHERE d.network_id=$1 AND d.id=$2 AND `+catalogScopeSQL+`)`, d.NetworkID, int64(id)).Scan(&allowed); err != nil {
+					return err
+				}
+				if !allowed {
+					return ErrForbidden
+				}
+			}
+		}
 		accepted, changed, catalog, recipes, confirmed, err := s.acceptCooperativeInventory(ctx, tx, d, b, ids)
 		if err != nil {
 			return err
@@ -424,14 +452,18 @@ func (s *Store) acceptCooperativeInventory(ctx context.Context, tx pgx.Tx, d Dev
 		}
 		accepted = true
 		_, err = tx.Exec(ctx, `WITH x AS (
-			SELECT * FROM jsonb_to_recordset($2::jsonb) AS x(id bigint,quantity_accepted boolean,recipe_attempt_accepted boolean)
+			SELECT * FROM jsonb_to_recordset($2::jsonb) AS x(id bigint,quantity bigint,quantity_accepted boolean,recipe_attempt_accepted boolean)
 		) INSERT INTO inventory_schedule(network_id,item_id,next_quantity_at,next_verify_at)
-			SELECT $1,id,now()+$3::double precision*interval '1 second',now()+$3::double precision*interval '1 second' FROM x
+			SELECT $1,id,now()+(CASE WHEN EXISTS(SELECT 1 FROM network_inventory_profiles WHERE network_id=$1)
+				THEN CASE WHEN quantity>0 THEN least($3::double precision,$4::double precision)
+					ELSE greatest($3::double precision,$5::double precision) END
+				ELSE $3::double precision END)*interval '1 second',now()+$3::double precision*interval '1 second' FROM x
 			ON CONFLICT(network_id,item_id) DO UPDATE SET
 			next_quantity_at=CASE WHEN (SELECT quantity_accepted FROM x WHERE x.id=excluded.item_id)
 				THEN excluded.next_quantity_at ELSE inventory_schedule.next_quantity_at END,
 			next_verify_at=CASE WHEN (SELECT recipe_attempt_accepted FROM x WHERE x.id=excluded.item_id)
-				THEN excluded.next_verify_at ELSE inventory_schedule.next_verify_at END`, d.NetworkID, data, s.options.RecheckAfter.Seconds())
+				THEN excluded.next_verify_at ELSE inventory_schedule.next_verify_at END`, d.NetworkID, data,
+			s.options.RecheckAfter.Seconds(), plainStockRecheck.Seconds(), plainZeroRecheck.Seconds())
 		if err != nil {
 			return
 		}

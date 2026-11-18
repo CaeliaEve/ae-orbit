@@ -3,7 +3,7 @@ local real_client=require("aeorbit.client")
 local failures={}
 local function fixture(options)
   options=options or {}
-  local s={time=0,starts=0,ticks=0,created=0,pumps=0,enabled=0,disabled=0,listened=0,ignored=0,reports={},output={}}
+  local s={time=0,starts=0,ticks=0,created=0,pumps=0,enabled=0,disabled=0,listened=0,ignored=0,reports={},output={},diagnostics={},subscription=options.stale_subscription==true}
   local old_loadfile,old_print,old_write,old_stderr=loadfile,print,io.write,io.stderr
   local modules={"component","computer","event","filesystem","aeorbit.adapter","aeorbit.client","aeorbit.journal","aeorbit.runner","aeorbit.cooperative","aeorbit.runtime"}
   local saved={};for _,name in ipairs(modules) do saved[name]=package.loaded[name];package.loaded[name]=nil end
@@ -13,16 +13,23 @@ local function fixture(options)
     if options.stop_at and s.time>=options.stop_at then context.request_stop() end
   end})
   local config={me_address="me",url="https://test.invalid",token=string.rep("credential_secret",2),bridge_mode=options.worker and "cooperative" or "single",role=options.worker and "quantity_worker" or "primary"}
+  if options.exact_only then config.bridge_mode="cooperative";config.inventory_mode="exact_only" end
+  if not options.default_events then config.enable_events=options.events~=false end
   loadfile=function() return function() if options.config_error then error(config.token,0) end;return config end end
   print=function(...) s.output[#s.output+1]=table.concat({...}," ") end
   io.write=function(...) s.output[#s.output+1]=table.concat({...}," ") end
   io.stderr={write=function(_,v) s.output[#s.output+1]=v end}
   local me={setItemEventSubscription=function(enabled)
+    s.subscription=enabled
     if enabled then
       s.enabled=s.enabled+1
       if options.subscribe_stop then error({stop=true,code="interrupted"},0) end
       if options.subscribe_false then return false end
-    else s.disabled=s.disabled+1;if options.cleanup_error then error(config.token,0) end end
+    else
+      s.disabled=s.disabled+1
+      if options.disable_failed then return false end
+      if options.cleanup_error then error(config.token,0) end
+    end
     return true
   end}
   local internet={request=function()
@@ -38,7 +45,7 @@ local function fixture(options)
     assert(name=="network_item_changed","runtime must not own interrupted listener")
     s.listened=s.listened+1;s.listener=fn;return true
   end,ignore=function(name,fn) assert(name=="network_item_changed" and fn==s.listener);s.ignored=s.ignored+1;return true end}
-  package.loaded["aeorbit.adapter"]={new=function() return {} end,has_method=function() return true end}
+  package.loaded["aeorbit.adapter"]={new=function(_,cfg) s.adapter_config=cfg;return {} end,has_method=function() return true end}
   package.loaded["aeorbit.client"]={new=function(card,cfg,clock)
     s.clock=clock
     return options.real_network_stop and real_client.new(card,cfg,clock) or {}
@@ -49,6 +56,7 @@ local function fixture(options)
     local bridge={session="session",poll_delay=1,uploaded=0,ids={count=0},dirty={count=0},tracker={pump=function() s.pumps=s.pumps+1 end}}
     function bridge:start()
       s.starts=s.starts+1
+      if options.expect_events_disabled then assert(not s.subscription,"persisted subscription survived into handshake") end
       if options.real_network_stop then deps.client:post("/bridge/v1/boot-id",{}) end
       if options.start_stop then context.request_stop();s.clock.check() end
       if s.starts<=(options.transient_starts or 0) then error({fatal=false,code="transport_failed"},0) end
@@ -65,7 +73,7 @@ local function fixture(options)
       if not options.running_retry or s.ticks==6 then context.request_stop();context.check() end
       return {control_ok=false,control_started_at=s.time,control_completed_at=s.time,inventory_work=false}
     end
-    function bridge:diagnose() end
+    function bridge:diagnose(code) s.diagnostics[code]=(s.diagnostics[code] or 0)+1 end
     function bridge:on_item_changed() end
     function bridge:continue_inventory() s.time=s.time+0.5;s.inventory_slices=(s.inventory_slices or 0)+1;return false end
     return bridge
@@ -121,6 +129,35 @@ test("transient tick failure retains session and runner",function()
 end)
 test("worker has no native subscription",function()
   local r,s=fixture({worker=true});assert(r.kind=="stopped" and s.enabled==0 and s.listened==0)
+end)
+for _,default_events in ipairs({false,true}) do
+  test("disabled events clear persisted native subscription before handshake "..tostring(default_events),function()
+    local r,s=fixture({events=false,default_events=default_events,stale_subscription=true,expect_events_disabled=true})
+    assert(r.kind=="stopped" and s.starts==1 and s.ticks>0)
+    assert(s.disabled==1 and s.enabled==0 and s.listened==0 and s.ignored==0)
+    assert(not s.subscription and s.diagnostics.events_disabled==1)
+  end)
+end
+test("failed native unsubscribe blocks startup",function()
+  local r,s=fixture({events=false,stale_subscription=true,disable_failed=true})
+  assert(r.kind=="blocked" and r.code=="event_failed")
+  assert(s.created==0 and s.starts==0 and s.ticks==0 and s.listened==0)
+end)
+test("exact-only mode overrides event enablement before native startup",function()
+  local r,s=fixture({exact_only=true,events=true,stale_subscription=true,expect_events_disabled=true})
+  assert(r.kind=="stopped" and s.starts==1 and s.enabled==0 and s.listened==0 and s.disabled==1)
+  assert(s.adapter_config.inventory_mode=="exact_only" and not s.subscription)
+end)
+test("exact-only worker clears a persisted subscription before handshake",function()
+  local r,s=fixture({worker=true,exact_only=true,events=true,stale_subscription=true,expect_events_disabled=true})
+  assert(r.kind=="stopped" and s.starts==1 and s.enabled==0 and s.listened==0 and s.disabled==1)
+  assert(s.adapter_config.role=="quantity_worker" and s.adapter_config.inventory_mode=="exact_only")
+  assert(not s.subscription and s.diagnostics.events_disabled==1)
+end)
+test("exact-only worker blocks startup when unsubscribe fails",function()
+  local r,s=fixture({worker=true,exact_only=true,stale_subscription=true,disable_failed=true})
+  assert(r.kind=="blocked" and r.code=="event_failed")
+  assert(s.created==0 and s.starts==0 and s.ticks==0 and s.listened==0)
 end)
 for _,case in ipairs({{failure={fatal=true,code="stale_session"},kind="blocked",code="stale_session"},
   {failure="credential_secret",kind="crashed",code="runtime_error"},

@@ -95,10 +95,17 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			fail(w, store.ErrCapacity)
 			return
 		}
-		ctx, cancel := context.WithTimeout(r.Context(), s.options.RequestTimeout)
+		budget := s.options.RequestTimeout
+		// Registering an entire immutable export is a bounded administrator
+		// operation. Ordinary inventory and bridge requests retain their budget.
+		_, pattern := s.mux.Handler(r)
+		if pattern == "POST /api/v1/networks/{network}/inventory-profile/nesql-plain" && budget < time.Minute {
+			budget = time.Minute
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), budget)
 		defer cancel()
 		r = r.WithContext(ctx)
-		_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(s.options.RequestTimeout + time.Second))
+		_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(budget + time.Second))
 	}
 	s.mux.ServeHTTP(w, r)
 }

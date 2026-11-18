@@ -173,7 +173,7 @@ export async function loadTexturePackURL(url, fetcher = globalThis.fetch.bind(gl
   const origin = globalThis.location?.origin || "http://localhost";
   const response = await fetcher(url, {
     credentials: target.origin === origin ? "same-origin" : "omit",
-    cache: "force-cache",
+    cache: "no-cache",
   });
   if (!response.ok) throw new Error(`纹理包下载失败（HTTP ${response.status}）。`);
   const bytes = await response.arrayBuffer();

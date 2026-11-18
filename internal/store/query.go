@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/CaeliaEve/ae-orbit/internal/protocol"
@@ -93,17 +94,8 @@ func (s *Store) Items(ctx context.Context, userID, networkID string, q protocol.
 	if (q.Consistency != "strict" && q.Consistency != "live") || (q.Consistency == "live" && q.Sort != "name") {
 		return page, ErrInvalid
 	}
-	queryBytes, _ := json.Marshal([]any{networkID, q.Search, q.Sort, q.Craftable, q.Consistency})
-	fingerprint := sha256.Sum256(queryBytes)
-	queryKey := hex.EncodeToString(fingerprint[:])
 	var cursor pageCursor
 	var err error
-	if q.Cursor != "" {
-		cursor, err = s.decodeCursor(q.Cursor)
-		if err != nil || cursor.Query != queryKey {
-			return page, ErrInvalid
-		}
-	}
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
 	if err != nil {
 		return page, err
@@ -114,46 +106,93 @@ func (s *Store) Items(ctx context.Context, userID, networkID string, q protocol.
 	if err = tx.QueryRow(ctx, "SELECT revision,current_session,catalog_revision,craftable_revision FROM networks WHERE id=$1", networkID).Scan(&page.Revision, &session, &catalogRevision, &craftableRevision); err != nil {
 		return page, notFound(err)
 	}
+	var enabledAt *time.Time
+	if err = tx.QueryRow(ctx, "SELECT (SELECT enabled_at FROM network_inventory_profiles WHERE network_id=$1)", networkID).Scan(&enabledAt); err != nil {
+		return page, err
+	}
+	plain := enabledAt != nil
+	if q.View == "" {
+		if plain {
+			q.View = "stock"
+		} else {
+			q.View = "observed"
+		}
+	}
+	if q.View != "stock" && q.View != "all" && q.View != "observed" || (!plain && q.View == "all") {
+		return page, ErrInvalid
+	}
+	if plain {
+		page.Scope = "nesql_plain"
+	}
+	// Positive-stock membership changes with quantities, so a live cursor must
+	// also protect the quantity revision in this view.
+	if q.View == "stock" {
+		q.Consistency = "strict"
+	}
+	queryBytes, _ := json.Marshal([]any{networkID, q.Search, q.Sort, q.Craftable, q.Consistency, q.View, enabledAt})
+	fingerprint := sha256.Sum256(queryBytes)
+	queryKey := hex.EncodeToString(fingerprint[:])
+	if q.Cursor != "" {
+		cursor, err = s.decodeCursor(q.Cursor)
+		if err != nil || cursor.Query != queryKey {
+			return page, ErrInvalid
+		}
+	}
 	if q.Cursor != "" {
 		if q.Consistency == "strict" && cursor.Revision != page.Revision {
 			return page, ErrViewChanged
 		}
-		if q.Consistency == "live" && (cursor.CatalogRevision != catalogRevision || (q.Craftable != nil && cursor.CraftableRevision != craftableRevision)) {
+		if q.Consistency == "live" && ((!plain && cursor.CatalogRevision != catalogRevision) || (q.Craftable != nil && cursor.CraftableRevision != craftableRevision)) {
 			return page, ErrViewChanged
 		}
 	}
 	args := []any{networkID, session}
 	conditions := []string{"d.network_id=$1"}
+	label := "d.label"
+	join := "JOIN inventory i ON i.network_id=d.network_id AND i.item_id=d.id"
+	if plain {
+		label = "c.label"
+		join = "JOIN plain_catalog_candidates c ON c.network_id=d.network_id AND c.item_id=d.id LEFT JOIN inventory i ON i.network_id=d.network_id AND i.item_id=d.id AND i.observed_at>="
+		args = append(args, enabledAt)
+		join += "$3"
+		conditions = append(conditions, "d.kind='item' AND d.exact AND d.nbt=''")
+		if q.View != "all" {
+			conditions = append(conditions, "i.item_id IS NOT NULL")
+		}
+	}
+	if q.View == "stock" {
+		conditions = append(conditions, "i.quantity>0")
+	}
 	param := func(value any) string { args = append(args, value); return fmt.Sprintf("$%d", len(args)) }
 	if q.Search != "" {
 		value := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(q.Search)
 		if utf8.RuneCountInString(q.Search) < 3 {
 			p := param(value + "%")
-			conditions = append(conditions, "(lower(d.label) LIKE lower("+p+") OR lower(d.name) LIKE lower("+p+"))")
+			conditions = append(conditions, "(lower("+label+") LIKE lower("+p+") OR lower(d.name) LIKE lower("+p+"))")
 		} else {
 			p := param("%" + value + "%")
-			conditions = append(conditions, "lower(d.label || ' ' || d.name) LIKE lower("+p+")")
+			conditions = append(conditions, "lower("+label+" || ' ' || d.name) LIKE lower("+p+")")
 		}
 	}
 	if q.Craftable != nil {
 		conditions = append(conditions, "i.craftable="+param(*q.Craftable))
 	}
-	order := "lower(d.label),d.id"
+	order := "lower(" + label + "),d.id"
 	if q.Sort == "quantity" {
-		order = "i.quantity DESC,d.id"
+		order = "coalesce(i.quantity,0) DESC,d.id"
 	}
 	if q.Cursor != "" {
 		if q.Sort == "quantity" {
 			count := param(int64(cursor.Quantity))
 			id := param(int64(cursor.ID))
-			conditions = append(conditions, "(i.quantity<"+count+" OR (i.quantity="+count+" AND d.id>"+id+"))")
+			conditions = append(conditions, "(coalesce(i.quantity,0)<"+count+" OR (coalesce(i.quantity,0)="+count+" AND d.id>"+id+"))")
 		} else {
-			conditions = append(conditions, "(lower(d.label),d.id)>("+param(cursor.Name)+","+param(int64(cursor.ID))+")")
+			conditions = append(conditions, "(lower("+label+"),d.id)>("+param(cursor.Name)+","+param(int64(cursor.ID))+")")
 		}
 	}
 	limit := param(q.Limit + 1)
-	rows, err := tx.Query(ctx, `SELECT d.id,d.kind,d.name,d.damage,d.label,d.exact,d.nbt,i.quantity,i.craftable,i.observed_at,i.craftable_observed_at,`+quantityCurrentSessionSQL+`,`+recipeCurrentSessionSQL+`,lower(d.label)
-        FROM item_definitions d JOIN inventory i ON i.network_id=d.network_id AND i.item_id=d.id WHERE `+strings.Join(conditions, " AND ")+" ORDER BY "+order+" LIMIT "+limit, args...)
+	rows, err := tx.Query(ctx, `SELECT d.id,d.kind,d.name,d.damage,`+label+`,d.exact,d.nbt,coalesce(i.quantity,0),coalesce(i.craftable,false),coalesce(i.observed_at,'epoch'::timestamptz),i.craftable_observed_at,`+quantityCurrentSessionSQL+`,`+recipeCurrentSessionSQL+`,lower(`+label+`),i.item_id IS NOT NULL
+        FROM item_definitions d `+join+` WHERE `+strings.Join(conditions, " AND ")+" ORDER BY "+order+" LIMIT "+limit, args...)
 	if err != nil {
 		return page, err
 	}
@@ -161,9 +200,13 @@ func (s *Store) Items(ctx context.Context, userID, networkID string, q protocol.
 	for rows.Next() {
 		var item protocol.Item
 		var name string
-		if err = rows.Scan(&item.ID, &item.Kind, &item.Name, &item.Damage, &item.Label, &item.Exact, &item.NBT, &item.Quantity, &item.Craftable, &item.ObservedAt, &item.CraftableObservedAt, &item.CurrentSession, &item.CraftableCurrentSession, &name); err != nil {
+		var known bool
+		if err = rows.Scan(&item.ID, &item.Kind, &item.Name, &item.Damage, &item.Label, &item.Exact, &item.NBT, &item.Quantity, &item.Craftable, &item.ObservedAt, &item.CraftableObservedAt, &item.CurrentSession, &item.CraftableCurrentSession, &name, &known); err != nil {
 			rows.Close()
 			return page, err
+		}
+		if plain {
+			item.QuantityKnown = &known
 		}
 		page.Items = append(page.Items, item)
 		names = append(names, name)
@@ -185,14 +228,37 @@ func (s *Store) Items(ctx context.Context, userID, networkID string, q protocol.
 }
 
 type InventoryStatistics struct {
-	Entries       string `json:"entries"`
-	Craftable     string `json:"craftable"`
-	TotalQuantity string `json:"total_quantity"`
+	Scope             string     `json:"scope,omitempty"`
+	Candidates        string     `json:"candidates,omitempty"`
+	Checked           string     `json:"checked,omitempty"`
+	Zero              string     `json:"zero,omitempty"`
+	Pending           string     `json:"pending,omitempty"`
+	OldestObservation *time.Time `json:"oldest_observation,omitempty"`
+	LastObservation   *time.Time `json:"last_observation,omitempty"`
+	Entries           string     `json:"entries"`
+	Craftable         string     `json:"craftable"`
+	TotalQuantity     string     `json:"total_quantity"`
 }
 
 func (s *Store) InventoryStats(ctx context.Context, userID, networkID string) (InventoryStatistics, error) {
 	var result InventoryStatistics
 	if err := s.RequireAccess(ctx, userID, networkID, false); err != nil {
+		return result, err
+	}
+	var plain bool
+	if err := s.pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM network_inventory_profiles WHERE network_id=$1)", networkID).Scan(&plain); err != nil {
+		return result, err
+	}
+	if plain {
+		result.Scope = "nesql_plain"
+		err := s.pool.QueryRow(ctx, `SELECT count(*) FILTER(WHERE i.quantity>0)::text,
+			count(*) FILTER(WHERE i.quantity>0 AND i.craftable)::text,coalesce(sum(i.quantity),0)::text,
+			count(*)::text,count(i.item_id)::text,count(*) FILTER(WHERE i.quantity=0)::text,
+			count(*) FILTER(WHERE i.item_id IS NULL)::text,min(i.observed_at),max(i.observed_at)
+			FROM plain_catalog_candidates c JOIN network_inventory_profiles p ON p.network_id=c.network_id
+			LEFT JOIN inventory i ON i.network_id=c.network_id AND i.item_id=c.item_id AND i.observed_at>=p.enabled_at
+			WHERE c.network_id=$1`, networkID).Scan(&result.Entries, &result.Craftable, &result.TotalQuantity,
+			&result.Candidates, &result.Checked, &result.Zero, &result.Pending, &result.OldestObservation, &result.LastObservation)
 		return result, err
 	}
 	err := s.pool.QueryRow(ctx, `SELECT count(*)::text,count(*) FILTER(WHERE craftable)::text,coalesce(sum(quantity),0)::text FROM inventory WHERE network_id=$1`, networkID).Scan(&result.Entries, &result.Craftable, &result.TotalQuantity)

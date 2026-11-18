@@ -2,7 +2,13 @@ const text = value => typeof value === "string" ? value.trim() : "";
 const GAME_TICK_MS = 1000 / 20;
 
 export function catalogDisplayName(item) {
-  return text(item?.label) || text(item?.catalog?.localized_name) || text(item?.name);
+  const label = text(item?.label);
+  const localized = text(item?.catalog?.localized_name);
+  // Dedicated servers commonly report English labels even to Chinese clients.
+  // Use the verified catalog translation while preserving existing Chinese labels.
+  const chinese = /[\u3400-\u9fff]/;
+  if (chinese.test(localized) && !chinese.test(label)) return localized;
+  return label || localized || text(item?.name);
 }
 
 export function catalogSource(item) {

@@ -53,12 +53,13 @@ func (s *Store) RequestItemRefresh(ctx context.Context, userID, networkID string
 		} else if !caps.Inventory || !caps.QuantityRefresh {
 			return ErrCapability
 		}
-		rows, err := tx.Query(ctx, `SELECT DISTINCT i.item_id,d.kind,d.exact FROM item_definitions requested
+		rows, err := tx.Query(ctx, `SELECT DISTINCT d.id,d.kind,d.exact FROM item_definitions requested
 			LEFT JOIN item_aliases a ON a.network_id=requested.network_id AND a.alias_id=requested.id
-			JOIN inventory i ON i.network_id=requested.network_id AND i.item_id=coalesce(a.canonical_id,requested.id)
-			JOIN item_definitions d ON d.network_id=i.network_id AND d.id=i.item_id
-			WHERE requested.network_id=$1 AND requested.id=ANY($2::bigint[])
-			ORDER BY i.item_id`, networkID, input)
+			JOIN item_definitions d ON d.network_id=requested.network_id AND d.id=coalesce(a.canonical_id,requested.id)
+			LEFT JOIN inventory i ON i.network_id=d.network_id AND i.item_id=d.id
+			WHERE requested.network_id=$1 AND requested.id=ANY($2::bigint[]) AND `+catalogScopeSQL+`
+			AND (i.item_id IS NOT NULL OR EXISTS(SELECT 1 FROM network_inventory_profiles WHERE network_id=$1))
+			ORDER BY d.id`, networkID, input)
 		if err != nil {
 			return err
 		}

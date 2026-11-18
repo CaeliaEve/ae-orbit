@@ -100,6 +100,7 @@ func (s *Server) routes() {
 			return
 		}
 		q := protocol.ItemQuery{Search: r.URL.Query().Get("q"), Sort: r.URL.Query().Get("sort"), Cursor: r.URL.Query().Get("cursor"), Limit: limit, Consistency: r.URL.Query().Get("consistency")}
+		q.View = r.URL.Query().Get("view")
 		if value := r.URL.Query().Get("craftable"); value != "" {
 			yes, err := strconv.ParseBool(value)
 			if err != nil {
@@ -121,6 +122,14 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/v1/networks/{network}/items/refresh", s.user(s.refreshItems))
 	s.mux.HandleFunc("GET /api/v1/networks/{network}/inventory-stats", s.user(func(w http.ResponseWriter, r *http.Request, m protocol.Member) {
 		value, err := s.db.InventoryStats(r.Context(), m.ID, r.PathValue("network"))
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		respond(w, 200, value)
+	}))
+	s.mux.HandleFunc("POST /api/v1/networks/{network}/inventory-profile/nesql-plain", s.user(func(w http.ResponseWriter, r *http.Request, m protocol.Member) {
+		value, err := s.db.EnablePlainCatalog(r.Context(), m.ID, r.PathValue("network"))
 		if err != nil {
 			fail(w, err)
 			return

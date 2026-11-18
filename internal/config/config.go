@@ -45,10 +45,8 @@ func Load(env func(string) string) (Config, error) {
 	if err != nil || u.Host == "" || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || u.User != nil {
 		return c, fmt.Errorf("AE_PUBLIC_URL must be an origin without a path")
 	}
-	ip := net.ParseIP(u.Hostname())
-	loopback := u.Hostname() == "localhost" || (ip != nil && ip.IsLoopback())
-	if u.Scheme != "https" && !(u.Scheme == "http" && loopback) {
-		return c, fmt.Errorf("AE_PUBLIC_URL requires HTTPS except on loopback")
+	if u.Scheme != "https" && u.Scheme != "http" {
+		return c, fmt.Errorf("AE_PUBLIC_URL requires http or https")
 	}
 	c.HTTP.Origin = c.PublicURL
 	c.HTTP.SecureCookies = u.Scheme == "https"

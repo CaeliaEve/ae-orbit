@@ -50,14 +50,16 @@ type Definition struct {
 }
 
 type Capabilities struct {
-	Inventory        bool     `json:"inventory"`
-	QuantityRefresh  bool     `json:"quantity_refresh,omitempty"`
-	Craft            bool     `json:"craft"`
-	CPUOutput        bool     `json:"cpu_output"`
-	CPUSelection     bool     `json:"cpu_selection"`
-	ExactQuantities  bool     `json:"exact_quantities"`
-	MaxCraftQuantity Quantity `json:"max_craft_quantity"`
-	Enumeration      string   `json:"enumeration"`
+	NativeScanDisabled bool     `json:"native_scan_disabled,omitempty"`
+	EventsDisabled     bool     `json:"events_disabled,omitempty"`
+	Inventory          bool     `json:"inventory"`
+	QuantityRefresh    bool     `json:"quantity_refresh,omitempty"`
+	Craft              bool     `json:"craft"`
+	CPUOutput          bool     `json:"cpu_output"`
+	CPUSelection       bool     `json:"cpu_selection"`
+	ExactQuantities    bool     `json:"exact_quantities"`
+	MaxCraftQuantity   Quantity `json:"max_craft_quantity"`
+	Enumeration        string   `json:"enumeration"`
 }
 
 type Hello struct {
@@ -184,6 +186,7 @@ type Item struct {
 	NBT                     string       `json:"-"`
 	Catalog                 *CatalogItem `json:"catalog,omitempty"`
 	Quantity                Quantity     `json:"quantity"`
+	QuantityKnown           *bool        `json:"quantity_known,omitempty"`
 	Craftable               bool         `json:"craftable"`
 	ObservedAt              time.Time    `json:"observed_at"`
 	CraftableObservedAt     *time.Time   `json:"craftable_observed_at,omitempty"`
@@ -217,12 +220,14 @@ type CatalogFrame struct {
 }
 
 type ItemPage struct {
+	Scope      string   `json:"scope,omitempty"`
 	Items      []Item   `json:"items"`
 	Revision   Quantity `json:"revision"`
 	NextCursor string   `json:"next_cursor,omitempty"`
 }
 
 type ItemQuery struct {
+	View        string
 	Search      string
 	Sort        string
 	Craftable   *bool

@@ -37,23 +37,33 @@ func (s *Store) ItemsByID(ctx context.Context, userID, networkID string, ids []p
 	if err = tx.QueryRow(ctx, "SELECT revision,current_session FROM networks WHERE id=$1", networkID).Scan(&result.Revision, &session); err != nil {
 		return result, notFound(err)
 	}
-	rows, err := tx.Query(ctx, `SELECT requested.id,CASE WHEN requested.id<>d.id THEN d.id ELSE 0 END,d.kind,d.name,d.damage,d.label,d.exact,d.nbt,i.quantity,i.craftable,
-        i.observed_at,i.craftable_observed_at,`+quantityCurrentSessionSQL+`,`+recipeCurrentSessionSQL+`
+	plain, err := plainProfile(ctx, tx, networkID)
+	if err != nil {
+		return result, err
+	}
+	rows, err := tx.Query(ctx, `SELECT requested.id,CASE WHEN requested.id<>d.id THEN d.id ELSE 0 END,d.kind,d.name,d.damage,coalesce(c.label,d.label),d.exact,d.nbt,coalesce(i.quantity,0),coalesce(i.craftable,false),
+        coalesce(i.observed_at,'epoch'::timestamptz),i.craftable_observed_at,`+quantityCurrentSessionSQL+`,`+recipeCurrentSessionSQL+`,i.item_id IS NOT NULL
         FROM item_definitions requested
         LEFT JOIN item_aliases a ON a.network_id=requested.network_id AND a.alias_id=requested.id
         JOIN item_definitions d ON d.network_id=requested.network_id AND d.id=coalesce(a.canonical_id,requested.id)
-        JOIN inventory i ON i.network_id=d.network_id AND i.item_id=d.id
-        WHERE requested.network_id=$1 AND requested.id=ANY($3::bigint[])`, networkID, session, unique)
+        LEFT JOIN plain_catalog_candidates c ON c.network_id=d.network_id AND c.item_id=d.id
+        LEFT JOIN inventory i ON i.network_id=d.network_id AND i.item_id=d.id AND `+catalogObservedSQL+`
+        WHERE requested.network_id=$1 AND requested.id=ANY($3::bigint[]) AND `+catalogScopeSQL+`
+        AND (i.item_id IS NOT NULL OR $4)`, networkID, session, unique, plain)
 	if err != nil {
 		return result, err
 	}
 	items := make(map[protocol.Quantity]protocol.Item, len(unique))
 	for rows.Next() {
 		var item protocol.Item
+		var known bool
 		if err = rows.Scan(&item.ID, &item.CanonicalID, &item.Kind, &item.Name, &item.Damage, &item.Label, &item.Exact, &item.NBT,
-			&item.Quantity, &item.Craftable, &item.ObservedAt, &item.CraftableObservedAt, &item.CurrentSession, &item.CraftableCurrentSession); err != nil {
+			&item.Quantity, &item.Craftable, &item.ObservedAt, &item.CraftableObservedAt, &item.CurrentSession, &item.CraftableCurrentSession, &known); err != nil {
 			rows.Close()
 			return result, err
+		}
+		if plain {
+			item.QuantityKnown = &known
 		}
 		items[item.ID] = item
 	}

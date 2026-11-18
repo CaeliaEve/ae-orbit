@@ -18,8 +18,7 @@ if source == "github" then
   assert(args[3] == nil, "Usage: ae-orbit-install github [branch/tag/commit]")
 else
   origin = source:gsub("/+$", "")
-  assert(origin:match("^https://[A-Za-z0-9%.%-%[%]:]+$") or
-    origin:match("^http://127%.0%.0%.1:%d+$"), "Use an HTTPS service origin")
+  assert(origin:match("^https?://[A-Za-z0-9%.%-%[%]:]+$"), "Use a valid service origin")
   assert(args[2] == nil, "Usage: ae-orbit-install https://your-ae-service")
 end
 

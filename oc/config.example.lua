@@ -2,6 +2,10 @@
 return {
   bridge_mode = "single",
   role = "primary",
+  -- Cooperative primary and quantity workers can avoid native full-list APIs while
+  -- retaining exact updates for known items. New item discovery is suspended;
+  -- recipes that the exact API cannot confirm remain inconclusive.
+  -- inventory_mode = "exact_only",
   url = "https://ae.example.com",
   token = "replace-with-the-device-token-issued-by-the-backend",
   me_address = "replace-with-the-ME-controller-or-full-interface-component-address",
@@ -13,10 +17,9 @@ return {
   cache_entries = 256,
   dirty_entries = 128,
   identity_bytes = 4096,
-  -- allItems() may allocate the complete native inventory before returning
-  -- its iterator. Defer discovery below this free-memory floor to avoid an
-  -- unrecoverable OpenComputers OOM; increase OC RAM for large AE networks.
-  scan_memory_floor = 2097152,
+  -- Reserve room for each native item conversion and Lua identity processing.
+  -- Pause the iterator below this floor, retaining its position until recovery.
+  scan_memory_floor = 524288,
   scan_slice_seconds = 0.05,
   -- Aggregate ordinary observations across slices; priority confirmations flush immediately.
   batch_interval_seconds = 0.25,
@@ -24,6 +27,11 @@ return {
   cpu_interval = 10,
   cpu_limit = 16,
   http_timeout = 10,
+
+  -- OC persists native subscriptions and sends complete change batches as
+  -- signals before Lua can apply queue limits. Polling is safer for busy AE.
+  -- Enabling events is optional; the default actively disables old subscriptions.
+  enable_events = false,
 
   -- Optional event source addresses. OC compound drivers can emit from an
   -- internal node, so do not assume it equals me_address. Every hint is reread

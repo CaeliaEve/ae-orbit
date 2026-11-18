@@ -6,6 +6,7 @@ import {
   WifiOff,
 } from "lucide";
 import { createAPI } from "./api.mjs";
+import { quantityKnown, stockText, stockFreshness, inventorySummary } from "./plain-inventory.mjs";
 import { loadOrderSnapshot } from "./orders.mjs";
 import { createJobController } from "./job-controller.mjs";
 import { isJobClaim } from "./jobs.mjs";
@@ -58,6 +59,7 @@ const texturePack = createTexturePackStore();
 const state = {
   member: null, network: null, networks: [], view: "dashboard", items: [], itemCache: new Map(),
   orders: [], devices: [], cpus: { cpus: [] }, icons: {}, filter: "", sort: "name", search: "",
+  stockView: "stock", inventoryScope: "", inventoryStats: null,
   cursor: "", nextCursor: "", cursors: [""], page: 0, inventoryLimit: 50, selected: null, amount: "1",
   cpuName: "", waitForCPU: false, inspector: "detail", draft: { version: 1, entries: [], receipts: {} },
   draftKey: "", draftBlocked: false, unchecked: new Set(), busy: false, preparing: false, inventoryLoading: false,
@@ -423,8 +425,8 @@ function inventoryHoverHTML(item) {
   if (!item) return "";
   const label = catalogDisplayName(item);
   const source = catalogSource(item);
-  const quantity = formatQuantity(item.quantity);
-  const status = item.craftable ? item.craftable_current_session === false ? "待重新核验" : "可合成" : "不可合成";
+  const quantity = stockText(item);
+  const status = !item.craftable_observed_at ? "合成能力未确认" : item.craftable ? item.craftable_current_session === false ? "待重新核验" : "可合成" : "不可合成";
   const sourceHTML = source ? `<span class="inventory-hover-source">${esc(source)}</span>` : "";
   const catalogHTML = catalogFacts(item).map(([factLabel, value]) => `<div class="inventory-hover-catalog"><dt>${esc(factLabel)}</dt><dd>${esc(value)}</dd></div>`).join("");
   const tooltips = catalogTooltips(item);
@@ -490,7 +492,7 @@ function renderDashboard() {
   }
   $("#dashboard-network-state").textContent = networkState;
   $("#dashboard-network-meta").textContent = networkMeta;
-  $("#dashboard-inventory-count").textContent = formatQuantity(state.items.length);
+  $("#dashboard-inventory-count").textContent = state.inventoryStats ? formatQuantity(state.inventoryStats.entries) : "—";
   $("#dashboard-job-count").textContent = formatQuantity(activeJobs || 0);
   $("#dashboard-cpu-state").textContent = cpus.length ? `${busy} / ${cpus.length}` : "暂无观测";
   $("#dashboard-cpu-meta").textContent = cpus.length ? "忙碌 / 已观测" : "等待 CPU 状态";
@@ -559,7 +561,9 @@ function refreshHeader() {
   $("#connection").textContent = connectionLabel;
   $("#connection").dataset.state = !state.member || !network ? "idle" : recovery.tone === "ok" ? "online" : recovery.tone === "warn" ? "offline" : "reconnecting";
   $("#network-quality").textContent = network ? networkQualityLabel(network.quality) : "";
-  $("#inventory-summary").textContent = network ? `${network.name} · ${network.online ? "在线" : "离线"}` : "尚未连接网络";
+  const summary = inventorySummary(state.inventoryStats, age);
+  $("#inventory-summary").textContent = network ? summary || `${network.name} · ${network.online ? "在线" : "离线"}` : "尚未连接网络";
+  $("#stock-view-label").hidden = state.inventoryScope !== "nesql_plain";
   $("#draft-count").textContent = state.draft.entries.length;
   renderDashboard();
   renderConnectionDiagnostics();
@@ -616,9 +620,9 @@ function closeInspector(restore = true) {
 function renderInventory() {
   const tbody = $("#inventory-rows");
   tbody.innerHTML = state.items.map(item => `<tr data-selected="${state.selected?.id === item.id}" data-id="${esc(item.id)}">
-    <td><button class="item-button ${itemHasTexture(item) ? "" : "missing-texture"}" data-item="${esc(item.id)}" aria-label="${esc(`${item.label || item.name}，库存 ${formatQuantity(item.quantity)}`)}">${itemImage(item)}<span class="item-copy"><span class="item-name">${esc(item.label || item.name)}</span><span class="item-meta">${esc(item.name.split(":")[0])}${item.craftable ? " · 可合成" : ""}${!item.exact ? " · 身份待确认" : ""}</span></span></button></td>
-    <td><span class="stock-value ${String(item.quantity).length > 12 ? "long-number" : ""} ${item.current_session ? "" : "stale"}" title="${esc(formatQuantity(item.quantity))}">${compactQuantityHTML(item.quantity)}</span><span class="freshness ${item.current_session ? "" : "stale"}">${item.current_session ? age(item.observed_at) : "库存待同步"}</span></td>
-    <td><button class="icon-button" data-quick-add="${esc(item.id)}" title="加入清单" aria-label="将${esc(item.label || item.name)}加入清单" ${item.craftable && item.exact && !state.draftBlocked && !state.busy && !state.preparing ? "" : "disabled"}>${icon("plus")}</button></td>
+    <td><button class="item-button ${itemHasTexture(item) ? "" : "missing-texture"}" data-item="${esc(item.id)}" aria-label="${esc(`${catalogDisplayName(item)}，库存 ${stockText(item)}`)}">${itemImage(item)}<span class="item-copy"><span class="item-name">${esc(catalogDisplayName(item))}</span><span class="item-meta">${esc(item.name.split(":")[0])}${item.craftable ? " · 可合成" : ""}${!item.exact ? " · 身份待确认" : ""}</span></span></button></td>
+    <td><span class="stock-value ${String(item.quantity).length > 12 ? "long-number" : ""} ${item.current_session ? "" : "stale"}" title="${esc(stockText(item))}">${(quantityKnown(item) ? compactQuantityHTML(item.quantity) : "未查询")}</span><span class="freshness ${item.current_session ? "" : "stale"}">${stockFreshness(item, age)}</span></td>
+    <td><button class="icon-button" data-quick-add="${esc(item.id)}" title="加入清单" aria-label="将${esc(catalogDisplayName(item))}加入清单" ${item.craftable && item.exact && !state.draftBlocked && !state.busy && !state.preparing ? "" : "disabled"}>${icon("plus")}</button></td>
   </tr>`).join("");
   $("#inventory-empty").hidden = state.items.length > 0;
   $("#inventory-empty").textContent = state.inventoryLoading ? "正在读取库存…" : !state.member ? "登录后查看库存" : !state.network ? "没有可访问的网络" : "没有匹配的物品";
@@ -643,7 +647,7 @@ function patchInventoryRows() {
     if (!button) return;
     row.dataset.selected = String(state.selected?.id === item.id);
     button.classList.toggle("missing-texture", !itemHasTexture(item));
-    button.setAttribute("aria-label", `${item.label || item.name}，库存 ${formatQuantity(item.quantity)}`);
+    button.setAttribute("aria-label", `${catalogDisplayName(item)}，库存 ${stockText(item)}`);
     const image = $(".item-image, .missing-image", button);
     const nextURL = textureAssetURL(item);
     const nextTexture = itemTextureSource(item);
@@ -661,20 +665,20 @@ function patchInventoryRows() {
       }
     }
     const name = $(".item-name", button);
-    if (name) name.textContent = item.label || item.name;
+    if (name) name.textContent = catalogDisplayName(item);
     const meta = $(".item-meta", button);
     if (meta) meta.textContent = `${item.name.split(":")[0]}${item.craftable ? " · 可合成" : ""}${!item.exact ? " · 身份待确认" : ""}`;
     const stock = $(".stock-value", row);
     if (stock) {
       stock.classList.toggle("long-number", String(item.quantity).length > 12);
       stock.classList.toggle("stale", !item.current_session);
-      stock.title = formatQuantity(item.quantity);
-      stock.innerHTML = compactQuantityHTML(item.quantity);
+      stock.title = stockText(item);
+      stock.innerHTML = (quantityKnown(item) ? compactQuantityHTML(item.quantity) : "未查询");
     }
     const freshness = $(".freshness", row);
     if (freshness) {
       freshness.classList.toggle("stale", !item.current_session);
-      freshness.textContent = item.current_session ? age(item.observed_at) : "库存待同步";
+      freshness.textContent = stockFreshness(item, age);
     }
     const quickAdd = $("[data-quick-add]", row);
     if (quickAdd) {
@@ -693,10 +697,10 @@ function patchSelectedDetail(item) {
   const stock = $(".detail-stock", $("#detail-panel"));
   if (stock) {
     stock.classList.toggle("long-number", String(item.quantity ?? "0").length > 12);
-    stock.innerHTML = quantityHTML(item.quantity ?? "0");
+    stock.innerHTML = (quantityKnown(item) ? quantityHTML(item.quantity ?? "0") : "未查询");
   }
   const facts = $$(".detail-facts .fact", $("#detail-panel"));
-  if (facts[0]?.lastElementChild) facts[0].lastElementChild.textContent = item.current_session ? age(item.observed_at) : "待同步";
+  if (facts[0]?.lastElementChild) facts[0].lastElementChild.textContent = stockFreshness(item, age);
 }
 
 function detailNeedsRender(before, after) {
@@ -707,6 +711,8 @@ function detailNeedsRender(before, after) {
     || before.damage !== after.damage
     || before.craftable !== after.craftable
     || before.craftable_current_session !== after.craftable_current_session
+    || before.quantity_known !== after.quantity_known
+    || before.craftable_observed_at !== after.craftable_observed_at
     || before.exact !== after.exact
     || textureAssetURL(before) !== textureAssetURL(after);
 }
@@ -718,10 +724,10 @@ function renderDetail() {
     return;
   }
   const canAdd = item.craftable && item.exact && !state.draftBlocked && !state.busy && !state.preparing;
-  const reason = !item.exact ? "物品身份待确认" : !item.craftable ? "没有可用合成样板" : "";
-  $("#detail-panel").innerHTML = `<div class="detail-heading">${itemImage(item)}<div><h2>${esc(item.label || item.name)}</h2><span class="muted">${esc(item.name.split(":")[0])}</span></div></div>
-    <span class="muted">库存数量</span><div class="detail-stock number ${String(item.quantity ?? "0").length > 12 ? "long-number" : ""}">${quantityHTML(item.quantity ?? "0")}</div><span class="item-meta">${esc(item.name)} · ${esc(item.damage)}</span>
-    <div class="detail-facts"><div class="fact"><span>库存观测</span><span>${item.current_session ? age(item.observed_at) : "待同步"}</span></div><div class="fact"><span>合成样板</span><span>${item.craftable ? item.craftable_current_session ? "已确认" : "待重新核验" : "不可合成"}</span></div><div class="fact"><span>身份</span><span>${item.exact ? "精确" : "待确认"}</span></div></div>
+  const reason = !item.exact ? "物品身份待确认" : !item.craftable ? "合成样板尚未确认" : "";
+  $("#detail-panel").innerHTML = `<div class="detail-heading">${itemImage(item)}<div><h2>${esc(catalogDisplayName(item))}</h2><span class="muted">${esc(item.name.split(":")[0])}</span></div></div>
+    <span class="muted">库存数量</span><div class="detail-stock number ${String(item.quantity ?? "0").length > 12 ? "long-number" : ""}">${(quantityKnown(item) ? quantityHTML(item.quantity ?? "0") : "未查询")}</div><span class="item-meta">${esc(item.name)} · ${esc(item.damage)}</span>
+    <div class="detail-facts"><div class="fact"><span>库存观测</span><span>${stockFreshness(item, age)}</span></div><div class="fact"><span>合成样板</span><span>${!item.craftable_observed_at ? "未确认" : item.craftable ? item.craftable_current_session ? "已确认" : "待重新核验" : "不可合成"}</span></div><div class="fact"><span>身份</span><span>${item.exact ? "精确" : "待确认"}</span></div></div>
     <label class="field-label" for="craft-quantity">合成数量</label><div class="stepper"><button data-step="-1" title="减少数量" aria-label="减少数量">${icon("minus")}</button><input id="craft-quantity" type="text" inputmode="numeric" maxlength="19" value="${esc(state.amount)}" autocomplete="off"><button data-step="1" title="增加数量" aria-label="增加数量">${icon("plus")}</button></div>
     <span class="field-label">合成 CPU</span><button class="cpu-select" id="detail-cpu" ${state.busy || state.preparing || !state.network ? "disabled" : ""} title="${cpuSelectionTitle()}"><span>${esc(state.cpuName || "自动分配")}${state.waitForCPU ? " · 等待" : ""}${!cpuSelectionSupported() ? " · 当前 OC 未启用" : ""}</span>${icon("cpu")}</button>
     <div class="detail-actions"><button class="primary wide" id="add-to-draft" ${canAdd ? "" : "disabled"}>${icon("list-plus")}加入清单</button><button class="secondary wide" id="submit-immediately" ${canAdd && jobs.state.support === "supported" && !state.busy ? "" : "disabled"}>${icon("send")}立即提交</button></div>
@@ -1435,11 +1441,11 @@ function refreshInventoryCapacity() {
 }
 
 function inventoryQuerySpec(limit) {
-  return { search: state.search, sort: state.sort, filter: state.filter, limit };
+  return { search: state.search, sort: state.sort, filter: state.filter, limit, view: state.stockView, scope: state.inventoryScope };
 }
 
 function inventoryPageKey(cursor, spec) {
-  return JSON.stringify([spec.search, spec.sort, spec.filter, spec.limit, cursor]);
+  return JSON.stringify([spec.search, spec.sort, spec.filter, spec.limit, spec.view, spec.scope, cursor]);
 }
 
 function requestInventoryPage(cursor, limit, signal, spec = inventoryQuerySpec(limit)) {
@@ -1450,10 +1456,11 @@ function requestInventoryPage(cursor, limit, signal, spec = inventoryQuerySpec(l
   if (pending) return pending;
   const query = new URLSearchParams({ q: spec.search, sort: spec.sort, limit: String(spec.limit), consistency: spec.sort === "name" ? "live" : "strict" });
   if (spec.filter) query.set("craftable", spec.filter);
+  if (spec.scope === "nesql_plain") query.set("view", spec.view);
   if (cursor) query.set("cursor", cursor);
   const request = api.request(networkPath(`/items?${query}`), signal ? { signal } : undefined)
     .then(value => {
-      const page = { items: value.items || [], nextCursor: value.next_cursor || "" };
+      const page = { items: value.items || [], nextCursor: value.next_cursor || "", scope: value.scope || "" };
       inventoryPageCache.set(key, page);
       return page;
     })
@@ -1511,6 +1518,8 @@ async function loadInventory(reset = false) {
     const value = await requestInventoryPage(cursor, limit, queryController.signal, spec);
     if (generation !== state.generation) return;
     state.items = value.items;
+    state.inventoryScope = value.scope;
+    refreshHeader();
     state.nextCursor = value.nextCursor;
     state.items.forEach(item => state.itemCache.set(String(item.id), item));
     message("#inventory-message", "");
@@ -1607,6 +1616,9 @@ async function patchVisibleInventory() {
     const previousSelected = state.selected;
     const live = new Map(value.items.map(i => [String(i.id), i]));
     state.items = state.items.map(item => live.get(String(item.id)) || item);
+    if (state.inventoryScope === "nesql_plain" && state.stockView === "stock") {
+      state.items = state.items.filter(item => quantityKnown(item) && BigInt(item.quantity) > 0n);
+    }
     if (state.selected && live.has(String(state.selected.id))) state.selected = live.get(String(state.selected.id));
     // Quantity changes do not reorder the list while the user is choosing items.
     const focused = document.activeElement;
@@ -1619,6 +1631,34 @@ async function patchVisibleInventory() {
       else patchSelectedDetail(state.selected);
     }
   } catch {}
+}
+
+let inventoryStatsRequest = null;
+let inventoryStatsAt = 0, inventoryStatsContext = -1;
+async function refreshInventoryStats() {
+  if (!state.network) return;
+  const context = state.context;
+  if (inventoryStatsRequest?.context === context) return inventoryStatsRequest.promise;
+  if (inventoryStatsContext === context && Date.now() - inventoryStatsAt < 5000) return;
+  const promise = api.request(networkPath("/inventory-stats")).then(value => {
+    if (context !== state.context) return;
+    state.inventoryStats = value;
+    inventoryStatsAt = Date.now(); inventoryStatsContext = context;
+    state.inventoryScope = value.scope || "";
+    refreshHeader();
+  }).catch(() => {}).finally(() => { if (inventoryStatsRequest?.promise === promise) inventoryStatsRequest = null; });
+  inventoryStatsRequest = { context, promise };
+  return promise;
+}
+
+let catalogListRefreshAt = 0;
+function refreshInventoryObservation() {
+  void refreshInventoryStats();
+  if (state.inventoryScope === "nesql_plain" && Date.now() - catalogListRefreshAt >= 5000
+      && !$(".catalog").contains(document.activeElement) && !state.inventoryLoading) {
+    catalogListRefreshAt = Date.now();
+    void loadInventory(true);
+  } else void patchVisibleInventory();
 }
 
 function connectStream() {
@@ -1662,7 +1702,7 @@ function connectStream() {
       if (kinds.includes("jobs") || reset) refreshJobs();
       if (kinds.includes("orders") || reset) refreshOrders(false);
       if (kinds.includes("cpus") || reset) refreshCPUs();
-      if (reset || kinds.some(kind => kind.includes("inventory") || kind.includes("item") || kind.includes("recipe"))) patchVisibleInventory();
+      if (reset || kinds.some(kind => kind.includes("inventory") || kind.includes("item") || kind.includes("recipe"))) refreshInventoryObservation();
       if (reset) refreshNetwork();
     }, 400);
   };
@@ -1671,7 +1711,7 @@ function connectStream() {
   streamTimer = setInterval(() => {
     if (document.visibilityState !== "visible" || !state.network) return;
     refreshNetwork();
-    patchVisibleInventory(); refreshOrders(false); refreshCPUs(); refreshJobs();
+    refreshInventoryObservation(); refreshOrders(false); refreshCPUs(); refreshJobs();
   }, 15000);
 }
 
@@ -1693,6 +1733,10 @@ async function switchNetwork(id) {
   cpuCallback = null;
   for (const dialog of ["cpu-dialog", "order-dialog", "job-dialog"]) if ($(`#${dialog}`).open) $(`#${dialog}`).close();
   state.network = network || null;
+  state.inventoryStats = null;
+  state.inventoryScope = "";
+  state.stockView = "stock";
+  $("#stock-view").value = "stock";
   state.itemCache.clear();
   state.selected = null;
   state.items = [];
@@ -1724,7 +1768,7 @@ async function switchNetwork(id) {
   try { localStorage.setItem("ae-orbit:last-network", network.id); } catch {}
   connectStream();
   const context = state.context;
-  await Promise.all([loadInventory(true), refreshOrders(false), refreshCPUs(), refreshNetwork(), refreshJobs()]);
+  await Promise.all([loadInventory(true), refreshInventoryStats(), refreshOrders(false), refreshCPUs(), refreshNetwork(), refreshJobs()]);
   if (context !== state.context) return;
   try {
     for (const intent of jobs.local().intents.filter(intent=>intent.state === "accepted")) {
@@ -1804,7 +1848,8 @@ $("#search").addEventListener("input", event => {
   searchTimer = setTimeout(() => { state.search = event.target.value.trim(); loadInventory(true); }, 220);
 });
 $("#sort").addEventListener("change", event => { state.sort = event.target.value; loadInventory(true); });
-$("#refresh-inventory").addEventListener("click", () => loadInventory(true));
+$("#stock-view").addEventListener("change", event => { state.stockView = event.target.value; loadInventory(true); });
+$("#refresh-inventory").addEventListener("click", () => { void loadInventory(true); void refreshInventoryStats(); });
 $("#prev-page").addEventListener("click", () => changeInventoryPage(-1));
 $("#next-page").addEventListener("click", () => changeInventoryPage(1));
 $(".catalog").addEventListener("wheel", event => {

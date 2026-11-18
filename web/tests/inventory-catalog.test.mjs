@@ -50,6 +50,15 @@ test("localized name is a fallback only when the game label is absent", () => {
   assert.equal(catalogDisplayName({ name: "minecraft:stone", catalog: { localized_name: "石头" } }), "石头");
 });
 
+test("Chinese catalog names replace English dedicated-server labels", () => {
+  const live = { name: "minecraft:stone", label: "Stone", catalog: { localized_name: "石头" } };
+  assert.equal(catalogDisplayName(live), "石头");
+  assert.equal(live.label, "Stone", "display localization mutated the live observation");
+  assert.deepEqual(catalogFacts(live), [], "primary Chinese name was repeated as a secondary fact");
+  assert.equal(catalogDisplayName({ ...live, label: "自定义石头" }), "自定义石头");
+  assert.equal(catalogDisplayName({ ...live, catalog: { localized_name: "Rock" } }), "Stone");
+});
+
 test("catalog animation validates the source sheet and timeline", () => {
   const animation = catalogAnimation({
     catalog: {

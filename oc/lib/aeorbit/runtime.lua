@@ -37,12 +37,24 @@ function M.run(context,config_path,report,mode)
     assert(bridge_mode=="single" or bridge_mode=="cooperative")
     assert(role=="primary" or role=="quantity_worker")
     assert(role~="quantity_worker" or bridge_mode=="cooperative")
+    assert(config.inventory_mode==nil or config.inventory_mode=="iterator" or config.inventory_mode=="exact_only")
+    assert(config.inventory_mode~="exact_only" or bridge_mode=="cooperative")
     assert(type(config.me_address)=="string")
+    assert(config.enable_events==nil or type(config.enable_events)=="boolean")
     local primary=role=="primary"
+    local events_enabled=config.enable_events==true and config.inventory_mode~="exact_only"
     local runner=require(bridge_mode=="cooperative" and "aeorbit.cooperative" or "aeorbit.runner")
     phase="component_failed"
     context.check()
     me=assert(component.proxy(config.me_address))
+    -- OC persists the native subscription in the world. Skipping event.listen
+    -- cannot stop an old subscription from allocating a whole change signal.
+    -- Disable it before HTTP/journal setup, and fail closed if that fails.
+    if (primary or config.inventory_mode=="exact_only") and not events_enabled and adapter.has_method(me,"setItemEventSubscription") then
+      local disabled,result=pcall(me.setItemEventSubscription,false)
+      if not disabled then cancel.rethrow(result) end
+      if not disabled or result==false then error({fatal=true,code="event_failed"},0) end
+    end
     local internet=config.internet_address and component.proxy(config.internet_address) or component.getPrimary("internet")
     assert(internet)
     phase="journal_failed"
@@ -74,6 +86,7 @@ function M.run(context,config_path,report,mode)
     phase="config_error"
     local clock={now=computer.uptime,sleep=context.sleep,check=context.check}
     local adapter_config={identity_bytes=config.identity_bytes or 4096,cpu_limit=config.cpu_limit or 16,role=role,
+      inventory_mode=config.inventory_mode,
       wait=function(seconds) context.check();context.sleep(seconds);context.check() end,
       now=computer.uptime,cpu_wait_interval=config.cpu_wait_interval or 0.1,
       cpu_wait_timeout=config.cpu_wait_timeout}
@@ -116,7 +129,7 @@ function M.run(context,config_path,report,mode)
       startup_backoff=math.min(startup_backoff*2,30)
     end
     context.check()
-    if primary then
+    if primary and events_enabled then
       -- Mark ownership before calls: interruption may occur after native side effects.
       listener_owned=true
       local listened=event.listen("network_item_changed",changed)
@@ -130,6 +143,8 @@ function M.run(context,config_path,report,mode)
           bridge:diagnose("subscription_unavailable")
         elseif value==false then bridge:diagnose("subscription_unavailable") end
       else bridge:diagnose("subscription_unavailable") end
+    elseif primary or config.inventory_mode=="exact_only" then
+      bridge:diagnose("events_disabled")
     end
     status("running")
     if foreground then print("AE Orbit connected.") end
@@ -157,6 +172,7 @@ function M.run(context,config_path,report,mode)
         more=bridge:continue_inventory()
         if more then context.sleep(0) end
       end
+      if collectgarbage then collectgarbage("step",32) end
       if foreground and computer.uptime()>=next_status then
         print(string.format("rows=%d cache=%d dirty=%d free=%d",bridge.uploaded,bridge.ids.count,bridge.dirty.count,computer.freeMemory()))
         next_status=computer.uptime()+60

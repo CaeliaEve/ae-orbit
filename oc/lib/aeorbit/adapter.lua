@@ -14,8 +14,11 @@ function M.has_method(proxy,name)
 end
 function M.new(me,config)
   config=config or {}
+  assert(config.inventory_mode==nil or config.inventory_mode=="iterator" or config.inventory_mode=="exact_only",
+    "adapter: invalid inventory mode")
+  local exact_only=config.inventory_mode=="exact_only"
   local worker=config.role=="quantity_worker"
-  if not worker then
+  if not worker and not exact_only then
     assert(M.has_method(me,"allItems"),"adapter: missing allItems; select an AE controller or full ME interface")
   end
   assert(M.has_method(me,"getItemInNetwork"),"adapter: missing getItemInNetwork; requires OC 1.12.47-GTNH+ (table/NBT API)")
@@ -46,7 +49,8 @@ function M.new(me,config)
     end
     return {inventory=true,craft=M.has_method(me,"getCraftable"),cpu_output=M.has_method(me,"getCpus"),
       cpu_selection=M.has_method(me,"getCraftable") and M.has_method(me,"getCpus"),
-      exact_quantities=true,quantity_refresh=true,max_craft_quantity=quantity.maximum(),enumeration="volatile_iterator"}
+      exact_quantities=true,quantity_refresh=true,max_craft_quantity=quantity.maximum(),
+      enumeration=exact_only and "exact_only" or "volatile_iterator"}
   end
   function adapter:key(raw)
     assert(type(raw)=="table" and type(raw.name)=="string" and #raw.name>0 and #raw.name<=256,"adapter: invalid registry name")
@@ -87,7 +91,8 @@ function M.new(me,config)
   end
   function adapter:read(raw)
     local detail=self:descriptor(raw)
-    local value=me.getItemInNetwork(detail)
+    local value,reason=me.getItemInNetwork(detail)
+    assert(reason==nil,"adapter: exact lookup failed")
     if value~=nil then
       assert(self:key(value)==self:key(detail),"adapter: exact lookup returned another item")
       detail.size=value.size;detail.label=value.label or detail.label
@@ -98,6 +103,7 @@ function M.new(me,config)
     return detail
   end
   function adapter:iterator()
+    assert(not exact_only,"adapter: native enumeration is disabled in exact-only mode")
     local iterator=me.allItems()
     assert(iterator~=nil,"adapter: inventory iterator unavailable")
     return function() return iterator() end
@@ -111,6 +117,9 @@ function M.new(me,config)
     if not available then cancel.rethrow(craftable) end
     if not available then return nil,"recipe lookup failed" end
     if craftable==nil then
+      -- An empty exact lookup does not establish that a recipe is absent.
+      -- Both filtered fallbacks can rebuild the full native storage list.
+      if exact_only then return nil,"recipe could not be confirmed in exact-only mode" end
       if not M.has_method(me,"getCraftables") then return nil,"recipe lookup unavailable" end
       -- Filter inside OC before results enter Lua; never request the full
       -- recipe array. The native method may still walk the AE storage list.

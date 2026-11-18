@@ -18,6 +18,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -200,6 +201,37 @@ func OpenNESQLPP(root string) (*Catalog, error) {
 		return nil, ErrIncompleteSource
 	}
 	return catalog, nil
+}
+
+// PlainCandidates returns exact untagged identities from the immutable NESQL
+// source. It supplies query candidates, never inventory observations.
+func (c *Catalog) PlainCandidates() []protocol.Definition {
+	if c == nil || !c.source {
+		return nil
+	}
+	items := make([]protocol.Definition, 0, len(c.sourceItems))
+	seen := map[string]bool{}
+	for _, item := range c.sourceItems {
+		if item.NBT != "" {
+			continue
+		}
+		d := protocol.Definition{Kind: "item", Name: item.Name, Damage: item.Damage, Label: item.LocalizedName, Exact: true}
+		if d.Label == "" {
+			d.Label = d.Name
+		}
+		if d.Validate() != nil || seen[d.Key()] {
+			continue
+		}
+		seen[d.Key()] = true
+		items = append(items, d)
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].Name == items[j].Name {
+			return items[i].Damage < items[j].Damage
+		}
+		return items[i].Name < items[j].Name
+	})
+	return items
 }
 
 func openElysiumSource(root string, manifestBytes []byte) (*Catalog, error) {
