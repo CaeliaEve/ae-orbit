@@ -3013,17 +3013,35 @@ html[data-inventory-layout="wide"] .inventory-table tbody {
 
 .trend-chart {
   min-height: 290px;
-  padding: 12px 26px 22px;
+  padding: 24px 26px 20px;
 }
 
 .trend-plot {
   display: grid;
-  gap: 8px;
+  grid-template-columns: 64px minmax(0, 1fr);
+  gap: 14px 12px;
+}
+
+.trend-y-axis {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  height: 220px;
+  color: #b4b5b9;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.trend-y-axis span {
+  line-height: 0;
+  text-align: right;
+  white-space: nowrap;
 }
 
 .trend-plot svg {
+  display: block;
   width: 100%;
-  height: 246px;
+  height: 220px;
   overflow: visible;
 }
 
@@ -3031,6 +3049,7 @@ html[data-inventory-layout="wide"] .inventory-table tbody {
   fill: none;
   stroke: #292a2d;
   stroke-width: 1;
+  vector-effect: non-scaling-stroke;
 }
 
 .trend-area {
@@ -3040,17 +3059,40 @@ html[data-inventory-layout="wide"] .inventory-table tbody {
 .trend-line {
   fill: none;
   stroke: #f4f4f5;
-  stroke-width: 3;
+  stroke-width: 2;
   stroke-linecap: round;
   stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
 }
 
-.trend-axis {
+.trend-point {
+  fill: #f4f4f5;
+}
+
+.trend-time-axis {
+  grid-column: 2;
   display: flex;
   justify-content: space-between;
-  padding: 0 10px;
+  gap: 4px;
+  color: #b4b5b9;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.trend-note {
+  margin: 14px 0 0 76px;
   color: #85868a;
-  font-size: 13px;
+  font-size: 11px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 600px) {
+  .trend-chart { padding: 22px 14px 18px; }
+  .trend-plot { grid-template-columns: 52px minmax(0, 1fr); column-gap: 8px; }
+  .trend-y-axis, .trend-time-axis { font-size: 10px; }
+  .trend-note { margin-left: 60px; }
 }
 
 .trend-empty {

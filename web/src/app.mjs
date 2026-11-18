@@ -7,6 +7,7 @@ import {
 } from "lucide";
 import { createAPI } from "./api.mjs";
 import { quantityKnown, stockText, stockFreshness, inventorySummary } from "./plain-inventory.mjs";
+import { inventoryTrendHTML, loadTrendHistory, recordTrendSample, saveTrendHistory, trendStorageKey } from "./inventory-trend.mjs";
 import { loadOrderSnapshot } from "./orders.mjs";
 import { createJobController } from "./job-controller.mjs";
 import { isJobClaim } from "./jobs.mjs";
@@ -60,6 +61,7 @@ const state = {
   member: null, network: null, networks: [], view: "dashboard", items: [], itemCache: new Map(),
   orders: [], devices: [], cpus: { cpus: [] }, icons: {}, filter: "", sort: "name", search: "",
   stockView: "stock", inventoryScope: "", inventoryStats: null,
+  inventoryTrend: [], inventoryTrendKey: "",
   cursor: "", nextCursor: "", cursors: [""], page: 0, inventoryLimit: 50, selected: null, amount: "1",
   cpuName: "", waitForCPU: false, inspector: "detail", draft: { version: 1, entries: [], receipts: {} },
   draftKey: "", draftBlocked: false, unchecked: new Set(), busy: false, preparing: false, inventoryLoading: false,
@@ -508,24 +510,9 @@ function renderDashboard() {
   ].map(([label, value, tone]) => `<div class="health-row"><span><i class="status-dot" data-tone="${tone}"></i>${label}</span><strong>${esc(value)}</strong></div>`).join("");
   const trend = $("#dashboard-trend");
   if (trend) {
-    const samples = state.items.slice(0, 32).map(item => {
-      try { return Math.log10(Math.max(1, Number(BigInt(item.quantity || "0")))); }
-      catch { return 0; }
-    }).filter(value => Number.isFinite(value));
-    if (samples.length > 1) {
-      const min = Math.min(...samples), max = Math.max(...samples);
-      const span = Math.max(max - min, 1);
-      const points = samples.map((value, index) => {
-        const x = 36 + (index / Math.max(samples.length - 1, 1)) * 648;
-        const y = 218 - ((value - min) / span) * 158;
-        return [x, y];
-      });
-      const line = points.map(([x, y], index) => `${index ? "L" : "M"}${x.toFixed(1)} ${y.toFixed(1)}`).join(" ");
-      const area = `${line} L 684 236 L 36 236 Z`;
-      trend.innerHTML = `<div class="trend-plot"><svg viewBox="0 0 720 264" role="img" aria-label="库存样本趋势"><g class="trend-grid"><path d="M36 38H684M36 104H684M36 170H684M36 236H684"></path></g><path class="trend-area" d="${area}"></path><path class="trend-line" d="${line}"></path></svg><div class="trend-axis"><span>样本 1</span><span>样本 ${samples.length}</span></div></div>`;
-    } else {
-      trend.innerHTML = `<div class="trend-empty"><i data-lucide="activity"></i><span>登录后显示库存样本</span></div>`;
-    }
+    trend.innerHTML = inventoryTrendHTML(state.inventoryTrend, {
+      empty: !state.member ? "登录后显示库存时间趋势" : !network ? "选择网络后开始采样" : "等待库存总量采样",
+    });
   }
   const activity = [
     network?.last_seen ? ["网络状态", network.online ? "主基地网络在线" : "主基地网络离线", age(network.last_seen)] : ["网络状态", "尚未连接网络", "等待操作"],
@@ -1643,6 +1630,14 @@ async function refreshInventoryStats() {
   const promise = api.request(networkPath("/inventory-stats")).then(value => {
     if (context !== state.context) return;
     state.inventoryStats = value;
+    const now = Date.now();
+    const key = trendStorageKey(state.member.id, state.network.id, value.scope || "observed");
+    if (key !== state.inventoryTrendKey) {
+      state.inventoryTrendKey = key;
+      state.inventoryTrend = loadTrendHistory(localStorage, key, now);
+    }
+    state.inventoryTrend = recordTrendSample(state.inventoryTrend, value.total_quantity, now);
+    saveTrendHistory(localStorage, key, state.inventoryTrend);
     inventoryStatsAt = Date.now(); inventoryStatsContext = context;
     state.inventoryScope = value.scope || "";
     refreshHeader();
@@ -1734,6 +1729,8 @@ async function switchNetwork(id) {
   for (const dialog of ["cpu-dialog", "order-dialog", "job-dialog"]) if ($(`#${dialog}`).open) $(`#${dialog}`).close();
   state.network = network || null;
   state.inventoryStats = null;
+  state.inventoryTrend = [];
+  state.inventoryTrendKey = "";
   state.inventoryScope = "";
   state.stockView = "stock";
   $("#stock-view").value = "stock";
@@ -1841,7 +1838,7 @@ $("#logout").addEventListener("click", async () => {
 $("#network").addEventListener("change", event => switchNetwork(event.target.value));
 $("#refresh-dashboard").addEventListener("click", () => {
   renderDashboard();
-  if (state.network) { refreshNetwork(); patchVisibleInventory(); refreshCPUs(); refreshJobs(); }
+  if (state.network) { refreshNetwork(); refreshInventoryObservation(); refreshCPUs(); refreshJobs(); }
 });
 $("#search").addEventListener("input", event => {
   clearTimeout(searchTimer);
