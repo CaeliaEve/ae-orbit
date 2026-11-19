@@ -26,18 +26,25 @@
       <button data-view="network" aria-label="网络管理" title="网络管理"><i data-lucide="radio-tower"></i><span>网络管理</span></button>
       <div class="sidebar-secondary"><button data-view="github" aria-label="GitHub" title="GitHub"><i data-lucide="github"></i><span>GitHub</span></button></div>
       <button data-view="settings" aria-label="设置" title="设置"><i data-lucide="settings"></i><span>设置</span></button>
+      <div id="sidebar-tools" class="sidebar-tools" aria-label="网络与页面操作"></div>
       <div class="sidebar-foot"><span id="member-name">未登录</span><span id="network-quality"></span></div>
     </nav>
     <div class="content">
-      <header class="topbar">
+      <header id="global-controls" class="topbar">
         <div class="topbar-spacer"><a class="mobile-brand" href="/" aria-label="AE Orbit"><img src="/assets/brand/ae-orbit-mark.svg" alt=""></a></div>
-        <label class="network-picker"><i data-lucide="network"></i><select id="network" aria-label="选择网络"><option value="">未连接</option></select></label>
-        <span id="connection" class="connection" role="status" aria-live="polite" aria-atomic="true">未登录</span>
-        <button class="icon-button" id="notifications" title="通知" aria-label="查看通知"><i data-lucide="bell"></i></button><button class="icon-button" id="logout" title="退出登录" aria-label="退出登录" hidden><i data-lucide="log-out"></i></button>
+        <label class="network-picker" title="选择网络"><i data-lucide="network"></i><select id="network" aria-label="选择网络"><option value="">未连接</option></select></label>
+        <div class="page-refresh">
+          <button class="icon-button" data-refresh-view="dashboard" id="refresh-dashboard" title="刷新工作台" aria-label="刷新工作台"><i data-lucide="refresh-cw"></i></button>
+          <button class="icon-button" data-refresh-view="inventory" id="refresh-inventory" title="刷新库存列表" aria-label="刷新库存列表" hidden><i data-lucide="refresh-cw"></i></button>
+          <button class="icon-button" data-refresh-view="orders" id="refresh-orders" title="刷新任务" aria-label="刷新任务" hidden><i data-lucide="refresh-cw"></i></button>
+          <button class="icon-button" data-refresh-view="cpus" id="refresh-cpus" title="刷新 CPU 状态" aria-label="刷新 CPU 状态" hidden><i data-lucide="refresh-cw"></i></button>
+          <button class="icon-button" data-refresh-view="network" id="refresh-network" title="刷新网络状态" aria-label="刷新网络状态" hidden><i data-lucide="refresh-cw"></i></button>
+        </div>
+        <button class="icon-button" id="notifications" title="网络与同步状态" aria-label="查看网络与同步状态"><i data-lucide="activity"></i></button><button class="icon-button" id="logout" title="退出登录" aria-label="退出登录" hidden><i data-lucide="log-out"></i></button>
       </header>
     <main id="main">
       <section id="view-dashboard" class="view">
-        <div class="page-heading"><div><h1>工作台</h1><span class="muted">集中查看网络、库存与生产任务状态</span></div><div class="heading-actions"><span class="sync-label" id="dashboard-sync">等待同步</span><button class="icon-button" id="refresh-dashboard" title="刷新工作台" aria-label="刷新工作台"><i data-lucide="refresh-cw"></i></button></div></div>
+        <h1 class="sr-only">工作台</h1>
         <div class="dashboard-grid">
           <article class="metric-card" id="dashboard-network-card"><span class="metric-label">网络状态</span><strong id="dashboard-network-state">未连接</strong><span class="metric-meta" id="dashboard-network-meta">等待登录</span></article>
           <article class="metric-card"><span class="metric-label">有库存物品</span><strong id="dashboard-inventory-count">0</strong><span class="metric-meta">已确认有库存的种类</span></article>
@@ -50,7 +57,7 @@
         </div>
       </section>
       <section id="view-inventory" class="view" hidden>
-        <div class="page-heading"><div><h1>库存</h1><span id="inventory-summary" class="muted">尚未连接网络</span></div><button class="icon-button" id="refresh-inventory" title="刷新库存列表" aria-label="刷新库存列表"><i data-lucide="refresh-cw"></i></button></div>
+        <h1 class="sr-only">库存</h1>
         <div class="inventory-toolbar">
           <div class="search-row"><label class="search"><i data-lucide="search"></i><input id="search" type="search" maxlength="128" placeholder="中文 / 拼音 / 首字母 / @modid" title="例如：钢锭、gangding、gd、@gregtech gangding；空格分隔条件，@ 后填写完整 Mod ID" aria-label="搜索物品" autocomplete="off"></label><button id="open-draft" class="secondary"><i data-lucide="list-plus"></i><span>清单</span><span id="draft-count">0</span></button></div>
           <div class="filters"><div class="segments" role="group" aria-label="合成能力筛选"><button data-filter="" aria-pressed="true">不限合成能力</button><button data-filter="true" aria-pressed="false">可合成</button><button data-filter="false" aria-pressed="false">未确认可合成</button></div><label id="stock-view-label" class="sort" hidden><span>显示</span><select id="stock-view" aria-label="库存范围"><option value="stock">已确认有库存</option><option value="all">全部 NESQL 无 NBT 候选</option></select></label><label class="sort"><span>排序</span><select id="sort" aria-label="库存排序"><option value="name">物品名称</option><option value="quantity">库存数量</option></select></label></div>
@@ -71,29 +78,30 @@
         </div>
       </section>
       <section id="view-orders" class="view" hidden>
-        <div class="page-heading"><div><h1>合成中心</h1><label class="sort"><select id="task-mode" aria-label="任务类型"><option value="jobs">生产任务</option><option value="orders">单项订单</option></select></label></div><button class="icon-button" id="refresh-orders" title="刷新任务" aria-label="刷新任务"><i data-lucide="refresh-cw"></i></button></div>
+        <h1 class="sr-only">合成中心</h1>
+        <div class="task-mode-toolbar"><label class="sort"><span>任务类型</span><select id="task-mode" aria-label="任务类型"><option value="jobs">生产任务</option><option value="orders">单项订单</option></select></label></div>
         <div id="jobs-panel"><div class="filters"><div class="segments" role="group" aria-label="生产任务筛选"><button data-job-filter="unsettled" aria-pressed="true">未完成</button><button data-job-filter="attention" aria-pressed="false">待处理</button><button data-job-filter="history" aria-pressed="false">历史</button></div><span id="jobs-summary" class="muted" role="status"></span></div><p id="jobs-message" class="inline-message" role="status" hidden></p><div id="job-recoveries" class="aux-list"></div><div id="job-list" class="aux-list"></div><div class="job-history-footer"><button id="job-history-more" class="secondary" hidden><i data-lucide="chevron-down"></i>加载历史记录</button></div></div>
         <div id="legacy-panel" hidden><div class="filters"><div class="segments" role="group" aria-label="任务筛选"><button data-order-filter="active" aria-pressed="true">未完成</button><button data-order-filter="attention" aria-pressed="false">待处理</button><button data-order-filter="done" aria-pressed="false">已结束</button><button data-order-filter="all" aria-pressed="false">全部</button></div><label class="sort"><span>分组</span><select id="order-group" aria-label="任务分组"><option value="batch">提交批次</option><option value="cpu">CPU</option></select></label><span id="orders-summary" class="muted"></span></div>
         <div id="orders-message" class="inline-message" role="status" hidden></div><div id="order-list" class="aux-list"></div></div>
       </section>
       <section id="view-cpus" class="view" hidden>
-        <div class="page-heading"><div><h1>CPU 监控</h1><span id="cpu-summary" class="muted"></span></div><button class="icon-button" id="refresh-cpus" title="刷新 CPU 状态" aria-label="刷新 CPU 状态"><i data-lucide="refresh-cw"></i></button></div>
+        <h1 class="sr-only">CPU 监控</h1>
         <div id="cpu-overview" class="cpu-overview"></div>
         <div id="cpu-list" class="aux-list"></div>
       </section>
       <section id="view-network" class="view" hidden>
-        <div class="page-heading"><div><h1>网络管理</h1><span id="network-summary" class="muted"></span></div><button class="icon-button" id="refresh-network" title="刷新网络状态" aria-label="刷新网络状态"><i data-lucide="refresh-cw"></i></button></div>
+        <h1 class="sr-only">网络管理</h1>
         <div class="network-toolbar"><span>已配置网络</span><button class="primary" id="add-network" type="button"><i data-lucide="plus"></i>添加网络</button></div>
         <div id="network-feedback" class="inline-message" role="status" hidden></div>
         <div id="network-recovery" class="network-recovery" role="status" aria-live="polite" hidden></div>
         <div id="network-info" class="network-dashboard"></div>
       </section>
       <section id="view-github" class="view" hidden>
-        <div class="page-heading"><div><h1>GitHub</h1><span class="muted">项目源码、协议与部署记录</span></div><a class="icon-button external-link" href="https://github.com/CaeliaEve/ae-orbit" target="_blank" rel="noreferrer" title="打开 GitHub" aria-label="打开 GitHub"><i data-lucide="arrow-up-right"></i></a></div>
+        <h1 class="sr-only">GitHub</h1>
         <div class="github-layout"><section class="panel github-card"><div class="github-title"><i data-lucide="github"></i><div><h2>CaeliaEve / ae-orbit</h2><span class="muted">多 OC 协作合成控制台</span></div></div><div class="github-links"><a href="https://github.com/CaeliaEve/ae-orbit" target="_blank" rel="noreferrer" class="panel-link"><span><i data-lucide="github"></i>访问代码仓库</span><i data-lucide="arrow-up-right"></i></a><a href="https://github.com/CaeliaEve/ae-orbit/tree/main/contracts" target="_blank" rel="noreferrer" class="panel-link"><span><i data-lucide="file-text"></i>查看协议文档</span><i data-lucide="arrow-up-right"></i></a><a href="https://github.com/CaeliaEve/ae-orbit/issues" target="_blank" rel="noreferrer" class="panel-link"><span><i data-lucide="circle-help"></i>提交 Issue</span><i data-lucide="arrow-up-right"></i></a></div></section></div>
       </section>
       <section id="view-settings" class="view" hidden>
-        <div class="page-heading"><div><h1>设置</h1><span class="muted">系统偏好与连接行为</span></div></div>
+        <h1 class="sr-only">设置</h1>
         <div class="settings-layout"><section class="panel settings-panel"><div class="panel-heading"><div><h2>偏好设置</h2><span class="muted">设置会保存在当前浏览器</span></div><i data-lucide="settings"></i></div><div id="settings-sections" class="settings-sections" role="tablist" aria-label="设置分类"><button class="settings-row" type="button" role="tab" data-settings-section="display" aria-selected="true" aria-controls="settings-detail" aria-current="true"><i data-lucide="monitor"></i><span><strong>显示</strong><small>密度与库存网格布局</small></span><i data-lucide="chevron-right"></i></button><button class="settings-row" type="button" role="tab" data-settings-section="notifications" aria-selected="false" aria-controls="settings-detail" aria-current="false"><i data-lucide="bell"></i><span><strong>通知</strong><small>任务、网络与同步提醒</small></span><i data-lucide="chevron-right"></i></button><button class="settings-row" type="button" role="tab" data-settings-section="textures" aria-selected="false" aria-controls="settings-detail" aria-current="false"><i data-lucide="package"></i><span><strong>纹理资源</strong><small>按需加载或导入纹理包</small></span><i data-lucide="chevron-right"></i></button><button class="settings-row" type="button" role="tab" data-settings-section="connection" aria-selected="false" aria-controls="settings-detail" aria-current="false"><i data-lucide="radio-tower"></i><span><strong>连接与凭据</strong><small>自动重连与会话保存</small></span><i data-lucide="chevron-right"></i></button></div></section><section id="settings-detail" class="panel settings-detail" role="tabpanel" aria-live="polite"></section></div>
       </section>
     </main>
@@ -111,6 +119,10 @@
   <div id="sheet-backdrop" class="sheet-backdrop" hidden></div>
   <div id="toast" role="status" class="toast" hidden></div>
   <input id="texture-pack-file" type="file" accept=".zip,application/zip" hidden>
+  <dialog id="sync-dialog" aria-labelledby="sync-title">
+    <div class="dialog-heading"><h2 id="sync-title">网络与同步状态</h2><button class="icon-button" data-close="sync-dialog" aria-label="关闭状态窗口"><i data-lucide="x"></i></button></div>
+    <dl class="sync-details"><div><dt>连接状态</dt><dd id="connection" class="connection" role="status" aria-live="polite" aria-atomic="true">未登录</dd></div><div><dt>最近同步</dt><dd id="dashboard-sync">等待同步</dd></div><div><dt>库存观测</dt><dd id="inventory-summary">尚未连接网络</dd></div><div><dt>CPU 观测</dt><dd id="cpu-summary">尚未连接网络</dd></div><div><dt>当前网络</dt><dd id="network-summary">尚未连接网络</dd></div></dl>
+  </dialog>
   <dialog id="auth-dialog" aria-labelledby="auth-title">
     <form id="login-form" class="login-form"><div class="dialog-heading"><h2 id="auth-title">连接 AE Orbit</h2><img class="auth-logo" src="/assets/brand/ae-orbit-mark.svg" alt=""></div><label for="token">访问令牌</label><input id="token" type="password" required autocomplete="off" maxlength="512"><label class="remember-session"><input id="remember-session" type="checkbox"><span>记住本次会话</span></label><p id="login-error" class="error" role="alert"></p><button type="submit" class="primary" id="login-button"><i data-lucide="log-in"></i>登录</button></form>
   </dialog>

@@ -150,8 +150,16 @@ function applySettings() {
   sidebarToggle.setAttribute("aria-expanded", String(!state.settings.sidebarCollapsed));
   sidebarToggle.setAttribute("aria-label", state.settings.sidebarCollapsed ? "展开导航" : "收起导航");
   sidebarToggle.title = state.settings.sidebarCollapsed ? "展开导航" : "收起导航";
+  placeGlobalControls();
   const remember = $("#remember-session");
   if (remember) remember.checked = state.settings.rememberSession;
+}
+
+function placeGlobalControls() {
+  const controls = $("#global-controls");
+  if (matchMedia("(min-width: 901px)").matches) {
+    if (controls.parentElement !== $("#sidebar-tools")) $("#sidebar-tools").append(controls);
+  } else if (controls.parentElement !== $(".content")) $(".content").insertBefore(controls, $("#main"));
 }
 
 function textureAssetURL(item) {
@@ -581,6 +589,10 @@ function refreshHeader() {
               : network.online ? "已连接" : "OC 离线";
   $("#connection").textContent = connectionLabel;
   $("#connection").dataset.state = !state.member || !network ? "idle" : recovery.tone === "ok" ? "online" : recovery.tone === "warn" ? "offline" : "reconnecting";
+  const picker = $(".network-picker");
+  picker.dataset.state = $("#connection").dataset.state;
+  picker.title = `${network?.name || "选择网络"} · ${connectionLabel}`;
+  $("#network").title = picker.title;
   $("#network-quality").textContent = network ? networkQualityLabel(network.quality) : "";
   const summary = inventorySummary(state.inventoryStats, age);
   $("#inventory-summary").textContent = network ? (summary ? `${summary}${network.online ? "" : " · OC 离线，显示缓存"}` : "") || `${network.name} · ${network.online ? "在线" : "离线"}` : "尚未连接网络";
@@ -593,6 +605,11 @@ function refreshHeader() {
 function showView(view) {
   hideInventoryHover();
   state.view = view;
+  const viewName = $("#sidebar [data-view='" + view + "']")?.getAttribute("aria-label") || "AE Orbit";
+  document.title = `${viewName} · AE Orbit`;
+  let hasRefresh = false;
+  $$("[data-refresh-view]").forEach(button => { button.hidden = button.dataset.refreshView !== view; if (!button.hidden) hasRefresh = true; });
+  $(".page-refresh").hidden = !hasRefresh;
   for (const name of ["dashboard", "inventory", "orders", "cpus", "network", "github", "settings"]) $(`#view-${name}`).hidden = name !== view;
   $$("[data-view]").forEach(button => {
     if (button.dataset.view === view) button.setAttribute("aria-current", "page");
@@ -2156,6 +2173,7 @@ $("#logout").addEventListener("click", async () => {
   } catch (error) { toast(errorText(error), true); }
 });
 $("#network").addEventListener("change", event => switchNetwork(event.target.value));
+$("#notifications").addEventListener("click", () => { refreshHeader(); renderCPUs(); renderNetwork(); $("#sync-dialog").showModal(); });
 $("#refresh-dashboard").addEventListener("click", () => {
   renderDashboard();
   if (state.network) { refreshNetwork(); refreshInventoryObservation(); refreshCPUs(); refreshJobs(); }
@@ -2512,6 +2530,7 @@ window.addEventListener("storage", event => {
   }
 });
 window.addEventListener("resize", () => {
+  placeGlobalControls();
   hideInventoryHover();
   const sheet = matchMedia("(max-width:800px)").matches && $("#inspector").dataset.open === "true";
   $("#sheet-backdrop").hidden = !sheet;
