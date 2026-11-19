@@ -101,11 +101,23 @@ func (s *Server) routes() {
 		}
 		q := protocol.ItemQuery{Search: r.URL.Query().Get("q"), Sort: r.URL.Query().Get("sort"), Cursor: r.URL.Query().Get("cursor"), Limit: limit, Consistency: r.URL.Query().Get("consistency")}
 		q.View = r.URL.Query().Get("view")
-		if len(r.URL.Query()["anchor"]) > 1 || len(r.URL.Query()["cursor"]) > 1 {
+		if len(r.URL.Query()["anchor"]) > 1 || len(r.URL.Query()["cursor"]) > 1 || len(r.URL.Query()["page"]) > 1 || len(r.URL.Query()["pagination"]) > 1 {
 			fail(w, store.ErrInvalid)
 			return
 		}
 		q.Anchor = r.URL.Query().Get("anchor")
+		q.Pagination = r.URL.Query().Get("pagination")
+		if value := r.URL.Query().Get("page"); value != "" {
+			if value == "last" {
+				q.LastPage = true
+			} else {
+				q.Page, err = strconv.Atoi(value)
+				if err != nil || q.Page < 1 {
+					fail(w, store.ErrInvalid)
+					return
+				}
+			}
+		}
 		if value := r.URL.Query().Get("craftable"); value != "" {
 			yes, err := strconv.ParseBool(value)
 			if err != nil {

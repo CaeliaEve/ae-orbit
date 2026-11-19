@@ -220,11 +220,14 @@ type CatalogFrame struct {
 }
 
 type ItemPage struct {
-	Scope        string   `json:"scope,omitempty"`
-	Items        []Item   `json:"items"`
-	Revision     Quantity `json:"revision"`
-	NextCursor   string   `json:"next_cursor,omitempty"`
-	AnchorCursor string   `json:"anchor_cursor,omitempty"`
+	Scope        string    `json:"scope,omitempty"`
+	Items        []Item    `json:"items"`
+	Revision     Quantity  `json:"revision"`
+	NextCursor   string    `json:"next_cursor,omitempty"`
+	AnchorCursor string    `json:"anchor_cursor,omitempty"`
+	Total        *Quantity `json:"total,omitempty"`
+	PageNumber   int       `json:"page_number,omitempty"`
+	PageCount    int       `json:"page_count,omitempty"`
 }
 
 type ItemQuery struct {
@@ -236,6 +239,9 @@ type ItemQuery struct {
 	Cursor      string
 	Anchor      string
 	Consistency string
+	Pagination  string
+	Page        int
+	LastPage    bool
 }
 
 type ItemLookup struct {

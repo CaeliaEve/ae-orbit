@@ -80,3 +80,38 @@ func TestPlainWindowMembershipAndAnchorRemoval(t *testing.T) {
 		t.Fatal("stock revision broke continuation", next, err)
 	}
 }
+
+func TestPlainWindowNumberedPagesRespectStockAndCandidates(t *testing.T) {
+	f := plainFixture(t)
+	enablePlain(t, f)
+	q := protocol.ItemQuery{Consistency: "window", Pagination: "pages", View: "all", Limit: 2, LastPage: true}
+	all, err := f.s.Items(ctx, f.admin.ID, f.network.ID, q)
+	if err != nil || all.Total == nil || *all.Total != 3 || all.PageCount != 2 || all.PageNumber != 2 || len(all.Items) != 1 {
+		t.Fatal(all, err)
+	}
+	q.View = "stock"
+	empty, err := f.s.Items(ctx, f.admin.ID, f.network.ID, q)
+	if err != nil || empty.Total == nil || *empty.Total != 0 || empty.PageCount != 1 || len(empty.Items) != 0 {
+		t.Fatal(empty, err)
+	}
+	if _, err := f.s.Pool().Exec(ctx, `INSERT INTO inventory(network_id,item_id,quantity,craftable,craftable_observation,observation,session_id,observed_at)
+		SELECT network_id,item_id,1,false,0,1,$2,now() FROM plain_catalog_candidates WHERE network_id=$1
+		ON CONFLICT(network_id,item_id) DO UPDATE SET quantity=1,observed_at=now()`, f.network.ID, f.wa.SessionID); err != nil {
+		t.Fatal(err)
+	}
+	for _, sort := range []string{"name", "quantity"} {
+		q.Sort = sort
+		last, err := f.s.Items(ctx, f.admin.ID, f.network.ID, q)
+		if err != nil || *last.Total != 3 || last.PageNumber != 2 || len(last.Items) != 1 {
+			t.Fatal(last, err)
+		}
+		q.LastPage = false
+		q.Anchor = last.AnchorCursor
+		anchored, err := f.s.Items(ctx, f.admin.ID, f.network.ID, q)
+		if err != nil || *anchored.Total != 3 || anchored.Items[0].ID != last.Items[0].ID {
+			t.Fatal(anchored, err)
+		}
+		q.Anchor = ""
+		q.LastPage = true
+	}
+}

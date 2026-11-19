@@ -4,39 +4,21 @@ import { readFile } from "node:fs/promises";
 import vm from "node:vm";
 import { createInventoryWheel, inventoryKeyboardDirection } from "../src/inventory-paging.mjs";
 
-test("a large wheel movement turns one page and consumes its excess", () => {
+test("each wheel detent changes a page without any cooldown", () => {
   const wheel = createInventoryWheel();
-  assert.equal(wheel.consume(2400, 0), 1);
-  assert.equal(wheel.consume(1200, 20), 0);
-  assert.equal(wheel.consume(5, 300), 0);
-  assert.equal(wheel.consume(75, 310), 1);
+  for (let n=0;n<20;n++) assert.equal(wheel.consume(120,n),1);
+  assert.equal(wheel.consume(2400,21),1);
+  assert.equal(wheel.consume(-120,22),-1);
 });
 
-test("small trackpad movements accumulate only within the same gesture", () => {
+test("fine trackpad movement accumulates within the gesture and reverses immediately", () => {
   const wheel = createInventoryWheel();
-  assert.equal(wheel.consume(35, 0), 0);
-  assert.equal(wheel.consume(30, 20), 0);
-  assert.equal(wheel.consume(20, 30), 1);
-  assert.equal(wheel.consume(50, 400), 0);
-  assert.equal(wheel.consume(40, 600), 0);
-});
-
-test("reversing the wheel discards accumulated motion and returns immediately", () => {
-  const wheel = createInventoryWheel();
-  assert.equal(wheel.consume(120, 0), 1);
-  assert.equal(wheel.consume(-120, 20), -1);
-  assert.equal(wheel.consume(-120, 30), 0);
-  wheel.reset();
-  assert.equal(wheel.consume(60, 40), 0);
-  assert.equal(wheel.consume(-80, 50), -1);
-});
-
-test("input received during loading is dropped instead of queued", () => {
-  const wheel = createInventoryWheel();
-  assert.equal(wheel.consume(120, 0), 1);
-  assert.equal(wheel.consume(2400, 300, true), 0);
-  assert.equal(wheel.consume(10, 320), 0);
-  assert.equal(wheel.consume(70, 340), 1);
+  assert.equal(wheel.consume(15,0),0);
+  assert.equal(wheel.consume(15,10),0);
+  assert.equal(wheel.consume(15,20),1);
+  assert.equal(wheel.consume(-40,21),-1);
+  assert.equal(wheel.consume(20,400),0);
+  assert.equal(wheel.consume(20,600),0);
 });
 
 test("page keys do not interfere with typing, inspector controls, modifiers or held keys", () => {
@@ -53,7 +35,7 @@ const source = await readFile(new URL("../src/app.mjs", import.meta.url), "utf8"
 function fixture(request) {
   let now = 1000, capacity = 2;
   const state = { network: { id: "n" }, page: 0, cursor: "", anchorCursor: "a1", nextCursor: "b2", cursors: [{ cursor: "", anchor: "" }],
-    items: [{ id: "1", quantity: "1" }, { id: "2", quantity: "2" }], inventoryLimit: 2, inventoryLoading: false, inventoryTarget: null,
+    items: [{ id: "1", quantity: "1" }, { id: "2", quantity: "2" }], inventoryPageCount: 10, inventoryDesiredPage: null, inventoryLimit: 2, inventoryLoading: false, inventoryTarget: null,
     generation: 0, inventoryScope: "nesql_plain", stockView: "stock", search: "", sort: "name", filter: "", selected: { id: "1", quantity: "1" }, inspector: "detail", itemCache: new Map(), view: "inventory" };
   const elements = new Map();
   const calls = { renders: 0, prefetch: 0, requests: [], errors: [], scrolls: 0 };
@@ -85,8 +67,8 @@ test("navigation keeps the old page and rows until the new response succeeds", a
   assert.equal(f.state.page, 0);
   assert.equal(f.state.items[0].id, "1");
   assert.equal(f.calls.renders, 0);
-  assert.equal(f.elements.get("#page-label").textContent, "第 1 页 · 正在读取第 2 页…");
-  assert.equal(f.context.changeInventoryPage(1), false);
+  assert.equal(f.elements.get("#page-label").textContent, "1 / 10 页 · 正在读取第 2 页…");
+  assert.equal(f.state.inventoryTarget.page, 1);
   resolve(page()); await f.settle();
   assert.equal(f.state.page, 1);
   assert.equal(f.state.items[0].id, "3");
@@ -116,10 +98,10 @@ test("a late response cannot replace a newer search", async () => {
   assert.equal(f.state.inventoryLoading, false);
 });
 
-test("cached pages load immediately and previous page uses its remembered inclusive anchor", async () => {
+test("cached pages load immediately and previous page jumps directly", async () => {
   const f = fixture(async () => page("5"));
   const spec = f.context.inventoryQuerySpec(2);
-  f.context.cacheInventoryPage("b2", spec, { items: [{ id: "3", quantity: "3" }], anchorCursor: "a3", nextCursor: "b4", scope: "nesql_plain" });
+  f.context.cacheInventoryPage("", { ...spec, page: 2 }, { items: [{ id: "3", quantity: "3" }], anchorCursor: "a3", nextCursor: "b4", scope: "nesql_plain" });
   assert.equal(f.context.changeInventoryPage(1), true);
   assert.equal(f.state.page, 1); assert.equal(f.calls.requests.length, 0);
   f.context.changeInventoryPage(1); await f.settle();
@@ -127,7 +109,7 @@ test("cached pages load immediately and previous page uses its remembered inclus
   f.time(17000);
   f.context.changeInventoryPage(-1); await f.settle();
   const query = new URL(f.calls.requests.at(-1), "http://fixture").searchParams;
-  assert.equal(query.get("anchor"), "a3"); assert.equal(query.has("cursor"), false);
+  assert.equal(query.get("page"), "2"); assert.equal(query.has("cursor"), false);
   assert.equal(f.state.page, 1);
 });
 
@@ -181,4 +163,40 @@ test("a cancelled request cannot be reused by another request for the same bound
   assert.equal(f.context.inventoryPageRequests.size, 1);
   pending[1](page("4")); await current;
   assert.equal(f.context.cachedInventoryPage("b2", spec).items[0].id, "4");
+});
+
+
+test("first and last pages loop in both directions", async () => {
+  const f=fixture(async()=>page());
+  f.context.changeInventoryPage(-1); await f.settle();
+  assert.equal(f.state.page,9);
+  assert.equal(new URL(f.calls.requests[0],"http://fixture").searchParams.get("page"),"10");
+  f.context.changeInventoryPage(1); await f.settle();
+  assert.equal(f.state.page,0);
+});
+
+test("continuous input during a slow request jumps to the final page without replaying intermediate pages", async () => {
+  const pending=[];
+  const f=fixture(()=>new Promise(r=>pending.push(r)));
+  f.context.changeInventoryPage(1);
+  f.context.changeInventoryPage(1);
+  f.context.changeInventoryPage(1);
+  assert.equal(f.state.inventoryDesiredPage,3);
+  pending[0](page("3")); await f.settle();
+  assert.equal(f.calls.renders,0);
+  assert.equal(f.calls.requests.length,2);
+  assert.equal(new URL(f.calls.requests[1],"http://fixture").searchParams.get("page"),"4");
+  pending[1](page("7")); await f.settle();
+  assert.equal(f.state.page,3);assert.equal(f.calls.renders,1);
+});
+
+test("reverse while loading returns to a cached current page immediately", async () => {
+  let resolve;
+  const f=fixture(()=>new Promise(r=>resolve=r));
+  f.context.cacheInventoryPage("",{...f.context.inventoryQuerySpec(2),page:1},{items:f.state.items,anchorCursor:"a1",nextCursor:"b2",scope:"nesql_plain"});
+  f.context.changeInventoryPage(1);
+  f.context.changeInventoryPage(-1);
+  assert.equal(f.state.inventoryLoading,false);assert.equal(f.state.page,0);
+  resolve(page("3"));await f.settle();
+  assert.equal(f.state.page,0);
 });

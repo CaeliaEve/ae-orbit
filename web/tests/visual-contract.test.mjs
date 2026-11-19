@@ -45,7 +45,7 @@ test("inventory grid fills available width and supports wheel page navigation", 
   assert.match(appSource, /limit: String\(spec\.limit\)/);
   assert.match(appSource, /function refreshInventoryCapacity\(\)/);
   assert.match(appSource, /function changeInventoryPage\(direction\)/);
-  assert.match(appSource, /\.table-wrap[\s\S]*?addEventListener\("wheel"/);
+  assert.match(appSource, /\.catalog[\s\S]*?addEventListener\("wheel"/);
   assert.match(appSource, /event\.preventDefault\(\)/);
 });
 

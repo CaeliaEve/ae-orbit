@@ -94,6 +94,9 @@ func (s *Store) Items(ctx context.Context, userID, networkID string, q protocol.
 	if (q.Consistency != "strict" && q.Consistency != "live" && q.Consistency != "window") || (q.Consistency == "live" && q.Sort != "name") || (q.Anchor != "" && (q.Consistency != "window" || q.Cursor != "")) {
 		return page, ErrInvalid
 	}
+	if (q.Pagination != "" && q.Pagination != "pages") || (q.Pagination == "pages" && q.Consistency != "window") || q.Page < 0 || ((q.Page > 0 || q.LastPage) && (q.Pagination != "pages" || q.Anchor != "" || q.Cursor != "")) {
+		return page, ErrInvalid
+	}
 	var cursor pageCursor
 	var err error
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
@@ -191,6 +194,53 @@ func (s *Store) Items(ctx context.Context, userID, networkID string, q protocol.
 			return page, err
 		}
 	}
+	var offset int64
+	if q.Pagination == "pages" {
+		// Count and read within the same snapshot. Page jumps only read server
+		// observations and never request a game-side inventory enumeration.
+		countArgs := append([]any{}, args...)
+		countParam := func(value any) string {
+			countArgs = append(countArgs, value)
+			return fmt.Sprintf("$%d", len(countArgs))
+		}
+		rank := "false"
+		if boundary != "" {
+			comparison := "<"
+			if q.Anchor == "" {
+				comparison = "<="
+			}
+			if q.Sort == "quantity" {
+				count, id := countParam(int64(cursor.Quantity)), countParam(int64(cursor.ID))
+				rank = "(coalesce(i.quantity,0)>" + count + " OR (coalesce(i.quantity,0)=" + count + " AND d.id" + comparison + id + "))"
+			} else {
+				rank = "(lower(" + label + "),d.id)" + comparison + "(" + countParam(cursor.Name) + "," + countParam(int64(cursor.ID)) + ")"
+			}
+		}
+		var total, before int64
+		err = tx.QueryRow(ctx, "SELECT count(*),count(*) FILTER (WHERE "+rank+") FROM item_definitions d "+join+" WHERE $2::text IS NOT NULL AND "+strings.Join(conditions, " AND "), countArgs...).Scan(&total, &before)
+		if err != nil {
+			return page, err
+		}
+		value := protocol.Quantity(total)
+		page.Total = &value
+		page.PageCount = int((total + int64(q.Limit) - 1) / int64(q.Limit))
+		if page.PageCount < 1 {
+			page.PageCount = 1
+		}
+		page.PageNumber = int(before/int64(q.Limit)) + 1
+		if q.Page > 0 {
+			page.PageNumber = q.Page
+		}
+		if q.LastPage {
+			page.PageNumber = page.PageCount
+		}
+		if page.PageNumber > page.PageCount {
+			page.PageNumber = page.PageCount
+		}
+		if q.Page > 0 || q.LastPage {
+			offset = int64(page.PageNumber-1) * int64(q.Limit)
+		}
+	}
 	if boundary != "" {
 		comparison := ">"
 		if q.Anchor != "" {
@@ -205,8 +255,12 @@ func (s *Store) Items(ctx context.Context, userID, networkID string, q protocol.
 		}
 	}
 	limit := param(q.Limit + 1)
+	offsetSQL := ""
+	if offset > 0 {
+		offsetSQL = " OFFSET " + param(offset)
+	}
 	rows, err := tx.Query(ctx, `SELECT d.id,d.kind,d.name,d.damage,`+label+`,d.exact,d.nbt,coalesce(i.quantity,0),coalesce(i.craftable,false),coalesce(i.observed_at,'epoch'::timestamptz),i.craftable_observed_at,`+quantityCurrentSessionSQL+`,`+recipeCurrentSessionSQL+`,lower(`+label+`),i.item_id IS NOT NULL
-        FROM item_definitions d `+join+` WHERE `+strings.Join(conditions, " AND ")+" ORDER BY "+order+" LIMIT "+limit, args...)
+        FROM item_definitions d `+join+` WHERE `+strings.Join(conditions, " AND ")+" ORDER BY "+order+" LIMIT "+limit+offsetSQL, args...)
 	if err != nil {
 		return page, err
 	}

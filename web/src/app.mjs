@@ -63,7 +63,7 @@ const state = {
   orders: [], devices: [], cpus: { cpus: [] }, icons: {}, filter: "", sort: "name", search: "",
   stockView: "stock", inventoryScope: "", inventoryStats: null,
   inventoryTrend: [], inventoryTrendKey: "",
-  cursor: "", anchorCursor: "", nextCursor: "", cursors: [{ cursor: "", anchor: "" }], page: 0, inventoryLimit: 50, inventoryTarget: null, inventoryQueryPending: false, selected: null, amount: "1",
+  cursor: "", anchorCursor: "", nextCursor: "", cursors: [{ cursor: "", anchor: "" }], page: 0, inventoryPageCount: 1, inventoryTotal: null, inventoryDesiredPage: null, inventoryLimit: 50, inventoryTarget: null, inventoryQueryPending: false, selected: null, amount: "1",
   cpuName: "", waitForCPU: false, inspector: "detail", draft: { version: 1, entries: [], receipts: {} },
   draftKey: "", draftBlocked: false, unchecked: new Set(), busy: false, preparing: false, inventoryLoading: false,
   orderFilter: "active", orderGroup: "batch", stream: null, streamConnected: false, streamState: "closed", generation: 0,
@@ -101,7 +101,7 @@ const inventoryPrefetchControllers = new Set();
 const inventoryPageCache = new Map();
 const inventoryPageRequests = new Map();
 let inventoryCacheEpoch = 0, inventoryLiveRequest = null;
-const INVENTORY_PREFETCH_DEPTH = 3;
+const INVENTORY_PREFETCH_DEPTH = 8;
 const INVENTORY_PAGE_CACHE_LIMIT = 48;
 const INVENTORY_PAGE_CACHE_TTL = 15000;
 
@@ -678,15 +678,16 @@ function patchInventoryRows() {
 function renderInventoryPager() {
   const loading = state.inventoryLoading;
   $("#first-page").disabled = loading || state.inventoryQueryPending || state.page === 0;
-  $("#prev-page").disabled = loading || state.inventoryQueryPending || state.page === 0;
-  $("#next-page").disabled = loading || state.inventoryQueryPending || !state.nextCursor;
+  $("#prev-page").disabled = state.inventoryQueryPending || state.inventoryPageCount <= 1;
+  $("#next-page").disabled = state.inventoryQueryPending || state.inventoryPageCount <= 1;
   $("#refresh-inventory").disabled = loading;
   $("#inventory-rows").setAttribute("aria-busy", String(loading));
-  const target = state.inventoryTarget;
+  const targetPage = state.inventoryDesiredPage ?? state.inventoryTarget?.page;
+  const position = `${state.page + 1} / ${state.inventoryPageCount}`;
   $("#page-label").textContent = loading
-    ? `第 ${state.page + 1} 页 · 正在读取${target && target.page !== state.page ? `第 ${target.page + 1} 页` : ""}…`
+    ? `${position} 页 · 正在读取${targetPage != null && targetPage !== state.page ? `第 ${targetPage + 1} 页` : ""}…`
     : state.inventoryQueryPending ? "读取失败 · 点击刷新重试"
-    : `第 ${state.page + 1} 页 · ${state.items.length} 项${state.items.length && !state.nextCursor ? " · 已到末页" : ""}`;
+    : `${position} 页 · ${state.items.length} 项`;
 }
 
 function patchSelectedDetail(item) {
@@ -1444,7 +1445,7 @@ function inventoryQuerySpec(limit) {
 }
 
 function inventoryPageKey(cursor, spec) {
-  return JSON.stringify([spec.search, spec.sort, spec.filter, spec.limit, spec.view, spec.scope, cursor, spec.anchor || ""]);
+  return JSON.stringify([spec.search, spec.sort, spec.filter, spec.limit, spec.view, spec.scope, cursor, spec.anchor || "", spec.page || ""]);
 }
 
 function cachedInventoryPage(cursor, spec) {
@@ -1481,14 +1482,15 @@ function requestInventoryPage(cursor, limit, signal, spec = inventoryQuerySpec(l
   const pending = inventoryPageRequests.get(key);
   if (pending && !fresh && !pending.signal?.aborted) return pending.promise;
   const epoch = inventoryCacheEpoch;
-  const query = new URLSearchParams({ q: spec.search, sort: spec.sort, limit: String(spec.limit), consistency: "window" });
+  const query = new URLSearchParams({ q: spec.search, sort: spec.sort, limit: String(spec.limit), consistency: "window", pagination: "pages" });
   if (spec.filter) query.set("craftable", spec.filter);
   if (spec.scope === "nesql_plain") query.set("view", spec.view);
   if (cursor) query.set("cursor", cursor);
   if (spec.anchor) query.set("anchor", spec.anchor);
+  if (spec.page) query.set("page", String(spec.page));
   const request = api.request(networkPath(`/items?${query}`), signal ? { signal } : undefined)
     .then(value => {
-      const page = { items: value.items || [], nextCursor: value.next_cursor || "", anchorCursor: value.anchor_cursor || "", scope: value.scope || "" };
+      const page = { items: value.items || [], nextCursor: value.next_cursor || "", anchorCursor: value.anchor_cursor || "", scope: value.scope || "", pageNumber: value.page_number, pageCount: value.page_count, total: value.total };
       if (epoch === inventoryCacheEpoch && !signal?.aborted) cacheInventoryPage(cursor, spec, page);
       return page;
     })
@@ -1499,17 +1501,19 @@ function requestInventoryPage(cursor, limit, signal, spec = inventoryQuerySpec(l
   return request;
 }
 
-async function prefetchInventoryPages(cursor, generation, limit) {
+async function prefetchInventoryPages(pageIndex, generation, limit) {
   const spec = inventoryQuerySpec(limit);
   const controller = new AbortController();
   inventoryPrefetchControllers.add(controller);
-  let nextCursor = cursor;
+  const pages = [];
+  for (let n = 1; n <= INVENTORY_PREFETCH_DEPTH; n++) {
+    pages.push((pageIndex + n) % state.inventoryPageCount, (pageIndex - n + state.inventoryPageCount) % state.inventoryPageCount);
+  }
   try {
-    for (let index = 0; index < INVENTORY_PREFETCH_DEPTH && nextCursor; index++) {
+    for (const pageIndex of new Set(pages.filter(n => n >= 0 && n !== state.page))) {
       if (generation !== state.generation || controller.signal.aborted) return;
       try {
-        const page = await requestInventoryPage(nextCursor, limit, controller.signal, spec);
-        nextCursor = page.nextCursor;
+        await requestInventoryPage("", limit, controller.signal, { ...spec, page: pageIndex + 1 });
       } catch {
         return;
       }
@@ -1525,6 +1529,7 @@ async function loadInventory(reset = false, target = null) {
   const destination = reset ? { page: 0, cursor: "", anchor: "" }
     : target || { page: state.page, cursor: "", anchor: state.page > 0 ? state.anchorCursor : "" };
   if (reset) {
+    state.inventoryDesiredPage = null;
     state.inventoryQueryPending = true;
     clearInventoryPages();
     inventoryWheel.reset();
@@ -1534,7 +1539,7 @@ async function loadInventory(reset = false, target = null) {
   queryController = new AbortController();
   const generation = ++state.generation;
   const cursor = destination.cursor;
-  const spec = { ...inventoryQuerySpec(limit), anchor: destination.anchor || "" };
+  const spec = { ...inventoryQuerySpec(limit), anchor: destination.anchor || "", page: destination.absolute ? destination.page + 1 : "" };
   state.inventoryLoading = true;
   state.inventoryTarget = destination;
   renderInventoryPager();
@@ -1542,13 +1547,16 @@ async function loadInventory(reset = false, target = null) {
   try {
     const value = await requestInventoryPage(cursor, limit, queryController.signal, spec);
     if (generation !== state.generation) return;
+    if (state.inventoryDesiredPage != null && state.inventoryDesiredPage !== destination.page) return;
     if (reset) { state.cursors = [{ cursor: "", anchor: "" }]; state.inventoryQueryPending = false; }
     if (limit !== state.inventoryLimit) clearInventoryPages();
     state.inventoryLimit = limit;
+    state.inventoryDesiredPage = null;
     applyInventoryPage(destination, value);
   } catch (error) {
     if (generation !== state.generation || error.name === "AbortError") return;
     inventoryWheel.reset();
+    state.inventoryDesiredPage = null;
     message("#inventory-message", errorText(error));
   } finally {
     if (generation === state.generation) {
@@ -1556,7 +1564,8 @@ async function loadInventory(reset = false, target = null) {
       state.inventoryTarget = null;
       renderInventoryPager();
       if (!state.items.length) renderInventory();
-      if (inventoryPageLimit() !== limit && inventoryPageLimit() !== state.inventoryLimit) refreshInventoryCapacity();
+      if (state.inventoryDesiredPage != null) navigateInventoryPage(state.inventoryDesiredPage);
+      else if (inventoryPageLimit() !== limit && inventoryPageLimit() !== state.inventoryLimit) refreshInventoryCapacity();
     }
   }
 }
@@ -1568,7 +1577,9 @@ function applyInventoryPage(destination, page) {
   const focusKind = document.activeElement?.dataset?.quickAdd ? "data-quick-add" : "data-item";
   const windowX = window.scrollX, windowY = window.scrollY;
   hideInventoryHover();
-  state.page = destination.page;
+  state.page = page.pageNumber ? page.pageNumber - 1 : destination.page;
+  state.inventoryPageCount = page.pageCount || state.inventoryPageCount;
+  state.inventoryTotal = page.total ?? state.inventoryTotal;
   state.cursor = destination.cursor;
   state.items = page.items;
   state.anchorCursor = page.anchorCursor;
@@ -1579,8 +1590,9 @@ function applyInventoryPage(destination, page) {
   state.items.forEach(item => state.itemCache.set(String(item.id), item));
   const selected = state.itemCache.get(String(state.selected?.id));
   if (selected) state.selected = selected;
-  cacheInventoryPage(state.cursor, { ...inventoryQuerySpec(state.inventoryLimit), anchor: destination.anchor || "" }, page);
+  cacheInventoryPage(state.cursor, { ...inventoryQuerySpec(state.inventoryLimit), anchor: destination.anchor || "", page: destination.absolute ? state.page + 1 : "" }, page);
   cacheInventoryPage("", { ...inventoryQuerySpec(state.inventoryLimit), anchor: state.page > 0 ? state.anchorCursor : "" }, page);
+  if (destination.absolute || !destination.anchor) cacheInventoryPage("", { ...inventoryQuerySpec(state.inventoryLimit), page: state.page + 1 }, page);
   state.inventoryLoading = false;
   state.inventoryTarget = null;
   message("#inventory-message", "");
@@ -1597,35 +1609,34 @@ function applyInventoryPage(destination, page) {
     if (hadItemFocus) $("[data-item]", wrap)?.focus({ preventScroll: true });
   }
   if (state.selected && state.inspector === "detail") patchSelectedDetail(state.selected);
-  void prefetchInventoryPages(page.nextCursor, state.generation, state.inventoryLimit);
+  void prefetchInventoryPages(state.page, state.generation, state.inventoryLimit);
   void patchVisibleInventory();
 }
 
 function changeInventoryPage(direction) {
-  if (!state.network || state.inventoryLoading || state.inventoryQueryPending) return false;
-  let destination;
-  if (direction < 0) {
-    if (state.page === 0) return false;
-    destination = { page: state.page - 1, ...state.cursors[state.page - 1] };
-    if (destination.anchor) destination.cursor = "";
-  } else if (direction === 0) {
-    if (state.page === 0) return false;
-    destination = { page: 0, cursor: "", anchor: "" };
-  } else {
-    if (!state.nextCursor) return false;
-    destination = { page: state.page + 1, cursor: state.nextCursor, anchor: "" };
-  }
+  if (!state.network || state.inventoryQueryPending || state.inventoryPageCount <= 1) return false;
+  const current = state.inventoryDesiredPage ?? state.inventoryTarget?.page ?? state.page;
+  const next = direction === 0 ? 0 : (current + direction + state.inventoryPageCount) % state.inventoryPageCount;
+  state.inventoryDesiredPage = next;
+  if (state.inventoryLoading && !cachedInventoryPage("", { ...inventoryQuerySpec(state.inventoryLimit), page: next + 1 })) { renderInventoryPager(); return true; }
+  navigateInventoryPage(next);
+  return true;
+}
+
+function navigateInventoryPage(pageIndex) {
+  const destination = { page: pageIndex, cursor: "", anchor: "", absolute: true };
   const limit = inventoryPageLimit();
-  const cached = cachedInventoryPage(destination.cursor, { ...inventoryQuerySpec(limit), anchor: destination.anchor || "" });
+  const cached = cachedInventoryPage("", { ...inventoryQuerySpec(limit), page: pageIndex + 1 });
   if (cached) {
     state.generation++;
+    queryController?.abort();
     inventoryLiveRequest?.abort(); inventoryLiveRequest = null;
     state.inventoryLimit = limit;
+    state.inventoryDesiredPage = null;
     applyInventoryPage(destination, cached);
-    return true;
+    return;
   }
   void loadInventory(false, { ...destination, limit });
-  return true;
 }
 
 function inventoryWheelDelta(event) {
@@ -1713,6 +1724,10 @@ async function refreshInventoryWindow(force = false) {
     const scrollTop = scroll?.scrollTop || 0;
     const windowX=window.scrollX, windowY=window.scrollY;
     state.items = value.items; state.nextCursor = value.nextCursor;
+    if (value.total != null && state.inventoryTotal != null && value.total !== state.inventoryTotal) clearInventoryPages();
+    state.inventoryPageCount = value.pageCount || state.inventoryPageCount;
+    state.inventoryTotal = value.total ?? state.inventoryTotal;
+    state.page = Math.min(state.page, state.inventoryPageCount - 1);
     state.anchorCursor = value.anchorCursor || state.anchorCursor;
     state.cursors[state.page] = { cursor: state.cursor, anchor: state.page > 0 ? state.anchorCursor : "" };
     cacheInventoryPage("", { ...inventoryQuerySpec(state.inventoryLimit), anchor: state.page > 0 ? state.anchorCursor : "" }, value);
@@ -1729,7 +1744,8 @@ async function refreshInventoryWindow(force = false) {
       else patchSelectedDetail(state.selected);
     }
     message("#inventory-message", "");
-    void prefetchInventoryPages(value.nextCursor, generation, spec.limit);
+    if (!spec.anchor) cacheInventoryPage("", { ...inventoryQuerySpec(state.inventoryLimit), page: state.page + 1 }, value);
+    void prefetchInventoryPages(state.page, generation, spec.limit);
   } catch (error) {
     if (context === state.context && generation === state.generation && error.name !== "AbortError") message("#inventory-message", errorText(error));
   } finally {
@@ -1839,6 +1855,7 @@ async function switchNetwork(id) {
   state.items = [];
   state.nextCursor = "";
   state.page = 0; state.cursor = ""; state.anchorCursor = "";
+  state.inventoryPageCount = 1; state.inventoryTotal = null; state.inventoryDesiredPage = null;
   state.cursors = [{ cursor: "", anchor: "" }]; state.inventoryTarget = null; state.inventoryQueryPending = false;
   clearInventoryPages(); inventoryWheel.reset();
   state.inventoryLoading = false;
@@ -1958,13 +1975,13 @@ $("#refresh-inventory").addEventListener("click", () => { void (state.inventoryQ
 $("#first-page").addEventListener("click", () => { inventoryWheel.reset(); changeInventoryPage(0); });
 $("#prev-page").addEventListener("click", () => { inventoryWheel.reset(); changeInventoryPage(-1); });
 $("#next-page").addEventListener("click", () => { inventoryWheel.reset(); changeInventoryPage(1); });
-$("#view-inventory .table-wrap").addEventListener("wheel", event => {
+$("#view-inventory .catalog").addEventListener("wheel", event => {
   if (matchMedia("(max-width: 900px)").matches || state.view !== "inventory") return;
   if (event.ctrlKey || event.target.closest("input, select, textarea")) return;
   const delta = inventoryWheelDelta(event);
   if (!delta) return;
   event.preventDefault();
-  const direction = inventoryWheel.consume(delta, performance.now(), state.inventoryLoading);
+  const direction = inventoryWheel.consume(delta, performance.now());
   if (direction) changeInventoryPage(direction);
 }, { passive: false });
 document.addEventListener("keydown", event => {

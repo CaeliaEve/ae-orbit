@@ -7,7 +7,7 @@ const source = await readFile(new URL("../src/app.mjs", import.meta.url), "utf8"
 function fixture(request) {
   const old = { id: "42", quantity: "5" };
   const state = { network: { id: "n" }, inventoryLoading: false, context: 1, generation: 3, page: 4,
-    cursors: [], anchorCursor: "anchor-42", cursor: "boundary", inventoryLimit: 2, selected: old, items: [old],
+    inventoryPageCount: 10, cursors: [], anchorCursor: "anchor-42", cursor: "boundary", inventoryLimit: 2, selected: old, items: [old],
     inspector: "detail", itemCache: new Map() };
   const elements = new Map([[".table-wrap", { scrollTop: 120 }], ["#page-label", {}], ["#next-page", {}]]);
   const focused = { dataset: { item: "42" } };

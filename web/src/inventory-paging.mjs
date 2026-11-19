@@ -1,20 +1,19 @@
-// Wheel input is consumed as it arrives; it never queues future page changes.
-export function createInventoryWheel({ threshold = 80, interval = 220, idle = 160 } = {}) {
-  let amount = 0, lastAt = -Infinity, turnedAt = -Infinity, direction = 0;
+// NEI uses the wheel's direction directly: each mouse detent changes one page.
+// Accumulate only fine pixel input from trackpads, without a page cooldown.
+export function createInventoryWheel({ threshold = 40, idle = 160 } = {}) {
+  let amount = 0, lastAt = -Infinity, direction = 0;
   return {
-    reset() { amount = 0; lastAt = turnedAt = -Infinity; direction = 0; },
-    consume(delta, now, loading = false) {
+    reset() { amount = 0; lastAt = -Infinity; direction = 0; },
+    consume(delta, now) {
       if (!Number.isFinite(delta) || !delta) return 0;
       const nextDirection = Math.sign(delta);
       const reversed = direction && nextDirection !== direction;
       if (reversed || now - lastAt > idle) amount = 0;
       direction = nextDirection;
       lastAt = now;
-      if (loading || (!reversed && now - turnedAt < interval)) { amount = 0; return 0; }
       amount += delta;
       if (Math.abs(amount) < threshold) return 0;
       amount = 0;
-      turnedAt = now;
       return nextDirection;
     },
   };
