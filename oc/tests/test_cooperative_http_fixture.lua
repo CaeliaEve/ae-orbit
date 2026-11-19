@@ -55,8 +55,10 @@ for _,role in ipairs({"quantity_worker","primary"}) do
   if role=="quantity_worker" then
     assert(receipt.id=="2" and receipt.quantity=="9223372036854775807" and receipt.craftable==json.null)
     assert(fixture_requests==0)
+    assert(fixture_native_scans==0,"quantity worker performed native discovery")
   else
     assert(receipt.id=="1" and receipt.craftable==true and fixture_requests==1)
+    assert(fixture_native_scans>0,"healthy HTTP fixture never exercised native discovery")
   end
   os.remove(FIXTURE_JOURNAL);os.remove(FIXTURE_JOURNAL..".0");os.remove(FIXTURE_JOURNAL..".1")
 end

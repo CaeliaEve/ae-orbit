@@ -610,6 +610,94 @@ paths:
       responses:
         '200': {description: Scoped inventory statistics and candidate progress}
         default: {$ref: '#/components/responses/Error'}
+  /api/v1/networks/{network}/inventory-history:
+    parameters:
+      - {$ref: '#/components/parameters/NetworkID'}
+      - {$ref: '#/components/parameters/HistoryEpoch'}
+      - {$ref: '#/components/parameters/HistoryItem'}
+      - {$ref: '#/components/parameters/HistoryFrom'}
+      - {$ref: '#/components/parameters/HistoryTo'}
+    get:
+      operationId: inventoryHistorySeries
+      tags: [Inventory]
+      description: |
+        Network viewers may read retained no-NBT history. Omitted epoch selects
+        the latest inventory profile; omitted dates select its recording start
+        through now. Total quantities use backend minute snapshots and rollups;
+        single-item curves show the last known quantity, not continuous sampling.
+        Automatic resolution keeps approximately 2000 points, using multi-day
+        buckets for long retained ranges. Explicit resolution rejects larger
+        ranges. History does not queue OC reads or recover earlier unsaved data.
+      parameters:
+        - {name: resolution, in: query, schema: {type: integer, enum: [0, 60, 3600, 86400], default: 0}, description: Zero or omitted selects automatic resolution in seconds}
+      responses:
+        '200': {description: Exact decimal history series, content: {application/json: {schema: {$ref: '#/components/schemas/InventoryHistorySeries'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/networks/{network}/inventory-history/records:
+    parameters:
+      - {$ref: '#/components/parameters/NetworkID'}
+      - {$ref: '#/components/parameters/HistoryEpoch'}
+      - {$ref: '#/components/parameters/HistoryItem'}
+      - {$ref: '#/components/parameters/HistoryFrom'}
+      - {$ref: '#/components/parameters/HistoryTo'}
+      - {$ref: '#/components/parameters/HistoryKind'}
+      - {$ref: '#/components/parameters/HistoryDirection'}
+      - {$ref: '#/components/parameters/HistorySnapshot'}
+      - {$ref: '#/components/parameters/HistoryBefore'}
+    get:
+      operationId: inventoryHistoryRecords
+      tags: [Inventory]
+      description: |
+        Append-only records, newest ID first. Retain epoch, dates, filters and
+        returned snapshot for subsequent pages; use next as before. Initial
+        baseline and first observations have null previous_quantity and delta.
+        Detail ranges are independent of chart point limits. No automatic purge.
+      parameters:
+        - {name: limit, in: query, schema: {type: integer, minimum: 0, maximum: 200, default: 100}, description: Zero uses the default}
+      responses:
+        '200': {description: Frozen keyset page, content: {application/json: {schema: {$ref: '#/components/schemas/InventoryHistoryPage'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/networks/{network}/inventory-history/items:
+    parameters:
+      - {$ref: '#/components/parameters/NetworkID'}
+      - {$ref: '#/components/parameters/HistoryEpoch'}
+    get:
+      operationId: inventoryHistoryItems
+      tags: [Inventory]
+      description: Search at most 30 already-recorded items by Chinese label, pinyin, initials, registry name and exact @modid; does not query the game.
+      parameters:
+        - {name: q, in: query, schema: {type: string, maxLength: 128}, description: Maximum 128 UTF-8 bytes; space-separated conditions are combined}
+      responses:
+        '200': {description: Matching historical item identities, content: {application/json: {schema: {type: array, maxItems: 30, items: {$ref: '#/components/schemas/InventoryHistoryItem'}}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/networks/{network}/inventory-history/export:
+    parameters:
+      - {$ref: '#/components/parameters/NetworkID'}
+      - {$ref: '#/components/parameters/HistoryEpoch'}
+      - {$ref: '#/components/parameters/HistoryItem'}
+      - {$ref: '#/components/parameters/HistoryFrom'}
+      - {$ref: '#/components/parameters/HistoryTo'}
+      - {$ref: '#/components/parameters/HistoryKind'}
+      - {$ref: '#/components/parameters/HistoryDirection'}
+      - {$ref: '#/components/parameters/HistorySnapshot'}
+      - {$ref: '#/components/parameters/HistoryBefore'}
+    get:
+      operationId: inventoryHistoryExport
+      tags: [Inventory]
+      description: |
+        Stream the matching frozen raw records as UTF-8 CSV with BOM, in
+        descending ID order. Quantities retain their exact decimal spelling.
+        Item labels and registry names escape spreadsheet formula prefixes.
+        A five-minute request budget bounds exports; very large histories
+        should be exported in time segments.
+      responses:
+        '200':
+          description: CSV attachment
+          headers:
+            Content-Disposition: {schema: {type: string}}
+          content:
+            text/csv: {schema: {type: string}}
+        default: {$ref: '#/components/responses/Error'}
   /api/v1/networks/{network}/cpus:
     parameters: [{$ref: '#/components/parameters/NetworkID'}]
     get:
@@ -924,6 +1012,14 @@ components:
     JobID: {name: job, in: path, required: true, schema: {$ref: '#/components/schemas/ID'}}
     CSRF: {name: X-CSRF-Token, in: header, description: Required for cookie-authenticated mutations, schema: {type: string}}
     Origin: {name: Origin, in: header, description: Must equal AE_PUBLIC_URL for cookie-authenticated mutations, schema: {type: string}}
+    HistoryEpoch: {name: epoch, in: query, schema: {$ref: '#/components/schemas/Quantity'}, description: Canonical nonnegative int64; zero or omitted selects the latest profile}
+    HistoryItem: {name: item, in: query, schema: {$ref: '#/components/schemas/Quantity'}, description: Canonical nonnegative int64; zero or omitted selects all items}
+    HistoryFrom: {name: from, in: query, schema: {type: string, format: date-time}, description: Inclusive recording-time boundary; omitted uses the profile recording start}
+    HistoryTo: {name: to, in: query, schema: {type: string, format: date-time}, description: Inclusive recording-time boundary after from; omitted uses now; maximum range 200 years}
+    HistoryKind: {name: kind, in: query, schema: {type: string, enum: ['', baseline, first, change]}, description: Empty or omitted includes all record types}
+    HistoryDirection: {name: direction, in: query, schema: {type: string, enum: ['', increase, decrease]}, description: Direction applies only to actual quantity changes}
+    HistorySnapshot: {name: snapshot, in: query, schema: {$ref: '#/components/schemas/Quantity'}, description: Canonical nonnegative int64 record watermark; zero or omitted captures the current maximum ID}
+    HistoryBefore: {name: before, in: query, schema: {$ref: '#/components/schemas/Quantity'}, description: Exclusive canonical nonnegative int64 record cursor; zero or omitted starts at the newest row}
   requestBodies:
     ProductionJobControl:
       required: true
@@ -954,6 +1050,75 @@ components:
                 required: [code, message]
                 properties: {code: {type: string}, message: {type: string}}
   schemas:
+    InventoryHistoryEpoch:
+      type: object
+      required: [id, scope, started_at]
+      properties:
+        id: {$ref: '#/components/schemas/PositiveQuantity'}
+        scope: {type: string, enum: [nesql_plain, observed_plain]}
+        started_at: {type: string, format: date-time}
+    InventoryHistoryItem:
+      type: object
+      required: [id, name, damage, label, quantity]
+      properties:
+        id: {$ref: '#/components/schemas/PositiveQuantity'}
+        name: {type: string}
+        damage: {type: integer}
+        label: {type: string}
+        quantity: {$ref: '#/components/schemas/Quantity'}
+    InventoryHistoryPoint:
+      type: object
+      required: [at, quantity, minimum, maximum, entries, checked, candidates, online, all_online, samples]
+      properties:
+        at: {type: string, format: date-time}
+        quantity: {type: string, pattern: '^(0|[1-9][0-9]{0,39})$'}
+        minimum: {type: string, pattern: '^(0|[1-9][0-9]{0,39})$'}
+        maximum: {type: string, pattern: '^(0|[1-9][0-9]{0,39})$'}
+        entries: {type: string, pattern: '^(|0|[1-9][0-9]*)$', description: Empty for single-item curves}
+        checked: {type: string, pattern: '^(|0|[1-9][0-9]*)$', description: Empty for single-item curves}
+        candidates: {type: string, pattern: '^(|0|[1-9][0-9]*)$', description: Empty for single-item curves}
+        online: {type: boolean}
+        all_online: {type: boolean}
+        samples: {$ref: '#/components/schemas/PositiveQuantity'}
+        oldest_observation: {type: string, format: date-time}
+        last_observation: {type: string, format: date-time}
+    InventoryHistorySeries:
+      type: object
+      required: [epochs, epoch, started_at, from, to, resolution, points, basis, watermark]
+      properties:
+        epochs: {type: array, items: {$ref: '#/components/schemas/InventoryHistoryEpoch'}}
+        epoch: {$ref: '#/components/schemas/Quantity'}
+        started_at: {type: [string, 'null'], format: date-time}
+        from: {type: string, format: date-time}
+        to: {type: string, format: date-time}
+        resolution: {type: integer, minimum: 60, description: Automatic multi-day resolutions can exceed 86400 seconds}
+        points: {type: array, maxItems: 2003, items: {$ref: '#/components/schemas/InventoryHistoryPoint'}}
+        basis: {type: string, enum: [minute_snapshots, last_known_quantity]}
+        item: {$ref: '#/components/schemas/InventoryHistoryItem'}
+        watermark: {type: string, pattern: '^(|0|[1-9][0-9]*)$', description: Empty before any recording profile exists}
+    InventoryHistoryRecord:
+      type: object
+      required: [id, item_id, name, damage, label, quantity, previous_quantity, delta, kind, recorded_at, observed_at]
+      properties:
+        id: {$ref: '#/components/schemas/PositiveQuantity'}
+        item_id: {$ref: '#/components/schemas/PositiveQuantity'}
+        name: {type: string}
+        damage: {type: integer}
+        label: {type: string}
+        quantity: {$ref: '#/components/schemas/Quantity'}
+        previous_quantity: {type: [string, 'null'], pattern: '^(0|[1-9][0-9]*)$'}
+        delta: {type: [string, 'null'], pattern: '^-?(0|[1-9][0-9]*)$'}
+        kind: {type: string, enum: [baseline, first, change]}
+        recorded_at: {type: string, format: date-time}
+        observed_at: {type: string, format: date-time}
+    InventoryHistoryPage:
+      type: object
+      required: [records, next, snapshot, has_more]
+      properties:
+        records: {type: array, maxItems: 200, items: {$ref: '#/components/schemas/InventoryHistoryRecord'}}
+        next: {type: string, pattern: '^(|[1-9][0-9]*)$'}
+        snapshot: {type: string, pattern: '^(|0|[1-9][0-9]*)$'}
+        has_more: {type: boolean}
     ProductionJobKey:
       type: string
       minLength: 8

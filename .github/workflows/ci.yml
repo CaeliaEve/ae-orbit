@@ -19,6 +19,25 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  web:
+    name: Web build and tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm run test:web
+      - name: Verify checked-in browser assets
+        run: |
+          npm run build
+          git diff --exit-code -- web/static/app.js web/static/style.css web/static/compact.css
+
   test:
     name: Go, Lua and protocol
     runs-on: ubuntu-24.04

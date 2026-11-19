@@ -15,6 +15,7 @@ local fixture_tag=FIXTURE_TAGGED and require("aeorbit.base64").decode("H4sIAAAAA
 fixture_stock, fixture_requests, fixture_continuations = 10, 0, 0
 fixture_lookup_failures = 0
 fixture_exact_reads, fixture_recipe_calls, fixture_recipe_failures = 0, 0, 0
+fixture_native_scans = 0
 fixture_framed_requests, fixture_framed_eof_reads = 0, 0
 local job
 local bridge
@@ -28,6 +29,7 @@ end
 local me = {}
 function me.allItems()
   assert(not worker,"worker enumerated inventory")
+  fixture_native_scans=fixture_native_scans+1
   local index=0
   return proxy.callback(function() index=index+1;if index<=2 then return raw(index) end end)
 end
@@ -136,7 +138,9 @@ bridge=runner.new({
   client=client.new(proxy.new(internet),{url=FIXTURE_URL,token=FIXTURE_TOKEN,response_bytes=4096,request_bytes=2048,timeout=5},
     {now=fixture_now,sleep=fixture_sleep}),
   journal=journal.new(fs,FIXTURE_JOURNAL,32768),
-  now=fixture_now,free_memory=function() return FIXTURE_FREE_MEMORY or 131072 end,yield=function() end
+  -- Model a healthy two-module OC. Explicit low-memory cases still override
+  -- this value; the default must allow the production scan reserve to pass.
+  now=fixture_now,free_memory=function() return FIXTURE_FREE_MEMORY or 1500000 end,yield=function() end
 })
 bridge:start()
 function fixture_fail_lookup(value,emit_event)
