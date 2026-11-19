@@ -59,7 +59,7 @@
   .settings-row small { font-size: 11px; }
 }
 
-/* Collapsed navigation leaves a single, keyboard-accessible Logo control. */
+/* Collapsed navigation keeps the Logo and every destination available as icons. */
 @media (min-width: 901px) {
   .sidebar-head { margin-bottom: 24px; }
   .sidebar-head .brand { flex: 1; gap: 10px; margin: 0; font-size: 17px; }
@@ -70,10 +70,16 @@
   #sidebar-toggle:focus-visible { outline: 2px solid #f0f2f4; outline-offset: 2px; }
   html[data-sidebar-collapsed="true"] .shell { grid-template-columns: 60px minmax(0, 1fr); }
   html[data-sidebar-collapsed="true"] .sidebar { padding: 20px 6px; }
-  html[data-sidebar-collapsed="true"] .sidebar-head { justify-content: center; margin: 0; }
-  html[data-sidebar-collapsed="true"] .sidebar > :not(.sidebar-head),
+  html[data-sidebar-collapsed="true"] .sidebar-head { justify-content: center; margin: 0 0 20px; }
+  html[data-sidebar-collapsed="true"] .sidebar-foot,
+  html[data-sidebar-collapsed="true"] .sidebar > button > span,
+  html[data-sidebar-collapsed="true"] .sidebar-secondary button > span,
   html[data-sidebar-collapsed="true"] .sidebar-head .brand,
   html[data-sidebar-collapsed="true"] #sidebar-toggle svg { display: none; }
+  html[data-sidebar-collapsed="true"] .sidebar > button,
+  html[data-sidebar-collapsed="true"] .sidebar-secondary button { justify-content: center; width: 46px; min-height: 42px; padding: 0; gap: 0; }
+  html[data-sidebar-collapsed="true"] .sidebar > button:focus-visible,
+  html[data-sidebar-collapsed="true"] .sidebar-secondary button:focus-visible { outline: 2px solid #f0f2f4; outline-offset: -2px; }
   html[data-sidebar-collapsed="true"] #sidebar-toggle { width: 46px; height: 46px; border-radius: 8px; }
   html[data-sidebar-collapsed="true"] .sidebar-toggle-mark { display: block; width: 34px; height: 34px; }
 }
