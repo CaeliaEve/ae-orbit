@@ -1840,3 +1840,106 @@ body { padding: 0; background: #0a0a0b; }
   #view-network .network-hero { padding: 4px 0 0; }
   #view-network .network-panel-heading { padding: 0 0 12px; }
 }
+
+/* CPU monitoring: exact snapshot metrics and a compact, expandable roster. */
+#view-cpus .cpu-overview { display: block; margin: 0 0 18px; padding: 4px 0 0; }
+.cpu-monitor-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 20px; }
+.cpu-monitor-metric { display: grid; align-content: start; gap: 8px; min-width: 0; }
+.cpu-monitor-metric > span { color: #929ba7; font-size: 12px; }
+.cpu-monitor-metric > strong { color: #eef0f3; font-size: 30px; font-weight: 600; line-height: 1.2; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.cpu-monitor-metric > strong small { margin-left: 7px; color: #929ba7; font-size: 11px; font-weight: 400; }
+.cpu-monitor-metric[data-tone="busy"] > strong { color: #e7bf72; }
+.cpu-monitor-metric[data-tone="idle"] > strong { color: #70c48c; }
+.cpu-monitor-metric > .cpu-storage-total { font-size: 26px; }
+.cpu-monitor-meta { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px 16px; margin-top: 16px; color: #929ba7; font-size: 11px; }
+.cpu-monitor-meta > span, .cpu-monitor-notice { display: flex; align-items: center; gap: 6px; }
+.cpu-monitor-meta svg, .cpu-monitor-notice svg { width: 13px; height: 13px; flex: 0 0 auto; }
+.cpu-monitor-notice { margin: 10px 0 0; padding: 8px 10px; border-radius: 5px; color: #ddbf86; background: #211d15; font-size: 11px; }
+.cpu-monitor-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; flex: 0 0 auto; margin-bottom: 10px; }
+.cpu-monitor-search { display: flex; align-items: center; gap: 8px; flex: 1 1 240px; min-width: 0; min-height: 38px; padding: 0 10px; background: #14171b; border: 1px solid transparent; border-radius: 6px; }
+.cpu-monitor-search:focus-within { border-color: #929ba7; }
+.cpu-monitor-search svg { width: 16px; height: 16px; flex: 0 0 auto; color: #929ba7; }
+.cpu-monitor-search input { width: 100%; min-width: 0; min-height: 36px; padding: 6px 0; background: transparent; border: 0; color: #eceef1; font-size: 12px; }
+.cpu-monitor-filters { display: flex; align-items: center; gap: 3px; padding: 3px; border-radius: 6px; background: #14171b; }
+.cpu-monitor-filters button { display: flex; align-items: center; justify-content: center; gap: 5px; padding: 0 9px; min-height: 30px; color: #929ba7; background: transparent; border: 0; border-radius: 4px; font-size: 12px; white-space: nowrap; }
+.cpu-monitor-filters button > span { font-size: 10px; opacity: .8; font-variant-numeric: tabular-nums; }
+.cpu-monitor-filters button:hover { background: #23272d; color: #eceef1; }
+.cpu-monitor-filters button[aria-pressed="true"] { background: #e9edf1; color: #14171b; }
+.cpu-monitor-sort { display: flex; flex: 0 0 auto; }
+.cpu-monitor-sort select { min-width: 0; min-height: 36px; padding: 6px 8px; background: #14171b; border-color: transparent; font-size: 12px; }
+.cpu-monitor-count { color: #929ba7; font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+#view-cpus #cpu-list { margin: 0; padding: 0; min-width: 0; }
+.cpu-monitor-table { --cpu-columns: minmax(170px, 1.15fr) 74px 100px 74px minmax(160px, 1.2fr) 20px; }
+.cpu-monitor-columns, .cpu-monitor-row > summary { display: grid; grid-template-columns: var(--cpu-columns); gap: 14px; align-items: center; }
+.cpu-monitor-columns { position: sticky; top: 0; z-index: 2; min-height: 36px; padding: 0 10px; background: #0a0a0b; color: #7f8995; font-size: 11px; }
+.cpu-monitor-row { margin: 0; border: 0; background: transparent; border-radius: 6px; }
+.cpu-monitor-row > summary { position: relative; min-height: 66px; padding: 10px; border: 0; border-radius: 6px; list-style: none; cursor: pointer; }
+.cpu-monitor-row > summary::-webkit-details-marker { display: none; }
+.cpu-monitor-row > summary::marker { content: ""; }
+.cpu-monitor-row > summary:hover { background: #14171b; }
+.cpu-monitor-row[open] { background: #111316; }
+.cpu-monitor-row > summary:focus-visible { outline: 2px solid #e9edf1; outline-offset: -2px; }
+.cpu-monitor-identity { display: flex; align-items: center; min-width: 0; gap: 10px; }
+.cpu-monitor-identity > svg { width: 18px; height: 18px; flex: 0 0 auto; color: #7f8995; }
+.cpu-monitor-identity > span { display: grid; min-width: 0; gap: 4px; }
+.cpu-monitor-identity strong { color: #eef0f3; font-size: 13px; font-weight: 550; overflow-wrap: anywhere; }
+.cpu-monitor-identity small { color: #7f8995; font-size: 10px; }
+.cpu-monitor-state { display: flex; align-items: center; gap: 6px; color: #a5aeb8; font-size: 12px; white-space: nowrap; }
+.cpu-state-dot { width: 6px; height: 6px; border-radius: 50%; background: #70c48c; flex: 0 0 auto; }
+.cpu-monitor-row[data-state="busy"] .cpu-monitor-state { color: #e7bf72; }
+.cpu-monitor-row[data-state="busy"] .cpu-state-dot { background: #e7bf72; }
+.cpu-monitor-storage, .cpu-monitor-coprocessors { color: #c6cdd5; font-size: 12px; white-space: nowrap; }
+.cpu-mobile-unit { display: none; }
+.cpu-monitor-output { display: flex; align-items: center; gap: 8px; min-width: 0; color: #7f8995; font-size: 11px; }
+.cpu-monitor-output > svg { width: 16px; height: 16px; flex: 0 0 auto; }
+.cpu-monitor-output > span { display: grid; min-width: 0; gap: 3px; }
+.cpu-monitor-output strong { color: #dce1e7; font-weight: 500; font-size: 12px; overflow-wrap: anywhere; }
+.cpu-monitor-output small { color: #a0aab5; font-size: 11px; font-variant-numeric: tabular-nums; }
+.cpu-monitor-expand { display: grid; place-items: center; color: #7f8995; }
+.cpu-monitor-expand svg { width: 15px; height: 15px; }
+.cpu-monitor-row[open] .cpu-monitor-expand svg { transform: rotate(180deg); }
+.cpu-monitor-details { display: grid; gap: 10px; padding: 2px 38px 16px; color: #a5aeb8; font-size: 11px; line-height: 1.6; }
+.cpu-monitor-details dl { display: grid; grid-template-columns: minmax(120px, .65fr) minmax(120px, .65fr) minmax(0, 1.5fr); gap: 12px; margin: 0; }
+.cpu-monitor-details dl > div { display: grid; align-content: start; gap: 4px; min-width: 0; }
+.cpu-monitor-details dt { color: #7f8995; font-size: 10px; }
+.cpu-monitor-details dd { margin: 0; color: #d2d9e1; overflow-wrap: anywhere; }
+.cpu-monitor-details p { margin: 0; overflow-wrap: anywhere; }
+.cpu-output-registry { display: block; margin-top: 3px; color: #7f8995; font-size: 10px; }
+.cpu-monitor-details .cpu-detail-note { color: #7f8995; font-size: 10px; }
+.cpu-monitor-empty { display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 10px; min-height: 200px; color: #7f8995; font-size: 12px; }
+.cpu-monitor-empty > svg { width: 26px; height: 26px; }
+.cpu-monitor-empty > strong { color: #d2d9e1; font-size: 14px; }
+.cpu-monitor-empty .secondary { min-height: 34px; font-size: 12px; }
+@media (max-width: 1150px) and (min-width: 901px) {
+  .cpu-monitor-table { --cpu-columns: minmax(140px, 1fr) 62px 82px 58px minmax(130px, 1fr) 18px; }
+  .cpu-monitor-columns, .cpu-monitor-row > summary { gap: 10px; }
+  .cpu-monitor-search { flex-basis: 220px; }
+}
+@media (max-width: 900px) {
+  #view-cpus .cpu-overview { margin: 0 0 16px; }
+  .cpu-monitor-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+  .cpu-monitor-metric > strong { font-size: 28px; }
+  .cpu-monitor-metric > .cpu-storage-total { font-size: 24px; }
+  .cpu-monitor-meta { margin-top: 12px; }
+  .cpu-monitor-toolbar { gap: 8px; }
+  .cpu-monitor-search { flex: 1 1 100%; min-height: 44px; }
+  .cpu-monitor-search input { min-height: 42px; font-size: 16px; }
+  .cpu-monitor-filters { flex: 1 1 100%; justify-content: space-between; min-width: 0; }
+  .cpu-monitor-filters button { flex: 1 1 auto; padding: 0 6px; min-width: 0; min-height: 40px; }
+  .cpu-monitor-sort select { min-height: 40px; }
+  .cpu-monitor-count { margin-left: auto; }
+  .cpu-monitor-columns { display: none; }
+  .cpu-monitor-row > summary { grid-template-columns: minmax(0, 1fr) 65px 18px; gap: 8px 10px; padding: 12px 8px; }
+  .cpu-monitor-identity { grid-column: 1; grid-row: 1; }
+  .cpu-monitor-state { grid-column: 2; grid-row: 1; justify-content: flex-end; }
+  .cpu-monitor-expand { grid-column: 3; grid-row: 1; }
+  .cpu-monitor-storage { grid-column: 1; grid-row: 2; padding-left: 28px; }
+  .cpu-monitor-coprocessors { grid-column: 2 / 4; grid-row: 2; text-align: right; font-size: 11px; }
+  .cpu-mobile-unit { display: inline; color: #7f8995; }
+  .cpu-monitor-output { grid-column: 1 / -1; grid-row: 3; padding-left: 28px; }
+  .cpu-monitor-output > svg { display: none; }
+  .cpu-monitor-output.has-output > span { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 8px; }
+  .cpu-monitor-details { padding: 2px 16px 16px 36px; }
+  .cpu-monitor-details dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .cpu-monitor-details dl > div:last-child { grid-column: 1 / -1; }
+}

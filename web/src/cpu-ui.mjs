@@ -40,3 +40,61 @@ export function cpuOutputText(cpu) {
   if (reason) return `最终产物不可用：${reason}`;
   return cpu?.busy ? "最终产物暂不可用" : "当前空闲，无合成输出";
 }
+
+function exactBytes(value) {
+  if (typeof value === "number" && !Number.isSafeInteger(value)) return null;
+  if (!["string", "number", "bigint"].includes(typeof value) || !/^\d{1,64}$/.test(String(value))) return null;
+  return BigInt(value);
+}
+
+export function formatCPUStorage(value) {
+  const bytes = exactBytes(value);
+  if (bytes === null) return "未提供";
+  const units = ["B", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB"];
+  let unit = 0, divisor = 1n;
+  while (bytes >= divisor * 1024n && unit < units.length - 1) { divisor *= 1024n; unit++; }
+  if (!unit) return `${formatQuantity(bytes)} B`;
+  const tenths = (bytes * 10n + divisor / 2n) / divisor;
+  const fraction = tenths % 10n;
+  return `${formatQuantity(tenths / 10n)}${fraction ? `.${fraction}` : ""} ${units[unit]}`;
+}
+
+export function cpuMonitorModel(cpus = [], { search = "", filter = "all", sort = "network" } = {}) {
+  const snapshot = Array.isArray(cpus) ? cpus : [];
+  const names = new Map();
+  for (const cpu of snapshot) if (cpu?.name?.trim()) names.set(cpu.name, (names.get(cpu.name) || 0) + 1);
+  const rows = snapshot.map((cpu, index) => {
+    const named = typeof cpu.name === "string" && !!cpu.name.trim();
+    const duplicate = named && names.get(cpu.name) > 1;
+    return {
+      cpu, index, name: cpuDisplayName(cpu, index), unnamed: !named, duplicate,
+      key: named && !duplicate ? `name:${cpu.name}` : `snapshot:${cpu.id || index}`,
+      storage: exactBytes(cpu.storage),
+    };
+  });
+  const busy = rows.filter(row => row.cpu.busy).length;
+  const outputs = rows.filter(row => row.cpu.output).length;
+  const storageKnown = rows.every(row => row.storage !== null);
+  const tokens = String(search).normalize("NFKC").toLocaleLowerCase().trim().split(/\s+/).filter(Boolean);
+  const visible = rows.filter(row => {
+    if (filter === "busy" && !row.cpu.busy || filter === "idle" && row.cpu.busy || filter === "output" && !row.cpu.output) return false;
+    const text = [row.name, row.cpu.id, row.cpu.output?.label, row.cpu.output?.name].join(" ").normalize("NFKC").toLocaleLowerCase();
+    return tokens.every(token => text.includes(token));
+  });
+  visible.sort((a, b) => {
+    if (sort === "busy" && a.cpu.busy !== b.cpu.busy) return a.cpu.busy ? -1 : 1;
+    if (sort === "storage" && a.storage !== b.storage) {
+      if (a.storage === null) return 1;
+      if (b.storage === null) return -1;
+      return a.storage > b.storage ? -1 : 1;
+    }
+    if (sort === "name") return a.name.localeCompare(b.name, "zh-CN", { numeric: true }) || a.index - b.index;
+    return a.index - b.index;
+  });
+  return {
+    rows, visible, total: rows.length, busy, idle: rows.length - busy, outputs,
+    busyPercent: rows.length ? Math.round(busy / rows.length * 100) : null,
+    storage: rows.length && storageKnown ? rows.reduce((sum, row) => sum + row.storage, 0n).toString() : null,
+    unnamed: rows.filter(row => row.unnamed).length, duplicates: rows.filter(row => row.duplicate).length,
+  };
+}

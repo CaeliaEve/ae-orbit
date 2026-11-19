@@ -87,6 +87,12 @@
       <section id="view-cpus" class="view" hidden>
         <h1 class="sr-only">CPU 监控</h1>
         <div id="cpu-overview" class="cpu-overview"></div>
+        <div class="cpu-monitor-toolbar">
+          <label class="cpu-monitor-search"> <i data-lucide="search" aria-hidden="true"></i><input id="cpu-monitor-search" type="search" maxlength="128" placeholder="搜索 CPU 名称、ID 或产物" aria-label="搜索 CPU 名称、快照 ID 或产物" autocomplete="off"></label>
+          <div class="cpu-monitor-filters" role="group" aria-label="CPU 状态筛选"><button data-cpu-monitor-filter="all" aria-pressed="true">全部 <span id="cpu-count-all">0</span></button><button data-cpu-monitor-filter="busy" aria-pressed="false">忙碌 <span id="cpu-count-busy">0</span></button><button data-cpu-monitor-filter="idle" aria-pressed="false">空闲 <span id="cpu-count-idle">0</span></button><button data-cpu-monitor-filter="output" aria-pressed="false">有产物 <span id="cpu-count-output">0</span></button></div>
+          <label class="cpu-monitor-sort"><span class="sr-only">CPU 排序</span><select id="cpu-monitor-sort" aria-label="CPU 排序"><option value="network">网络顺序</option><option value="busy">忙碌优先</option><option value="storage">存储从大到小</option><option value="name">名称顺序</option></select></label>
+          <span id="cpu-monitor-count" class="cpu-monitor-count" role="status"></span>
+        </div>
         <div id="cpu-list" class="aux-list"></div>
       </section>
       <section id="view-network" class="view" hidden>

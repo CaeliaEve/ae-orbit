@@ -38,7 +38,8 @@ import {
 } from "./network-ui.mjs";
 import { connectionDiagnostics, streamStateTone, streamStateText } from "./connection-diagnostics.mjs";
 import { networkErrorKind, networkRecoveryState } from "./network-recovery.mjs";
-import { cpuDisplayName, cpuSelectionState, cpuOutputText } from "./cpu-ui.mjs";
+import { cpuDisplayName, cpuSelectionState, cpuMonitorModel } from "./cpu-ui.mjs";
+import { cpuMonitorOverviewHTML, cpuMonitorListHTML } from "./cpu-monitor.mjs";
 import {
   animationFrameAt,
   catalogAnimation,
@@ -85,6 +86,7 @@ const state = {
   draftKey: "", draftBlocked: false, unchecked: new Set(), busy: false, preparing: false, inventoryLoading: false,
   orderFilter: "active", orderGroup: "batch", stream: null, streamConnected: false, streamState: "closed", generation: 0,
   context: 0, orderGeneration: 0, orderSnapshot: null, ordersLoading: false, ordersError: false,
+  cpuMonitor: { search: "", filter: "all", sort: "network", expanded: new Set() },
   activeOrderCount: 0, activeOrdersTruncated: false, detailId: "", detailGeneration: 0,
   taskMode: "jobs", jobFilter: "unsettled", jobStorageError: false,
   settings: loadSettings(), settingsSection: "display", session: null,
@@ -1080,45 +1082,33 @@ async function reconcile(id) {
 }
 
 function renderCPUs() {
-  const cpus = state.cpus.cpus || [];
-  if (!state.network) {
-    $("#cpu-summary").textContent = "尚未连接网络";
-    $("#cpu-overview").innerHTML = `<div class="empty empty-state"><i data-lucide="wifi-off"></i><strong>尚未连接网络</strong><span>连接 AE 网络后显示 CPU 状态与负载。</span></div>`;
-    $("#cpu-list").innerHTML = "";
-    paint();
-    return;
-  }
-  const busy = cpus.filter(cpu => cpu.busy).length;
-  const idle = Math.max(cpus.length - busy, 0);
-  const outputs = cpus.filter(cpu => cpu.output).length;
+  const model = cpuMonitorModel(state.cpus.cpus || [], state.cpuMonitor);
   const observed = state.cpus.observed_at || state.network?.services?.cpu_observed_at;
-  const busyPercent = cpus.length ? Math.round((busy / cpus.length) * 100) : 0;
-  const donutLevel = Math.round(busyPercent / 5) * 5;
-  $("#cpu-summary").textContent = `${cpus.length} 台已观测 · ${observed ? age(observed) : "未观测"}${state.cpus.truncated ? " · 列表不完整" : ""}`;
-  const bars = cpus.length ? cpus.map((cpu, index) => {
-    const height = cpu.busy ? 72 + (index % 4) * 6 : 18 + (index % 3) * 5;
-    return `<i class="load-bar level-${height}" title="${esc(cpuDisplayName(cpu, index))} · ${cpu.busy ? "忙碌" : "空闲"}"></i>`;
-  }).join("") : `<span class="muted">暂无负载样本</span>`;
-  const overview = `<div class="cpu-donut level-${donutLevel}" aria-label="忙碌 ${busyPercent}%"><strong>${busyPercent}%</strong><small>忙碌</small><span>${busy} / ${cpus.length || 0} 台</span></div>
-    <div class="cpu-legend">
-      <div><span>已观测 CPU</span><b class="number">${formatQuantity(cpus.length)}</b></div>
-      <div><span>空闲 CPU</span><b class="number">${formatQuantity(idle)}</b></div>
-      <div><span>可见输出</span><b class="number">${formatQuantity(outputs)}</b></div>
-    </div>
-    <div class="cpu-load"><span class="muted">当前快照负载</span><div class="load-bars">${bars}</div></div>
-  `;
-  const rows = cpus.length ? `<div class="cpu-table" role="list" aria-label="CPU 列表">${cpus.map((cpu, index) => {
-    const output = cpuOutputText(cpu);
-    const displayName = cpuDisplayName(cpu, index);
-    const unnamed = !cpu.name?.trim();
-    return `<div class="cpu-row" role="listitem">${icon("cpu")}<div><h2>${esc(displayName)}</h2><p>${formatQuantity(cpu.storage)} B · ${formatQuantity(cpu.coprocessors)} 协处理器 · 快照 ${esc(cpu.id || `${index + 1}`)}</p>${unnamed ? `<p class="muted">游戏未返回 CPU 名称；严格指定需要在游戏内设置唯一名称。</p>` : ""}<p>${esc(output)}</p></div><span class="state-label ${cpu.busy ? "busy" : ""}">${cpu.busy ? "忙碌" : "空闲"}</span></div>`;
-  }).join("")}</div>` : `<div class="empty">暂无 CPU 观测</div>`;
+  $("#cpu-summary").textContent = state.network
+    ? `${model.total} 台已观测 · ${observed ? age(observed) : "未观测"}${state.cpus.truncated ? " · 列表不完整" : ""}`
+    : "尚未连接网络";
+  const overview = state.network ? cpuMonitorOverviewHTML(model, { observed, online: !!state.network?.online, truncated: state.cpus.truncated, age }) : "";
   $("#cpu-overview").innerHTML = overview;
-  $("#cpu-list").innerHTML = rows;
+  $("#cpu-monitor-count").textContent = model.total ? `${model.visible.length} / ${model.total} 台` : "";
+  for (const [name, count] of Object.entries({ all: model.total, busy: model.busy, idle: model.idle, output: model.outputs })) {
+    $(`#cpu-count-${name}`).textContent = count;
+  }
+  $$("[data-cpu-monitor-filter]").forEach(button => button.setAttribute("aria-pressed", String(button.dataset.cpuMonitorFilter === state.cpuMonitor.filter)));
+  renderCPUList(model);
   renderDashboard();
   paint();
 }
 
+function renderCPUList(model = cpuMonitorModel(state.cpus.cpus || [], state.cpuMonitor)) {
+  const list = $("#cpu-list"), scroll = list.scrollTop;
+  const active = document.activeElement?.closest(".cpu-monitor-row");
+  const activeKey = active && list.contains(active) ? active.dataset.cpuKey : null;
+  list.innerHTML = cpuMonitorListHTML(model, { connected: !!state.network, supported: state.network?.capabilities?.cpu_selection === true, truncated: state.cpus.truncated, expanded: state.cpuMonitor.expanded });
+  list.scrollTop = scroll;
+  if (activeKey) $$(".cpu-monitor-row", list).find(row => row.dataset.cpuKey === activeKey)?.querySelector("summary")?.focus({ preventScroll: true });
+  $("#cpu-monitor-count").textContent = model.total ? `${model.visible.length} / ${model.total} 台` : "";
+  paint();
+}
 async function refreshCPUs() {
   if (!state.network) return;
   const context = state.context;
@@ -2088,6 +2078,9 @@ async function switchNetwork(id) {
   state.networkErrorKind = "";
   state.networkSnapshotReady = false;
   state.cpus = { cpus: [] };
+  state.cpuMonitor = { search: "", filter: "all", sort: "network", expanded: new Set() };
+  $("#cpu-monitor-search").value = "";
+  $("#cpu-monitor-sort").value = "network";
   state.amount = "1";
   state.cpuName = "";
   state.waitForCPU = false;
@@ -2226,6 +2219,34 @@ $("#refresh-order-detail").addEventListener("click", () => refreshOrderDetail())
 $("#order-dialog").addEventListener("cancel", () => invalidateOrderDetail());
 $("#order-dialog").addEventListener("close", () => { if (!$("#order-dialog").open) invalidateOrderDetail(); });
 $("#refresh-cpus").addEventListener("click", () => refreshCPUs());
+$("#cpu-monitor-search").addEventListener("input", event => {
+  state.cpuMonitor.search = event.target.value;
+  $("#cpu-list").scrollTop = 0;
+  renderCPUList();
+});
+$("#cpu-monitor-sort").addEventListener("change", event => {
+  state.cpuMonitor.sort = event.target.value;
+  $("#cpu-list").scrollTop = 0;
+  renderCPUList();
+});
+$("#cpu-list").addEventListener("toggle", event => {
+  const row = event.target;
+  if (!row.matches?.(".cpu-monitor-row") || !row.isConnected) return;
+  if (row.open) state.cpuMonitor.expanded.add(row.dataset.cpuKey);
+  else state.cpuMonitor.expanded.delete(row.dataset.cpuKey);
+}, true);
+$("#view-cpus").addEventListener("click", event => {
+  const button = event.target.closest("button");
+  if (!button) return;
+  if (button.dataset.cpuMonitorFilter) state.cpuMonitor.filter = button.dataset.cpuMonitorFilter;
+  else if ("cpuMonitorReset" in button.dataset) {
+    state.cpuMonitor.search = "";
+    state.cpuMonitor.filter = "all";
+    $("#cpu-monitor-search").value = "";
+  } else return;
+  $("#cpu-list").scrollTop = 0;
+  renderCPUs();
+});
 $("#refresh-network").addEventListener("click", () => refreshNetwork());
 $("#add-network").addEventListener("click", () => openNetworkDialog());
 $("#network-form").addEventListener("submit", createNetwork);
