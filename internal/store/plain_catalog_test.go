@@ -21,6 +21,11 @@ func plainFixture(t *testing.T) cooperativeFixture {
 func plainFixtureCount(t *testing.T, count int) cooperativeFixture {
 	t.Helper()
 	f := newCooperativeFixture(t)
+	return openPlainCatalogFixture(t, f, writePlainCatalogFixture(t, count))
+}
+
+func writePlainCatalogFixture(t *testing.T, count int) string {
+	t.Helper()
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "assets"), 0700); err != nil {
 		t.Fatal(err)
@@ -83,6 +88,11 @@ func plainFixtureCount(t *testing.T, count int) cooperativeFixture {
 	if err = os.WriteFile(filepath.Join(root, "manifest.json"), []byte(manifest), 0600); err != nil {
 		t.Fatal(err)
 	}
+	return root
+}
+
+func openPlainCatalogFixture(t *testing.T, f cooperativeFixture, root string) cooperativeFixture {
+	t.Helper()
 	options := store.DefaultOptions()
 	options.CatalogRoot = root
 	s, err := store.Open(ctx, f.s.Pool().Config().ConnString(), options)
@@ -304,22 +314,16 @@ func TestPlainCatalogFullExportFitsRequestBudget(t *testing.T) {
 	}
 }
 
-// Deployment tests can mount the user's immutable NESQL export to exercise
-// real registry names and labels as well as the generated large fixture.
+// Deployment tests can mount an immutable NESQL export. Ordinary CI uses a
+// self-contained Source fixture so activation and dispatch are never skipped.
 func TestPlainCatalogSourceExportFitsRequestBudget(t *testing.T) {
 	root := os.Getenv("AE_TEST_PLAIN_CATALOG_ROOT")
 	if root == "" {
-		t.Skip("no external NESQL export configured")
+		root = writePlainCatalogFixture(t, 128)
+		t.Log("using generated NESQL Source fixture; no external export configured")
 	}
-	f := newCooperativeFixture(t)
-	options := store.DefaultOptions()
-	options.CatalogRoot = root
-	s, err := store.Open(ctx, f.s.Pool().Config().ConnString(), options)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(s.Close)
-	f.s = s
+	f := openPlainCatalogFixture(t, newCooperativeFixture(t), root)
+	s := f.s
 	want := fmt.Sprint(len(s.Catalog().PlainCandidates()))
 	budget, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
