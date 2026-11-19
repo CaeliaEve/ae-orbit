@@ -3,7 +3,7 @@ import {
   Search, ListPlus, ChevronLeft, ChevronRight, ChevronDown, X, Plus, Minus, Package,
   Trash2, Check, Clock, CircleAlert, LogIn, ArrowUpRight, Server, Send, Pause, Play, Square,
   LayoutDashboard, Settings, Github, Bell, Activity, Monitor, SlidersHorizontal, Code2, FileText, CircleHelp, Copy,
-  WifiOff,
+  WifiOff, PanelLeftClose,
 } from "lucide";
 import { createAPI } from "./api.mjs";
 import { createInventoryWheel, inventoryKeyboardDirection } from "./inventory-paging.mjs";
@@ -64,7 +64,7 @@ function inventoryIcon(name) {
   }
   return inventoryIconCache.get(name);
 }
-const icons = { Orbit, Network, LogOut, Boxes, ListChecks, Cpu, RadioTower, RefreshCw, Search, ListPlus, ChevronLeft, ChevronRight, ChevronDown, X, Plus, Minus, Package, Trash2, Check, Clock, CircleAlert, LogIn, ArrowUpRight, Server, Send, Pause, Play, Square, LayoutDashboard, Settings, Github, Bell, Activity, Monitor, SlidersHorizontal, Code2, FileText, CircleHelp, Copy, WifiOff };
+const icons = { Orbit, Network, LogOut, Boxes, ListChecks, Cpu, RadioTower, RefreshCw, Search, ListPlus, ChevronLeft, ChevronRight, ChevronDown, X, Plus, Minus, Package, Trash2, Check, Clock, CircleAlert, LogIn, ArrowUpRight, Server, Send, Pause, Play, Square, LayoutDashboard, Settings, Github, Bell, Activity, Monitor, SlidersHorizontal, Code2, FileText, CircleHelp, Copy, WifiOff, PanelLeftClose };
 const paint = () => {
   const pending = $$('i[data-lucide]');
   if (!pending.length) return;
@@ -79,7 +79,7 @@ const state = {
   orders: [], devices: [], cpus: { cpus: [] }, icons: {}, filter: "", sort: "name", search: "",
   stockView: "stock", inventoryScope: "", inventoryStats: null,
   inventoryTrend: [], inventoryTrendKey: "",
-  cursor: "", anchorCursor: "", nextCursor: "", cursors: [{ cursor: "", anchor: "" }], page: 0, inventoryPageCount: 1, inventoryTotal: null, inventoryDesiredPage: null, inventoryLimit: 50, inventoryTarget: null, inventoryQueryPending: false, selected: null, amount: "1",
+  cursor: "", anchorCursor: "", inventoryWindowAnchored: false, nextCursor: "", cursors: [{ cursor: "", anchor: "" }], page: 0, inventoryPageCount: 1, inventoryTotal: null, inventoryDesiredPage: null, inventoryLimit: 50, inventoryTarget: null, inventoryQueryPending: false, selected: null, amount: "1",
   cpuName: "", waitForCPU: false, inspector: "detail", draft: { version: 1, entries: [], receipts: {} },
   draftKey: "", draftBlocked: false, unchecked: new Set(), busy: false, preparing: false, inventoryLoading: false,
   orderFilter: "active", orderGroup: "batch", stream: null, streamConnected: false, streamState: "closed", generation: 0,
@@ -143,6 +143,11 @@ function toast(message, error = false, category = "general") {
 function applySettings() {
   document.documentElement.dataset.density = state.settings.density;
   document.documentElement.dataset.inventoryLayout = state.settings.inventoryLayout;
+  document.documentElement.dataset.sidebarCollapsed = String(state.settings.sidebarCollapsed);
+  const sidebarToggle = $("#sidebar-toggle");
+  sidebarToggle.setAttribute("aria-expanded", String(!state.settings.sidebarCollapsed));
+  sidebarToggle.setAttribute("aria-label", state.settings.sidebarCollapsed ? "展开导航" : "收起导航");
+  sidebarToggle.title = state.settings.sidebarCollapsed ? "展开导航" : "收起导航";
   const remember = $("#remember-session");
   if (remember) remember.checked = state.settings.rememberSession;
 }
@@ -230,7 +235,7 @@ function textureSettingsHTML() {
     <div class="texture-pack-status" role="status" data-state="${state.texturePackError ? "error" : state.texturePackStatus.loaded ? "ready" : "idle"}">${esc(status)}</div>`;
 }
 
-function updateSettings(patch) {
+function updateSettings(patch, notify = true) {
   try {
     state.settings = saveSettings(localStorage, { ...state.settings, ...patch });
     if (patch.textureSource === "server") {
@@ -240,6 +245,10 @@ function updateSettings(patch) {
       refreshTexturePackState();
     }
     applySettings();
+    if (["sidebarCollapsed", "inventoryLayout", "density"].some(key => Object.prototype.hasOwnProperty.call(patch, key))) {
+      hideInventoryHover();
+      requestAnimationFrame(() => refreshInventoryCapacity());
+    }
     if (Object.prototype.hasOwnProperty.call(patch, "rememberSession")) {
       if (state.settings.rememberSession && state.session) saveSession(localStorage, sessionStorage, state.session, true);
       if (!state.settings.rememberSession) clearSession(localStorage, sessionStorage);
@@ -254,7 +263,7 @@ function updateSettings(patch) {
       }
     }
     renderSettings();
-    toast("设置已保存");
+    if (notify) toast("设置已保存");
   } catch { toast("设置无法保存，请检查浏览器存储。", true); }
 }
 
@@ -699,7 +708,7 @@ function patchInventoryRows() {
 
 function renderInventoryPager() {
   const loading = state.inventoryLoading;
-  $("#first-page").disabled = state.inventoryQueryPending || state.page === 0;
+  $("#first-page").disabled = state.inventoryQueryPending || (state.page === 0 && !state.inventoryWindowAnchored);
   $("#prev-page").disabled = state.inventoryQueryPending || state.inventoryPageCount <= 1;
   $("#next-page").disabled = state.inventoryQueryPending || state.inventoryPageCount <= 1;
   $("#refresh-inventory").disabled = loading;
@@ -1444,11 +1453,13 @@ function inventoryPageLimit() {
   if (wasEmptyVisible) empty.hidden = false;
   const gridStyle = getComputedStyle($("#inventory-rows"));
   const gap = parseFloat(gridStyle.gap) || 8;
-  const cardWidth = parseFloat(gridStyle.getPropertyValue("--inventory-card-min")) || 92;
-  const cardHeight = parseFloat(gridStyle.getPropertyValue("--inventory-card-height")) || 144;
-  const padding = 24;
-  const columns = Math.max(1, Math.floor((width - padding + gap) / (cardWidth + gap)));
-  const rows = Math.max(1, Math.floor((height - padding + gap) / (cardHeight + gap)));
+  const cardWidth = parseFloat(gridStyle.getPropertyValue("--inventory-card-min")) || 76;
+  const cardHeight = parseFloat(gridStyle.getPropertyValue("--inventory-card-height")) || 84;
+  const tableStyle = getComputedStyle($("#view-inventory .inventory-table"));
+  const horizontalPadding = parseFloat(tableStyle.paddingLeft) + parseFloat(tableStyle.paddingRight);
+  const verticalPadding = parseFloat(tableStyle.paddingTop) + parseFloat(tableStyle.paddingBottom);
+  const columns = Math.max(1, Math.floor((width - horizontalPadding + gap) / (cardWidth + gap)));
+  const rows = Math.max(1, Math.floor((height - verticalPadding + gap) / (cardHeight + gap)));
   wrap.style.setProperty("--inventory-rows", String(rows));
   return Math.min(200, columns * rows);
 }
@@ -1457,9 +1468,13 @@ function refreshInventoryCapacity() {
   const nextLimit = inventoryPageLimit();
   if (nextLimit === state.inventoryLimit) return false;
   if (state.network && state.view === "inventory") {
-    if (!state.inventoryLoading) void loadInventory(false, { page: state.page, cursor: "", anchor: state.page > 0 ? state.anchorCursor : "", limit: nextLimit });
+    if (!state.inventoryLoading) void loadInventory(false, { page: state.page, cursor: "", anchor: inventoryWindowAnchor(), limit: nextLimit });
   } else state.inventoryLimit = nextLimit;
   return true;
+}
+
+function inventoryWindowAnchor() {
+  return state.page > 0 || state.inventoryWindowAnchored ? state.anchorCursor : "";
 }
 
 function inventoryQuerySpec(limit) {
@@ -1613,7 +1628,7 @@ async function loadInventory(reset = false, target = null) {
   if (!state.network) return;
   const limit = target?.limit || inventoryPageLimit();
   const destination = reset ? { page: 0, cursor: "", anchor: "" }
-    : target || { page: state.page, cursor: "", anchor: state.page > 0 ? state.anchorCursor : "" };
+    : target || { page: state.page, cursor: "", anchor: inventoryWindowAnchor() };
   if (reset) {
     state.inventoryDesiredPage = null;
     state.inventoryQueryPending = true;
@@ -1668,15 +1683,16 @@ function applyInventoryPage(destination, page) {
   state.cursor = destination.cursor;
   state.items = page.items;
   state.anchorCursor = page.anchorCursor;
+  state.inventoryWindowAnchored = Boolean(destination.anchor);
   state.nextCursor = page.nextCursor;
   state.inventoryScope = page.scope;
-  state.cursors[state.page] = { cursor: state.cursor, anchor: state.page > 0 ? state.anchorCursor : "" };
+  state.cursors[state.page] = { cursor: state.cursor, anchor: inventoryWindowAnchor() };
   state.cursors.length = state.page + 1;
   state.items.forEach(item => state.itemCache.set(String(item.id), item));
   const selected = state.itemCache.get(String(state.selected?.id));
   if (selected) state.selected = selected;
   cacheInventoryPage(state.cursor, { ...inventoryQuerySpec(state.inventoryLimit), anchor: destination.anchor || "", page: destination.absolute ? state.page + 1 : "" }, page);
-  cacheInventoryPage("", { ...inventoryQuerySpec(state.inventoryLimit), anchor: state.page > 0 ? state.anchorCursor : "" }, page);
+  cacheInventoryPage("", { ...inventoryQuerySpec(state.inventoryLimit), anchor: inventoryWindowAnchor() }, page);
   if (destination.absolute || !destination.anchor) cacheInventoryPage("", { ...inventoryQuerySpec(state.inventoryLimit), page: state.page + 1 }, page);
   state.inventoryLoading = false;
   state.inventoryTarget = null;
@@ -1701,7 +1717,7 @@ function applyInventoryPage(destination, page) {
 }
 
 function changeInventoryPage(direction) {
-  if (!state.network || state.inventoryQueryPending || state.inventoryPageCount <= 1) return false;
+  if (!state.network || state.inventoryQueryPending || (direction !== 0 && state.inventoryPageCount <= 1)) return false;
   const current = state.inventoryDesiredPage ?? state.inventoryTarget?.page ?? state.page;
   const next = direction === 0 ? 0 : (current + direction + state.inventoryPageCount) % state.inventoryPageCount;
   state.inventoryDesiredPage = next;
@@ -1797,7 +1813,7 @@ let catalogListRefreshAt = 0, inventoryRefreshTimer = null;
 async function refreshInventoryWindow(force = false) {
   if (!state.network || state.inventoryLoading || state.inventoryQueryPending || inventoryLiveRequest) return;
   const context = state.context, generation = state.generation;
-  const spec = { ...inventoryQuerySpec(state.inventoryLimit), anchor: state.page > 0 ? state.anchorCursor : "" };
+  const spec = { ...inventoryQuerySpec(state.inventoryLimit), anchor: inventoryWindowAnchor() };
   const cursor = spec.anchor ? "" : state.cursor;
   if (force) clearInventoryPages();
   const controller = new AbortController();
@@ -1826,8 +1842,8 @@ async function refreshInventoryWindow(force = false) {
     state.inventoryTotal = value.total ?? state.inventoryTotal;
     state.page = Math.min(state.page, state.inventoryPageCount - 1);
     state.anchorCursor = value.anchorCursor || state.anchorCursor;
-    state.cursors[state.page] = { cursor: state.cursor, anchor: state.page > 0 ? state.anchorCursor : "" };
-    cacheInventoryPage("", { ...inventoryQuerySpec(state.inventoryLimit), anchor: state.page > 0 ? state.anchorCursor : "" }, value);
+    state.cursors[state.page] = { cursor: state.cursor, anchor: inventoryWindowAnchor() };
+    cacheInventoryPage("", { ...inventoryQuerySpec(state.inventoryLimit), anchor: inventoryWindowAnchor() }, value);
     state.items.forEach(item => state.itemCache.set(String(item.id), item));
     const selected = state.items.find(item => String(item.id) === String(state.selected?.id)) || state.itemCache.get(String(state.selected?.id));
     if (selected) state.selected = selected;
@@ -1951,7 +1967,7 @@ async function switchNetwork(id) {
   state.selected = null;
   state.items = [];
   state.nextCursor = "";
-  state.page = 0; state.cursor = ""; state.anchorCursor = "";
+  state.page = 0; state.cursor = ""; state.anchorCursor = ""; state.inventoryWindowAnchored = false;
   state.inventoryPageCount = 1; state.inventoryTotal = null; state.inventoryDesiredPage = null;
   state.cursors = [{ cursor: "", anchor: "" }]; state.inventoryTarget = null; state.inventoryQueryPending = false;
   clearInventoryPages(); inventoryWheel.reset();
@@ -2246,6 +2262,10 @@ document.addEventListener("click", async event => {
   if (!button || button.disabled) return;
   if (!button.closest(".inventory-table .item-button")) hideInventoryHover();
   const data = button.dataset;
+  if (button.id === "sidebar-toggle") {
+    updateSettings({ sidebarCollapsed: !state.settings.sidebarCollapsed }, false);
+    return;
+  }
   if (data.networkRecovery) {
     if (data.networkRecovery === "refresh") refreshNetwork();
     if (data.networkRecovery === "reconnect") { connectStream(); refreshNetwork(); }
@@ -2417,6 +2437,7 @@ document.addEventListener("visibilitychange", () => {
 document.addEventListener("error", event => {
   if (event.target instanceof HTMLImageElement && event.target.classList.contains("item-image")) {
     const fallback = document.createElement("span"); fallback.className = "missing-image"; fallback.title = "图标不可用";
+    event.target.closest(".item-button")?.classList.add("missing-texture");
     fallback.innerHTML = icon("package"); event.target.replaceWith(fallback); paint();
   }
 }, true);

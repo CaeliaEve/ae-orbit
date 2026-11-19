@@ -27,6 +27,9 @@ function fixture(request) {
   });
   const start = source.indexOf("async function refreshInventoryWindow(");
   const end = source.indexOf("function refreshInventoryObservation()",start);
+  const anchorStart = source.indexOf("function inventoryWindowAnchor(");
+  const anchorEnd = source.indexOf("function inventoryQuerySpec(", anchorStart);
+  vm.runInContext(source.slice(anchorStart, anchorEnd),context);
   vm.runInContext(source.slice(start,end),context);
   return { state, context, calls, elements, window, refresh: () => context.refreshInventoryWindow() };
 }
@@ -74,4 +77,14 @@ test("first-page refresh admits new entries using the initial boundary",async()=
   assert.equal(f.calls.requests[0].spec.anchor,"");
   assert.equal(f.state.page,0);
   assert.equal(f.state.items[0].id,"1");
+});
+
+test("a resized window keeps its item anchor when its new page number becomes one",async()=>{
+  const f=fixture(async()=>({items:[{id:"42",quantity:"9"}],anchorCursor:"anchor-42",nextCursor:"b-42",pageCount:5}));
+  f.state.page=0;
+  f.state.inventoryWindowAnchored=true;
+  await f.refresh();
+  assert.equal(f.calls.requests[0].spec.anchor,"anchor-42");
+  assert.equal(f.state.items[0].id,"42");
+  assert.equal(f.state.cursors[0].anchor,"anchor-42");
 });

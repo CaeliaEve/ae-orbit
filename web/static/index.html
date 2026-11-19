@@ -14,8 +14,11 @@
 <body>
   <div class="app-frame">
     <div class="shell">
-    <nav class="sidebar" aria-label="主导航">
-      <a class="brand" href="/" aria-label="AE Orbit"><img class="brand-mark" src="/assets/brand/ae-orbit-mark.svg" alt=""><span>AE Orbit</span></a>
+    <nav id="sidebar" class="sidebar" aria-label="主导航">
+      <div class="sidebar-head">
+        <a class="brand" href="/" aria-label="AE Orbit"><img class="brand-mark" src="/assets/brand/ae-orbit-mark.svg" alt=""><span>AE Orbit</span></a>
+        <button id="sidebar-toggle" class="icon-button" type="button" aria-label="收起导航" title="收起导航" aria-controls="sidebar" aria-expanded="true"><i data-lucide="panel-left-close"></i><img class="sidebar-toggle-mark" src="/assets/brand/ae-orbit-mark.svg" alt=""></button>
+      </div>
       <button data-view="dashboard" aria-current="page"><i data-lucide="layout-dashboard"></i><span>工作台</span></button>
       <button data-view="inventory"><i data-lucide="boxes"></i><span>库存</span></button>
       <button data-view="orders"><i data-lucide="list-checks"></i><span>合成中心</span><span id="order-count" class="nav-count"></span></button>

@@ -5,6 +5,7 @@ export const SETTINGS_KEY = "ae-orbit:settings:v1";
 export const defaultSettings = Object.freeze({
   density: "compact",
   inventoryLayout: "auto",
+  sidebarCollapsed: false,
   taskNotifications: true,
   networkNotifications: true,
   syncNotifications: false,
@@ -13,7 +14,7 @@ export const defaultSettings = Object.freeze({
   ...defaultTexturePackSettings,
 });
 
-const booleanKeys = ["taskNotifications", "networkNotifications", "syncNotifications", "reconnect", "rememberSession"];
+const booleanKeys = ["sidebarCollapsed", "taskNotifications", "networkNotifications", "syncNotifications", "reconnect", "rememberSession"];
 const densityValues = new Set(["compact", "comfortable"]);
 const layoutValues = new Set(["auto", "dense", "wide"]);
 

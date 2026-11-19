@@ -27,3 +27,12 @@ test("settings persist and reload as a bounded preference record", () => {
 test("corrupt settings fall back to defaults", () => {
   assert.deepEqual(loadSettings(storage({ [SETTINGS_KEY]: "{" })), { ...defaultSettings });
 });
+
+test("collapsed navigation survives reload and rejects non-boolean values", () => {
+  const memory = storage();
+  saveSettings(memory, { sidebarCollapsed: true });
+  assert.equal(loadSettings(memory).sidebarCollapsed, true);
+  assert.equal(normalizeSettings({ sidebarCollapsed: "true" }).sidebarCollapsed, false);
+  saveSettings(memory, { ...loadSettings(memory), sidebarCollapsed: false });
+  assert.equal(loadSettings(memory).sidebarCollapsed, false);
+});
