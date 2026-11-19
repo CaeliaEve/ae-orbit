@@ -259,6 +259,8 @@ edit /etc/ae-orbit.cfg
 
 **安装中断的恢复：** 正常报错处理完后可直接重试。如果发生断电、强制关机或磁盘故障，跨文件替换无法保证原子性。保持桥接器停止，先保存并检查程序旁的 `.ae-orbit-old` 备份，将需要的旧文件恢复到原路径；移走遗留备份、清理该次安装的 `.ae-orbit-new` 文件，确认没有安装器运行后删除 `/tmp/ae-orbit-install.lock`，再重新安装完整版本。安装器遇到遗留文件会停止，避免覆盖可恢复的数据。
 
+安装器报 `Previous installation files remain beside ...` 并返回命令行后，可下载 `oc/bin/ae-orbit-install-recover.lua` 到 `/tmp`，使用 `lua /tmp/ae-orbit-install-recover.lua` 运行。它停止桥接，把本程序的遗留 `.ae-orbit-new` / `.ae-orbit-old` 文件在原目录改名保存为 `.saved-N`，释放空的旧安装锁，保留当前程序、真实配置、其他程序文件和任务日志；真实配置旁有遗留文件时停止并要求检查。恢复成功后立即重新运行完整更新脚本，成功后才重启并启动桥接。恢复脚本不修复当前程序的版本混用，因此不能跳过完整重装直接启动。
+
 配置必须填写：
 
 ~~~lua
