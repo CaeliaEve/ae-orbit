@@ -56,6 +56,23 @@ func run(parent context.Context) error {
 	}
 	server := &http.Server{Addr: cfg.Listen, Handler: api.New(db, cfg.HTTP), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10, BaseContext: func(net.Listener) context.Context { return ctx }}
 	go func() {
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+		for {
+			work, stop := context.WithTimeout(ctx, 10*time.Second)
+			err := db.RecordInventoryHistory(work)
+			stop()
+			if err != nil && ctx.Err() == nil {
+				slog.Error("inventory history recording failed", "error", err)
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
+	go func() {
 		ticker := time.NewTicker(10 * time.Second)
 		defer ticker.Stop()
 		for {

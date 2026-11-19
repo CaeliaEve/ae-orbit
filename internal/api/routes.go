@@ -147,6 +147,10 @@ func (s *Server) routes() {
 	}))
 	s.mux.HandleFunc("GET /api/v1/networks/{network}/catalog/items/{item}/image", s.user(s.catalogImage))
 	s.mux.HandleFunc("GET /api/v1/networks/{network}/items/lookup", s.user(s.lookupItems))
+	s.mux.HandleFunc("GET /api/v1/networks/{network}/inventory-history", s.user(s.inventoryHistorySeries))
+	s.mux.HandleFunc("GET /api/v1/networks/{network}/inventory-history/records", s.user(s.inventoryHistoryRecords))
+	s.mux.HandleFunc("GET /api/v1/networks/{network}/inventory-history/items", s.user(s.inventoryHistoryItems))
+	s.mux.HandleFunc("GET /api/v1/networks/{network}/inventory-history/export", s.user(s.inventoryHistoryCSV))
 	s.mux.HandleFunc("POST /api/v1/networks/{network}/items/refresh", s.user(s.refreshItems))
 	s.mux.HandleFunc("GET /api/v1/networks/{network}/inventory-stats", s.user(func(w http.ResponseWriter, r *http.Request, m protocol.Member) {
 		value, err := s.db.InventoryStats(r.Context(), m.ID, r.PathValue("network"))

@@ -102,6 +102,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if pattern == "POST /api/v1/networks/{network}/inventory-profile/nesql-plain" && budget < time.Minute {
 			budget = time.Minute
 		}
+		if pattern == "GET /api/v1/networks/{network}/inventory-history/export" && budget < 5*time.Minute {
+			budget = 5 * time.Minute
+		}
 		ctx, cancel := context.WithTimeout(r.Context(), budget)
 		defer cancel()
 		r = r.WithContext(ctx)

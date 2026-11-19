@@ -10,6 +10,7 @@ import { createInventoryWheel, inventoryKeyboardDirection } from "./inventory-pa
 import { quantityKnown, stockText, stockFreshness, inventorySummary } from "./plain-inventory.mjs";
 import { inventoryTrendHTML, inventoryTrendModel, loadTrendHistory, recordTrendSample, saveTrendHistory, trendStorageKey } from "./inventory-trend.mjs";
 import { dashboardTasks, dashboardInventory, dashboardTasksHTML } from "./dashboard.mjs";
+import { createHistoryController, historyChartHTML, historyChartModel, historyRecordsHTML, historyTime } from "./inventory-history.mjs";
 import { loadOrderSnapshot } from "./orders.mjs";
 import { createJobController } from "./job-controller.mjs";
 import { isJobClaim } from "./jobs.mjs";
@@ -112,6 +113,48 @@ const jobs = createJobController({
 });
 const activeStates = new Set(["queued", "assigned", "computing", "running"]);
 const attentionStates = new Set(["failed", "needs_review"]);
+const inventoryHistory = createHistoryController({ request: (path,options) => api.request(networkPath(path),options), onChange: () => renderInventoryHistory() });
+let historySearchTimer, historyWheelTimer, historyGesture = null, historyExpanded = false;
+function localDateValue(value) { const d=new Date(value);return Number.isFinite(d.getTime())?new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,16):""; }
+function renderInventoryHistory() {
+  const h=inventoryHistory.state, series=h.series;
+  const view=$("#view-history"),scroll=view.scrollTop;
+  view.dataset.mode=h.mode;
+  $("#history-chart-section").hidden=h.mode==='table';
+  $("#history-chart-section").dataset.expanded=String(historyExpanded);
+  $$("[data-history-mode]").forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.historyMode===h.mode)));
+  $$("[data-history-range]").forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.historyRange===h.range)));
+  if(document.activeElement!==$("#history-from"))$("#history-from").value=localDateValue(h.from);
+  if(document.activeElement!==$("#history-to"))$("#history-to").value=localDateValue(h.to);
+  const epochOptions=series?.epochs?.map(e=>`<option value="${esc(e.id)}">${esc(e.scope==='nesql_plain'?'NESQL 无 NBT':'无 NBT 库存')} · ${esc(historyTime(e.started_at))}</option>`).join('')||'<option value="">等待记录</option>';
+  patchDashboardHTML('#history-epoch',epochOptions);$("#history-epoch").value=h.epoch;
+  $("#history-recording-status").textContent=series?.started_at?`开始于 ${historyTime(series.started_at)} · 原始明细长期保留`:'后端持续记录 · 原始明细长期保留';
+  $("#history-chart-title").textContent=series?.item?.label||'全部已确认库存';
+  $("#history-all-items").hidden=!h.item;
+  $("#history-metric").disabled=!!h.item;$("#history-metric").value=h.metric;
+  $("#history-kind").value=h.kind;$("#history-direction").value=h.direction;
+  $("#history-export").hidden=!state.network||!series?.started_at||!!h.error||!!h.tableError||h.loading||h.tableLoading;$("#history-export").href=state.network?networkPath('/inventory-history/export?'+inventoryHistory.exportQuery()):'';
+  const resolution=series?.resolution>86400?`${series.resolution/86400} 天汇总`:series?.resolution===86400?'日汇总':series?.resolution===3600?'小时汇总':'分钟记录';
+  const latest=series?.points?.at(-1);
+  const coverage=latest&&series.basis!=='last_known_quantity'&&latest.checked!==latest.candidates?` · 已确认 ${formatQuantity(latest.checked)} / ${formatQuantity(latest.candidates)} 种`:'';
+  $("#history-chart-summary").textContent=latest?`${formatQuantity(latest[h.metric])} ${h.metric==='quantity'?'件':'种'} · ${series.basis==='last_known_quantity'?'最后已知数量':resolution}${coverage}${h.loading?' · 更新中':''}`:h.loading?'正在读取历史…':'等待后端历史';
+  const note=series?.basis==='last_known_quantity'?'单物品曲线展示最后已知数量；两次变化之间不代表持续观测。原始明细保留每一次确认的变化。':`后端${resolution} · ${latest&&!latest.online?'OC 离线，保留上次库存 · ':''}首次观测会改变总量，不能全部视为生产增量。拖选时间段 · 滚轮缩放 · 双击恢复全部`;
+  $("#history-chart-note").textContent=note;
+  patchDashboardHTML('#history-chart',historyChartHTML(series,h.metric));
+  $("#history-chart").setAttribute('aria-busy',String(h.loading));
+  message('#history-message',h.error?`历史读取失败，保留已有内容。${h.error}`:!state.network?'选择网络后查看库存历史':'');
+  message('#history-table-message',h.tableError?`明细读取失败，保留当前页。${h.tableError}`:'');
+  patchDashboardHTML('#history-records',historyRecordsHTML(h.page?.records||[]));
+  $("#history-table-empty").hidden=!!h.page?.records?.length;
+  $("#history-table-empty").textContent=h.tableLoading?'正在读取明细…':h.tableError?'明细暂不可用':'这段时间没有匹配的记录';
+  $("#history-page-status").textContent=`第 ${h.pageIndex+1} 页 · ${h.page?.records?.length||0} 条${h.tableLoading?' · 更新中':''}`;
+  $("#history-page-number").textContent=h.pageIndex+1;
+  $("#history-prev").disabled=h.tableLoading||h.loading||!!h.error||!!h.tableError||h.pageIndex===0;$("#history-next").disabled=h.tableLoading||h.loading||!!h.error||!!h.tableError||!h.page?.has_more;
+  $("#history-new-records").hidden=!h.newData;
+  const results=h.searchResults.map(i=>`<button data-history-item="${esc(i.id)}"><span><strong>${esc(i.label||i.name)}</strong><small>${esc(i.name)} · ${i.damage}</small></span><span class="number">${formatQuantity(i.quantity)}</span></button>`).join('');
+  patchDashboardHTML('#history-search-results',results||`<span class="muted">${h.searchLoading?'正在搜索…':'没有匹配的已记录物品'}</span>`);
+  paint();view.scrollTop=scroll;
+}
 const endedStates = new Set(["done", "failed", "canceled", "expired"]);
 const stateNames = { queued: "排队中", assigned: "已派发", computing: "计算中", running: "合成中", done: "已完成", failed: "失败", canceled: "已撤回", expired: "已过期", needs_review: "结果待确认" };
 let searchTimer, toastTimer, streamTimer, streamRefreshTimer, queryController, ordersController, detailController, cpuCallback, inspectorFocus, inventoryResizeTimer;
@@ -640,7 +683,7 @@ function showView(view) {
   let hasRefresh = false;
   $$("[data-refresh-view]").forEach(button => { button.hidden = button.dataset.refreshView !== view; if (!button.hidden) hasRefresh = true; });
   $(".page-refresh").hidden = !hasRefresh;
-  for (const name of ["dashboard", "inventory", "orders", "cpus", "network", "github", "settings"]) $(`#view-${name}`).hidden = name !== view;
+  for (const name of ["dashboard", "inventory", "history", "orders", "cpus", "network", "github", "settings"]) $(`#view-${name}`).hidden = name !== view;
   $$("[data-view]").forEach(button => {
     if (button.dataset.view === view) button.setAttribute("aria-current", "page");
     else button.removeAttribute("aria-current");
@@ -661,6 +704,7 @@ function showView(view) {
   }
   if (view === "inventory") refreshInventoryCapacity();
   if (view === "dashboard") renderDashboard();
+  if (view === "history") { renderInventoryHistory(); if(state.network&&!inventoryHistory.state.series) void inventoryHistory.load(); }
 }
 
 function openInspector(tab = "detail") {
@@ -2056,11 +2100,13 @@ function connectStream() {
     if (document.visibilityState !== "visible" || !state.network) return;
     refreshNetwork();
     refreshInventoryObservation(); refreshOrders(false); refreshCPUs(); refreshJobs();
+    if(state.view==='history') void inventoryHistory.observe();
   }, 15000);
 }
 
 async function switchNetwork(id) {
   if (state.busy || state.preparing) { $("#network").value = state.network?.id || ""; toast("请等待本轮提交结束。"); return; }
+  clearTimeout(historySearchTimer);clearTimeout(historyWheelTimer);inventoryHistory.reset();
   state.context++;
   draftItemsRequest = null; draftItemsRefreshAt = 0;
   clearTimeout(inventoryRefreshTimer); inventoryRefreshTimer = null;
@@ -2126,6 +2172,7 @@ async function switchNetwork(id) {
   const context = state.context;
   await Promise.all([loadInventory(true), refreshInventoryStats(), refreshOrders(false), refreshCPUs(), refreshNetwork(), refreshJobs(), refreshDraftItems(true)]);
   if (context !== state.context) return;
+  if(state.view==='history')void inventoryHistory.load();
   try {
     for (const intent of jobs.local().intents.filter(intent=>intent.state === "accepted")) {
       if (context !== state.context) return;
@@ -2212,6 +2259,28 @@ $("#search").addEventListener("compositionend", event => {
 $("#sort").addEventListener("change", event => { state.sort = event.target.value; loadInventory(true); });
 $("#stock-view").addEventListener("change", event => { state.stockView = event.target.value; loadInventory(true); });
 $("#refresh-inventory").addEventListener("click", () => { void (state.inventoryQueryPending ? loadInventory(true) : refreshInventoryWindow(true)); void refreshInventoryStats(); });
+$("#refresh-history").addEventListener('click',()=>{if(state.network)void inventoryHistory.refresh()});
+$("#history-search").addEventListener('input',event=>{clearTimeout(historySearchTimer);if(event.isComposing)return;$("#history-search-results").hidden=false;event.target.setAttribute('aria-expanded','true');historySearchTimer=setTimeout(()=>inventoryHistory.search(event.target.value.trim()),220)});
+$("#history-search").addEventListener('compositionend',event=>{clearTimeout(historySearchTimer);historySearchTimer=setTimeout(()=>inventoryHistory.search(event.target.value.trim()),220)});
+$("#history-search").addEventListener('focus',()=>{if(state.network){$("#history-search-results").hidden=false;$("#history-search").setAttribute('aria-expanded','true');void inventoryHistory.search($("#history-search").value.trim())}});
+$("#history-search").addEventListener('keydown',event=>{if(event.key==='Escape'){ $("#history-search-results").hidden=true;event.target.setAttribute('aria-expanded','false') }if(event.key==='ArrowDown'){$('button',$("#history-search-results"))?.focus();event.preventDefault()}});
+$("#history-epoch").addEventListener('change',event=>{inventoryHistory.state.epoch=event.target.value;inventoryHistory.state.item='';inventoryHistory.state.from='';inventoryHistory.state.range='all';void inventoryHistory.load()});
+$("#history-metric").addEventListener('change',event=>{inventoryHistory.state.metric=event.target.value;renderInventoryHistory()});
+for(const id of ['kind','direction'])$(`#history-${id}`).addEventListener('change',event=>{inventoryHistory.state[id]=event.target.value;void inventoryHistory.page({first:true})});
+$("#history-prev").addEventListener('click',()=>inventoryHistory.previous());
+$("#history-next").addEventListener('click',()=>void inventoryHistory.next());
+$("#history-new-records").addEventListener('click',()=>void inventoryHistory.page({first:true}));
+$("#history-all-items").addEventListener('click',()=>{ $("#history-search").value='';void inventoryHistory.selectItem('') });
+$("#history-apply-dates").addEventListener('click',()=>{const from=Date.parse($("#history-from").value),to=Date.parse($("#history-to").value);if(!Number.isFinite(from)||!Number.isFinite(to)||to<=from){toast('请选择有效的起止时间。',true);return}void inventoryHistory.setWindow(from,to)});
+$("#history-expand").addEventListener('click',()=>{historyExpanded=!historyExpanded;$("#history-expand").textContent=historyExpanded?'还原图表':'放大图表';renderInventoryHistory()});
+const historyPosition=event=>{const svg=$("#history-svg");if(!svg)return null;const box=svg.getBoundingClientRect();const x=Math.max(0,Math.min(1,(event.clientX-box.left)/box.width));const s=inventoryHistory.state.series;return {x:x*1000,time:Date.parse(s.from)+(Date.parse(s.to)-Date.parse(s.from))*x}};
+$("#history-chart").addEventListener('pointermove',event=>{const pos=historyPosition(event);if(!pos)return;const h=inventoryHistory.state,model=historyChartModel(h.series,h.metric);if(!model)return;if(historyGesture){const brush=$("#history-brush");brush.setAttribute('x',Math.min(pos.x,historyGesture.x));brush.setAttribute('width',Math.abs(pos.x-historyGesture.x));return}const closest=model.points.reduce((a,b)=>Math.abs(b.time-pos.time)<Math.abs(a.time-pos.time)?b:a);const tip=$("#history-chart-tooltip");tip.hidden=false;tip.textContent=`${historyTime(closest.at)} · ${formatQuantity(closest[h.metric])} ${h.metric==='quantity'?'件':'种'}${h.series.basis==='last_known_quantity'?' · 最后已知值':!closest.all_online?' · 含离线观测':''}`;const cross=$("#history-crosshair");cross.hidden=false;cross.setAttribute('d',`M${closest.x.toFixed(2)} 0 V260`)});
+$("#history-chart").addEventListener('pointerleave',()=>{if($("#history-chart-tooltip"))$("#history-chart-tooltip").hidden=true;if($("#history-crosshair"))$("#history-crosshair").hidden=true});
+$("#history-chart").addEventListener('pointerdown',event=>{if(event.button!==0||event.pointerType==='touch')return;historyGesture=historyPosition(event);if(historyGesture){$("#history-chart").setPointerCapture(event.pointerId);event.preventDefault()}});
+$("#history-chart").addEventListener('pointerup',event=>{const start=historyGesture;historyGesture=null;const end=historyPosition(event);if(start&&end&&Math.abs(start.x-end.x)>8)void inventoryHistory.setWindow(Math.min(start.time,end.time),Math.max(start.time,end.time));else if($("#history-brush"))$("#history-brush").setAttribute('width','0')});
+$("#history-chart").addEventListener('pointercancel',()=>{historyGesture=null});
+$("#history-chart").addEventListener('dblclick',()=>void inventoryHistory.setRange('all'));
+$("#history-chart").addEventListener('wheel',event=>{const pos=historyPosition(event);if(!pos)return;event.preventDefault();clearTimeout(historyWheelTimer);const s=inventoryHistory.state.series,from=Date.parse(s.from),to=Date.parse(s.to),factor=event.deltaY>0?1.5:0.67;const start=Math.max(Date.parse(s.started_at)||from,pos.time-(pos.time-from)*factor),end=Math.min(Date.now(),pos.time+(to-pos.time)*factor);historyWheelTimer=setTimeout(()=>void inventoryHistory.setWindow(start,end),100)},{passive:false});
 $("#first-page").addEventListener("click", () => { inventoryWheel.reset(); changeInventoryPage(0); });
 $("#prev-page").addEventListener("click", () => { inventoryWheel.reset(); changeInventoryPage(-1); });
 $("#next-page").addEventListener("click", () => { inventoryWheel.reset(); changeInventoryPage(1); });
@@ -2429,6 +2498,11 @@ document.addEventListener("click", async event => {
     return;
   }
   if (data.networkRetry !== undefined) { refreshNetwork(); return; }
+  if (!button.closest('.history-search-wrap')) { $("#history-search-results").hidden=true;$("#history-search").setAttribute('aria-expanded','false'); }
+  if (data.historyMode) { inventoryHistory.state.mode=data.historyMode;renderInventoryHistory();return; }
+  if (data.historyRange) { if(state.network)void inventoryHistory.setRange(data.historyRange);return; }
+  if (data.historyItem) { $("#history-search-results").hidden=true;$("#history-search").setAttribute('aria-expanded','false');void inventoryHistory.selectItem(data.historyItem);return; }
+  if (data.historyPan) { const s=inventoryHistory.state.series;if(!s)return;const from=Date.parse(s.from),to=Date.parse(s.to),shift=(to-from)*0.5*Number(data.historyPan);void inventoryHistory.setWindow(Math.max(Date.parse(s.started_at)||from,from+shift),Math.min(Date.now(),to+shift));return; }
   if (data.trendHours) {
     state.dashboardTrendHours = Number(data.trendHours);
     $$("[data-trend-hours]").forEach(row => row.setAttribute("aria-pressed", String(row === button)));
