@@ -5,6 +5,17 @@ import { inventoryTrendHTML, inventoryTrendModel, loadTrendHistory, recordTrendS
 const minute = 60_000;
 const at = Math.floor(Date.now() / minute) * minute;
 
+test("selected time range excludes older samples without filling gaps or rounding quantities", () => {
+  const samples = [{ at: at - 120 * minute, quantity: "9007199254740993" }, { at: at - 59 * minute, quantity: "9007199254740994" }, { at, quantity: "9007199254740995" }];
+  const hour = inventoryTrendModel(samples, at, { windowMs: 60 * minute });
+  assert.equal(hour.samples, 2);
+  assert.equal(hour.first.quantity, "9007199254740994");
+  assert.deepEqual(hour.segments.map(segment => segment.length), [1, 1]);
+  assert.equal(inventoryTrendModel(samples, at, { windowMs: 6 * 60 * minute }).samples, 3);
+  assert.equal(inventoryTrendModel(samples, at, { windowMs: -1 }).samples, 3);
+  assert.equal(inventoryTrendModel(samples.slice(0, 1), at, { windowMs: 60 * minute }), null);
+});
+
 test("minute samples retain exact totals and replace only the current minute", () => {
   let samples = recordTrendSample([], "9007199254740993", at);
   samples = recordTrendSample(samples, "9007199254740994", at + 5000);

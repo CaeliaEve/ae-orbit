@@ -45,15 +45,17 @@
     <main id="main">
       <section id="view-dashboard" class="view">
         <h1 class="sr-only">工作台</h1>
-        <div class="dashboard-grid">
-          <article class="metric-card" id="dashboard-network-card"><span class="metric-label">网络状态</span><strong id="dashboard-network-state">未连接</strong><span class="metric-meta" id="dashboard-network-meta">等待登录</span></article>
-          <article class="metric-card"><span class="metric-label">有库存物品</span><strong id="dashboard-inventory-count">0</strong><span class="metric-meta">已确认有库存的种类</span></article>
-          <article class="metric-card"><span class="metric-label">未完成任务</span><strong id="dashboard-job-count">0</strong><span class="metric-meta">生产任务与订单</span></article>
-          <article class="metric-card metric-card-wide"><div><span class="metric-label">CPU 占用</span><strong id="dashboard-cpu-state">暂无观测</strong><span class="metric-meta" id="dashboard-cpu-meta">等待 CPU 状态</span></div><div class="metric-ring" id="dashboard-cpu-ring" aria-hidden="true"><span>—</span></div></article>
+        <div class="dashboard-connection" id="dashboard-network-card" data-state="idle"><button class="dashboard-network-link" data-view="network"><i class="status-dot" id="dashboard-network-dot" data-tone="idle"></i><strong id="dashboard-network-state">未连接</strong><span id="dashboard-network-name">选择网络</span><i data-lucide="arrow-up-right" aria-hidden="true"></i></button><span id="dashboard-network-meta">登录后开始同步</span></div>
+        <div class="dashboard-metrics" aria-label="网络核心指标">
+          <button class="dashboard-metric" data-view="inventory"><span class="dashboard-metric-label"><i data-lucide="boxes" aria-hidden="true"></i>库存总量</span><strong id="dashboard-inventory-total">—</strong><span id="dashboard-inventory-meta">等待库存观测</span></button>
+          <button class="dashboard-metric" data-view="inventory"><span class="dashboard-metric-label"><i data-lucide="package" aria-hidden="true"></i>有库存物品</span><strong id="dashboard-inventory-count">—</strong><span id="dashboard-inventory-kinds-meta">已确认有库存的种类</span></button>
+          <button class="dashboard-metric" data-view="cpus"><span class="dashboard-metric-label"><i data-lucide="cpu" aria-hidden="true"></i>忙碌 CPU</span><strong id="dashboard-cpu-state">—</strong><span id="dashboard-cpu-meta">等待 CPU 观测</span></button>
+          <button class="dashboard-metric" data-view="orders"><span class="dashboard-metric-label"><i data-lucide="list-checks" aria-hidden="true"></i><span id="dashboard-job-label">未结束生产任务</span></span><strong id="dashboard-job-count">—</strong><span id="dashboard-job-meta">等待任务观测</span></button>
         </div>
-        <div class="dashboard-columns">
-          <section class="panel dashboard-health"><div class="panel-heading"><div><h2>库存趋势（物品总量）</h2><span class="muted">最近 24 小时 · 已确认库存总量</span></div><i data-lucide="activity"></i></div><div id="dashboard-trend" class="trend-chart" aria-label="库存总量时间趋势图"></div><div id="dashboard-health-list" class="health-list" hidden></div></section>
-          <section class="panel dashboard-activity"><div class="panel-heading"><div><h2>最近活动</h2><span class="muted">最近一次同步与设备观测</span></div><button class="text-button" data-view="orders">查看全部 <i data-lucide="arrow-up-right"></i></button></div><div id="dashboard-activity-list" class="activity-list"></div></section>
+        <div class="dashboard-workspace">
+          <section class="dashboard-trend-section" aria-labelledby="dashboard-trend-title"><div class="dashboard-section-heading"><div><h2 id="dashboard-trend-title">库存趋势</h2><span id="dashboard-trend-change" class="dashboard-caption">正在积累时间采样</span></div><div class="dashboard-ranges" role="group" aria-label="库存趋势时间范围"><button data-trend-hours="1" aria-pressed="false">1 小时</button><button data-trend-hours="6" aria-pressed="false">6 小时</button><button data-trend-hours="24" aria-pressed="true">24 小时</button></div></div><div id="dashboard-trend" class="trend-chart" aria-label="库存总量时间趋势图"></div></section>
+          <section class="dashboard-observations" aria-labelledby="dashboard-observations-title"><div class="dashboard-section-heading"><h2 id="dashboard-observations-title">同步观测</h2><button class="text-button" data-view="network">网络详情 <i data-lucide="arrow-up-right" aria-hidden="true"></i></button></div><div id="dashboard-observation-list"></div></section>
+          <section class="dashboard-tasks" aria-labelledby="dashboard-tasks-title"><div class="dashboard-section-heading"><div><h2 id="dashboard-tasks-title">生产任务</h2><span id="dashboard-tasks-note" class="dashboard-caption">未结束任务 · 最近提交优先</span></div><button class="text-button" data-view="orders">合成中心 <i data-lucide="arrow-up-right" aria-hidden="true"></i></button></div><div id="dashboard-task-list"></div></section>
         </div>
       </section>
       <section id="view-inventory" class="view" hidden>

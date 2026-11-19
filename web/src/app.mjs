@@ -8,7 +8,8 @@ import {
 import { createAPI } from "./api.mjs";
 import { createInventoryWheel, inventoryKeyboardDirection } from "./inventory-paging.mjs";
 import { quantityKnown, stockText, stockFreshness, inventorySummary } from "./plain-inventory.mjs";
-import { inventoryTrendHTML, loadTrendHistory, recordTrendSample, saveTrendHistory, trendStorageKey } from "./inventory-trend.mjs";
+import { inventoryTrendHTML, inventoryTrendModel, loadTrendHistory, recordTrendSample, saveTrendHistory, trendStorageKey } from "./inventory-trend.mjs";
+import { dashboardTasks, dashboardInventory, dashboardTasksHTML } from "./dashboard.mjs";
 import { loadOrderSnapshot } from "./orders.mjs";
 import { createJobController } from "./job-controller.mjs";
 import { isJobClaim } from "./jobs.mjs";
@@ -80,7 +81,7 @@ const state = {
   member: null, network: null, networks: [], view: "dashboard", items: [], itemCache: new Map(),
   orders: [], devices: [], cpus: { cpus: [] }, icons: {}, filter: "", sort: "name", search: "",
   stockView: "stock", inventoryScope: "", inventoryStats: null,
-  inventoryTrend: [], inventoryTrendKey: "",
+  inventoryTrend: [], inventoryTrendKey: "", dashboardTrendHours: 24,
   cursor: "", anchorCursor: "", inventoryWindowAnchored: false, nextCursor: "", cursors: [{ cursor: "", anchor: "" }], page: 0, inventoryPageCount: 1, inventoryTotal: null, inventoryDesiredPage: null, inventoryLimit: 50, inventoryTarget: null, inventoryQueryPending: false, selected: null, amount: "1",
   cpuName: "", waitForCPU: false, inspector: "detail", draft: { version: 1, entries: [], receipts: {} },
   draftKey: "", draftBlocked: false, unchecked: new Set(), busy: false, preparing: false, inventoryLoading: false,
@@ -522,51 +523,78 @@ const maximum = () => state.network?.capabilities?.max_craft_quantity || "922337
 const cpuSelectionSupported = () => state.network?.capabilities?.cpu_selection === true;
 const cpuSelectionTitle = () => cpuSelectionSupported() ? "选择合成 CPU" : "当前 OC 未启用严格 CPU 指定";
 
+const dashboardHTML = new WeakMap();
+function patchDashboardHTML(selector, html) {
+  const element = $(selector);
+  if (dashboardHTML.get(element) === html) return;
+  dashboardHTML.set(element, html);
+  const active = element.contains(document.activeElement) ? document.activeElement : null;
+  const key = active?.dataset.job || active?.dataset.order || active?.dataset.view;
+  element.innerHTML = html;
+  if (key) $$('[data-job], [data-order], [data-view]', element).find(row => (row.dataset.job || row.dataset.order || row.dataset.view) === key)?.focus({ preventScroll: true });
+}
+
 function renderDashboard() {
-  const network = state.network;
-  const cpus = state.cpus.cpus || [];
-  const busy = cpus.filter(cpu => cpu.busy).length;
-  const activeJobs = jobs.state.sync ? [...jobs.state.sync.jobs.values()].filter(row => !row.settled_at).length : state.activeOrderCount;
-  const onlineDevices = state.devices.filter(device => device.online).length;
-  const networkState = !state.member ? "未连接" : !network ? "暂无网络" : network.online ? "在线" : "离线";
-  const networkMeta = !state.member ? "登录后开始同步" : !network ? "请选择一个网络" : network.online
-    ? `${network.name} · ${state.streamConnected ? "实时连接" : "等待连接"}`
-    : `${network.name} · 等待 OC 恢复`;
-  const networkCard = $("#dashboard-network-card");
-  if (networkCard) {
-    networkCard.dataset.state = !state.member || !network ? "idle" : network.online ? "online" : "offline";
-  }
-  $("#dashboard-network-state").textContent = networkState;
-  $("#dashboard-network-meta").textContent = networkMeta;
-  $("#dashboard-inventory-count").textContent = state.inventoryStats ? formatQuantity(state.inventoryStats.entries) : "—";
-  $("#dashboard-job-count").textContent = formatQuantity(activeJobs || 0);
-  $("#dashboard-cpu-state").textContent = cpus.length ? `${busy} / ${cpus.length}` : "暂无观测";
-  $("#dashboard-cpu-meta").textContent = cpus.length ? `忙碌 / 已观测${state.cpus.truncated ? " · 列表不完整，请更新主 OC" : ""}` : "等待 CPU 状态";
-  $("#dashboard-cpu-ring").style.setProperty("--ring", cpus.length ? `${Math.round((busy / cpus.length) * 100)}%` : "0%");
-  $("#dashboard-cpu-ring span").textContent = cpus.length ? `${Math.round((busy / cpus.length) * 100)}%` : "—";
+  const network = state.network, now = Date.now();
+  const view = $("#view-dashboard"), scroll = view.scrollTop;
+  const recovery = networkRecoveryState({ network, devices: state.devices, streamState: state.streamState,
+    loading: state.networkLoading, error: state.networkError, errorKind: state.networkErrorKind, hasSnapshot: state.networkSnapshotReady }, now);
+  const labels = { healthy: "网络正常", loading: "正在同步", reconnecting: "实时重连中", heartbeat_waiting: "等待游戏心跳", oc_offline: "OC 离线", backend_error: "后端异常", backend_unavailable: "后端不可达", waiting: "等待 OC 节点" };
+  const tone = !state.member || !network ? "idle" : recovery.tone;
+  $("#dashboard-network-card").dataset.state = tone === "ok" ? "online" : tone === "warn" ? "offline" : "idle";
+  $("#dashboard-network-dot").dataset.tone = tone;
+  $("#dashboard-network-state").textContent = !state.member ? "未登录" : !network ? "暂无网络" : labels[recovery.key] || recovery.label;
+  $("#dashboard-network-name").textContent = network?.name || "选择网络";
+  $("#dashboard-network-meta").textContent = !state.member ? "登录后开始同步" : !network ? "请选择一个网络" : recovery.key === "healthy" ? `心跳 ${age(network.last_seen)} · 实时连接` : recovery.key === "loading" ? "保留当前数据，正在同步" : recovery.key === "reconnecting" ? "网络在线 · 等待实时连接恢复" : recovery.key === "oc_offline" ? "等待 OC 恢复 · 显示上次观测" : recovery.label;
+  $("#dashboard-network-card").title = network ? recovery.detail : "";
   $("#dashboard-sync").textContent = network?.last_seen ? `最近同步 ${age(network.last_seen)}` : "等待同步";
-  $("#dashboard-health-list").innerHTML = [
-    ["网络连接", network ? (network.online ? "运行正常" : "OC 离线") : "等待网络", network?.online ? "ok" : network ? "warn" : "idle"],
-    ["库存观测", network?.last_inventory ? `${age(network.last_inventory)} · 修订 ${formatQuantity(network.revision)}` : "尚无记录", network?.last_inventory ? "ok" : "idle"],
-    ["设备状态", state.devices.length ? `${onlineDevices} / ${state.devices.length} 在线` : "尚无设备观测", state.devices.length && onlineDevices === state.devices.length ? "ok" : state.devices.length ? "warn" : "idle"],
-    ["CPU 观测", cpus.length ? `${busy} 台忙碌 · ${cpus.length} 台已读取` : "等待 CPU 状态", cpus.length && busy < cpus.length ? "ok" : cpus.length ? "warn" : "idle"],
-    ["任务队列", activeJobs ? `${activeJobs} 项未完成` : "当前为空", activeJobs ? "warn" : "ok"],
-  ].map(([label, value, tone]) => `<div class="health-row"><span><i class="status-dot" data-tone="${tone}"></i>${label}</span><strong>${esc(value)}</strong></div>`).join("");
-  const trend = $("#dashboard-trend");
-  if (trend) {
-    trend.innerHTML = inventoryTrendHTML(state.inventoryTrend, {
-      empty: !state.member ? "登录后显示库存时间趋势" : !network ? "选择网络后开始采样" : "等待库存总量采样",
-    });
-  }
-  const activity = [
-    network?.last_seen ? ["网络状态", network.online ? "主基地网络在线" : "主基地网络离线", age(network.last_seen)] : ["网络状态", "尚未连接网络", "等待操作"],
-    state.items.length ? ["库存同步", `已载入 ${formatQuantity(state.items.length)} 项`, age(state.items[0]?.observed_at || network?.last_inventory)] : ["库存同步", "等待库存观测", network?.last_inventory ? age(network.last_inventory) : "尚无记录"],
-    cpus.length ? ["CPU 观测", `${cpus.length} 台 CPU 已读取`, age(state.cpus.observed_at)] : ["CPU 观测", "等待 CPU 状态", network?.services?.cpu_observed_at ? age(network.services.cpu_observed_at) : "尚无记录"],
-    state.devices.length ? ["设备同步", `${onlineDevices} / ${state.devices.length} 台设备在线`, age(state.devices.map(device => device.last_seen).filter(Boolean).sort().at(-1))] : ["设备同步", "等待设备观测", "尚无记录"],
+
+  const inventory = dashboardInventory(state.inventoryStats);
+  $("#dashboard-inventory-total").innerHTML = inventory.known ? `${quantityHTML(inventory.total)}<small>件</small>` : "—";
+  $("#dashboard-inventory-total").title = inventory.known ? `${formatQuantity(inventory.total)} 件 · ${inventory.scope}` : "等待库存观测";
+  $("#dashboard-inventory-count").innerHTML = inventory.known ? `${quantityHTML(inventory.entries)}<small>种</small>` : "—";
+  $("#dashboard-inventory-meta").textContent = inventory.known ? inventory.scope : "等待库存观测";
+  $("#dashboard-inventory-kinds-meta").textContent = inventory.pending ? `${formatQuantity(inventory.pending)} 种候选待确认` : inventory.known ? "已确认有库存的种类" : "等待库存观测";
+  $("#dashboard-inventory-kinds-meta").dataset.tone = inventory.pending ? "warn" : "idle";
+  const cpus = state.cpus.cpus || [], busy = cpus.filter(cpu => cpu.busy).length;
+  const observed = state.cpus.observed_at || network?.services?.cpu_observed_at;
+  const cpuKnown = !!observed || cpus.length > 0;
+  $("#dashboard-cpu-state").innerHTML = cpuKnown ? `${busy}<small>/ ${cpus.length} 台${state.cpus.truncated ? "已观测" : ""}</small>` : "—";
+  $("#dashboard-cpu-meta").textContent = cpuKnown ? `${cpus.length - busy} 台空闲${state.cpus.truncated ? " · 列表不完整" : ""}` : "等待 CPU 观测";
+  $("#dashboard-cpu-meta").dataset.tone = state.cpus.truncated ? "warn" : "idle";
+  const tasks = dashboardTasks(jobs.state, { snapshot: state.orderSnapshot, rows: state.orders, activeCount: state.activeOrderCount, truncated: state.activeOrdersTruncated, loading: state.ordersLoading, error: state.ordersError });
+  $("#dashboard-job-label").textContent = tasks.label;
+  $("#dashboard-job-count").innerHTML = tasks.count === null ? "—" : `${formatQuantity(tasks.count)}${tasks.lowerBound ? "+" : ""}<small>${tasks.legacy ? "项" : "组"}</small>`;
+  $("#dashboard-job-meta").textContent = tasks.notice || (tasks.lowerBound ? "数量下限 · 订单列表不完整" : tasks.attention ? `${tasks.attention} 组暂停或需处理` : tasks.count === 0 ? "队列为空" : tasks.legacy ? "执行中的单项订单" : "未结束任务 · 可查看详情");
+  $("#dashboard-job-meta").dataset.tone = tasks.attention || tasks.notice || tasks.lowerBound ? "warn" : "idle";
+  $("#dashboard-tasks-title").textContent = tasks.legacy ? "执行中订单" : "生产任务";
+  $("#dashboard-tasks-note").textContent = tasks.notice || (tasks.legacy ? "单项订单 · 最近提交优先" : "未结束任务 · 最近提交优先");
+  patchDashboardHTML("#dashboard-task-list", dashboardTasksHTML(tasks, { age, itemName: id => itemFor(id)?.label || `物品 #${id}` }));
+
+  const windowMs = state.dashboardTrendHours * 3600000;
+  const model = inventoryTrendModel(state.inventoryTrend, now, { windowMs });
+  let change = "正在积累时间采样", changeTone = "idle";
+  if (model?.samples > 1) {
+    const delta = BigInt(model.latest.quantity) - BigInt(model.first.quantity);
+    const amount = formatQuantity(delta < 0n ? -delta : delta);
+    change = `采样期间${delta > 0n ? "增加" : delta < 0n ? "减少" : "净变化"} ${amount} 件`;
+    changeTone = delta > 0n ? "ok" : "idle";
+  } else if (!model) change = `最近 ${state.dashboardTrendHours} 小时暂无采样`;
+  $("#dashboard-trend-change").textContent = change;
+  $("#dashboard-trend-change").dataset.tone = changeTone;
+  patchDashboardHTML("#dashboard-trend", inventoryTrendHTML(state.inventoryTrend, { now, windowMs,
+    empty: !state.member ? "登录后显示库存时间趋势" : !network ? "选择网络后开始采样" : "所选时间范围暂无库存采样" }));
+  const devices = networkDeviceSummary(state.devices, now);
+  const deviceDetail = devices.total ? `${devices.stale ? `${devices.stale} 台滞后 · ` : ""}${devices.offline ? `${devices.offline} 台离线` : "OC 节点"}` : "等待设备观测";
+  const observations = [
+    ["clock", "网络心跳", network?.last_seen ? age(network.last_seen) : "尚无记录", network?.online ? "主 OC 在线" : network ? "等待 OC 恢复" : "等待网络", network?.last_seen || "", network && !network.online ? "warn" : "idle"],
+    ["boxes", "库存查询", inventory.coverage, inventory.pending ? `${formatQuantity(inventory.pending)} 种待确认 · ${inventory.observedAt ? age(inventory.observedAt) : "等待观测"}` : inventory.observedAt ? `更新于 ${age(inventory.observedAt)}` : "等待库存观测", inventory.observedAt, inventory.pending ? "warn" : "idle"],
+    ["cpu", "CPU 快照", observed ? age(observed) : "尚无记录", cpuKnown ? `${cpus.length} 台已观测${state.cpus.truncated ? " · 列表不完整" : ""}` : "等待 CPU 观测", observed || "", state.cpus.truncated ? "warn" : "idle"],
+    ["radio-tower", "OC 节点", devices.total ? `${devices.online} / ${devices.total} 台在线` : "尚无记录", deviceDetail, "", devices.stale || devices.offline ? "warn" : "idle"],
   ];
-  $("#dashboard-activity-list").innerHTML = activity.map(([label, value, time]) => `<div class="activity-row"><span class="activity-icon"><i data-lucide="activity"></i></span><span><strong>${esc(value)}</strong><small>${esc(label)}</small></span><time>${esc(time)}</time></div>`).join("");
+  patchDashboardHTML("#dashboard-observation-list", observations.map(([symbol, label, value, detail, timestamp, rowTone]) => `<div class="dashboard-observation" data-tone="${rowTone}"${timestamp ? ` title="${esc(dateTime(timestamp))}"` : ""}><i data-lucide="${symbol}" aria-hidden="true"></i><div><span>${esc(label)}</span><strong>${esc(value)}</strong><small>${esc(detail)}</small></div></div>`).join(""));
   paint();
-  scheduleSpriteAnimation();
+  view.scrollTop = scroll;
 }
 
 function refreshHeader() {
@@ -1190,6 +1218,7 @@ function renderOrders() {
     return `<div class="network-table-row order-table-row"><span class="network-item-cell">${itemImage(item)}<button class="task-main" data-order="${esc(order.id)}"><span class="task-title">${esc(itemName)}</span><span class="task-sub">${esc(order.id)}</span></button></span><span class="number">× ${formatQuantity(order.quantity)}</span><span>${esc(order.cpu_name || "自动分配")}</span><span class="muted">${esc(age(order.created_at))}</span><span class="task-state" data-state="${esc(order.state)}">${esc(status)}${order.state === "needs_review" ? " · 需人工核对" : ""}</span>${order.state === "queued" ? `<button class="icon-button" data-cancel="${esc(order.id)}" title="撤回未派发任务" aria-label="撤回未派发任务">${icon("x")}</button>` : `<span></span>`}</div>`;
   }).join("")}</div></section>`).join("") : `<div class="empty">${!snapshot ? state.ordersLoading ? "正在读取任务…" : state.ordersError ? "任务读取失败" : "尚未读取任务" : `暂无${state.orderFilter === "active" ? "未完成" : state.orderFilter === "attention" ? "待处理" : ""}任务`}</div>`;
   $("#order-list").innerHTML = summary + groupsHTML;
+  renderDashboard();
   paint();
 }
 
@@ -2400,6 +2429,12 @@ document.addEventListener("click", async event => {
     return;
   }
   if (data.networkRetry !== undefined) { refreshNetwork(); return; }
+  if (data.trendHours) {
+    state.dashboardTrendHours = Number(data.trendHours);
+    $$("[data-trend-hours]").forEach(row => row.setAttribute("aria-pressed", String(row === button)));
+    renderDashboard();
+    return;
+  }
   if (data.view) showView(data.view);
   if ("filter" in data) {
     state.filter = data.filter;

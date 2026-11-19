@@ -77,8 +77,9 @@ function quantityAxis(min, max) {
   return { bottom, top, ticks, baseline: relative ? formatQuantity(bottom) : "" };
 }
 
-export function inventoryTrendModel(samples, now = Date.now()) {
-  const history = normalizeSamples(samples, now);
+export function inventoryTrendModel(samples, now = Date.now(), { windowMs = WINDOW } = {}) {
+  const window = Number.isSafeInteger(windowMs) && windowMs > 0 && windowMs <= WINDOW ? windowMs : WINDOW;
+  const history = normalizeSamples(samples, now).filter(sample => sample.at >= now - window);
   if (!history.length) return null;
   const quantities = history.map(sample => BigInt(sample.quantity));
   const min = quantities.reduce((a, b) => a < b ? a : b);
@@ -107,8 +108,8 @@ export function inventoryTrendModel(samples, now = Date.now()) {
   return { times, ticks: axis.ticks, baseline: axis.baseline, segments, first: history[0], latest: history.at(-1), samples: history.length };
 }
 
-export function inventoryTrendHTML(samples, { now = Date.now(), empty = "等待库存总量采样" } = {}) {
-  const model = inventoryTrendModel(samples, now);
+export function inventoryTrendHTML(samples, { now = Date.now(), empty = "等待库存总量采样", windowMs = WINDOW } = {}) {
+  const model = inventoryTrendModel(samples, now, { windowMs });
   if (!model) return `<div class="trend-empty"><i data-lucide="activity"></i><span>${esc(empty)}</span></div>`;
   const grid = model.ticks.map(tick => `<path d="M0 ${(tick.position * 2).toFixed(2)}H720"></path>`).join("");
   const paths = model.segments.map(segment => {
