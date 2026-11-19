@@ -18,6 +18,7 @@ import {
   updateDraft, removeDraft, completeSubmission, networkQualityLabel,
 } from "./model.mjs";
 import { loadSettings, saveSettings } from "./settings.mjs";
+import { draftDisplayItem, draftSelectionSummary } from "./draft-ui.mjs";
 import {
   clearCachedTexturePack,
   createTexturePackStore,
@@ -111,6 +112,7 @@ const attentionStates = new Set(["failed", "needs_review"]);
 const endedStates = new Set(["done", "failed", "canceled", "expired"]);
 const stateNames = { queued: "排队中", assigned: "已派发", computing: "计算中", running: "合成中", done: "已完成", failed: "失败", canceled: "已撤回", expired: "已过期", needs_review: "结果待确认" };
 let searchTimer, toastTimer, streamTimer, streamRefreshTimer, queryController, ordersController, detailController, cpuCallback, inspectorFocus, inventoryResizeTimer;
+let draftItemsRequest = null, draftItemsRefreshAt = 0;
 const inventoryWheel = createInventoryWheel();
 let spriteAnimationFrame = 0;
 const inventoryPrefetchControllers = new Set();
@@ -167,6 +169,7 @@ function refreshTexturePackState() {
   state.texturePackStatus = texturePack.status();
   renderInventory();
   renderDetail();
+  patchDraftAppearance();
   hideInventoryHover();
 }
 
@@ -626,6 +629,7 @@ function openInspector(tab = "detail") {
   $("#sheet-backdrop").hidden = !mobile;
   if (mobile) $("#close-inspector").focus();
   if (tab === "draft") renderDraft();
+  if (tab === "draft") void refreshDraftItems(true);
 }
 
 function closeInspector(restore = true) {
@@ -845,18 +849,96 @@ async function showJob(id) {
 function renderDraft() {
   const entries = state.draft.entries;
   const chosen = selectedDraftIds();
+  const summary = draftSelectionSummary(entries, state.unchecked);
+  const panel = $("#draft-panel");
+  const scrollTop = $(".draft-list", panel)?.scrollTop || 0;
+  const focused = panel.contains(document.activeElement) ? document.activeElement : null;
+  const focusKey = focused?.id ? `#${CSS.escape(focused.id)}`
+    : focused ? ["quantity", "check", "draftCpu", "remove", "resetCpu"].map(key => {
+      const attribute = key.replace(/[A-Z]/g, char => `-${char.toLowerCase()}`);
+      return focused.dataset[key] ? `[data-${attribute}="${CSS.escape(focused.dataset[key])}"]` : "";
+    }).find(Boolean) : "";
+  const selection = focused?.tagName === "INPUT" && focused.type === "text" ? [focused.selectionStart, focused.selectionEnd] : null;
   $("#draft-count").textContent = entries.length;
-  $("#draft-panel").innerHTML = state.draftBlocked ? `<p class="error">本机清单或生产任务记录无法恢复。请保留浏览器数据并核对已提交任务，不要重复提交。</p>` : `
-    <div class="draft-toolbar"><label class="check"><input id="draft-check-all" type="checkbox" ${chosen.length > 0 && chosen.length === entries.filter(e => e.status === "draft").length ? "checked" : ""} ${state.busy ? "disabled" : ""}>全选 · ${chosen.length} 项</label><button class="secondary" id="bulk-cpu" ${!cpuSelectionSupported() || !chosen.length || state.busy ? "disabled" : ""} title="${cpuSelectionTitle()}">${icon("cpu")}CPU</button></div>
-    ${entries.map(entry => `<div class="draft-entry" data-draft-id="${esc(entry.id)}">
-      <div class="draft-entry-top"><input class="draft-check" type="checkbox" aria-label="选择${esc(entry.item.label)}" data-check="${esc(entry.id)}" ${state.unchecked.has(entry.id) ? "" : "checked"} ${entry.status === "draft" && !state.busy ? "" : "disabled"}>${itemImage(entry.item)}<label>${esc(entry.item.label)}</label><button class="icon-button" data-remove="${esc(entry.id)}" title="移除草稿" aria-label="移除${esc(entry.item.label)}草稿" ${entry.status === "draft" && !state.busy ? "" : "disabled"}>${icon("trash-2")}</button></div>
-      <div class="draft-entry-fields"><input class="draft-quantity" data-quantity="${esc(entry.id)}" type="text" inputmode="numeric" maxlength="19" aria-label="${esc(entry.item.label)}合成数量" value="${esc(entry.quantity)}" ${entry.status === "draft" && !state.busy ? "" : "disabled"}><button class="cpu-select" data-draft-cpu="${esc(entry.id)}" ${entry.status !== "draft" || state.busy || !cpuSelectionSupported() ? "disabled" : ""} title="${cpuSelectionTitle()}"><span>${esc(entry.cpu_name || "自动分配")}${entry.wait_for_cpu ? " · 等待" : ""}${!cpuSelectionSupported() ? " · 当前 OC 未启用" : ""}</span>${icon("cpu")}</button></div>
-      ${entry.status === "draft" && (entry.cpu_name || entry.wait_for_cpu) ? `<p class="draft-note">提交时会保留此 CPU 策略。</p><button class="secondary wide" data-reset-cpu="${esc(entry.id)}">${icon("cpu")}改为自动分配</button>` : ""}
-      ${entry.status !== "draft" || entry.error ? `<p class="draft-note" data-status="${entry.status}">${entry.status === "submitting" ? "正在提交" : entry.status === "uncertain" ? "受理结果待核对" : esc(entry.error)}</p>` : ""}
-      ${entry.status === "uncertain" ? isJobClaim(entry) ? `<button class="secondary wide" data-job-reconcile="${esc(entry.batch_id.slice(4))}">${icon("refresh-cw")}核对原生产任务</button>` : `<button class="secondary wide" data-reconcile="${esc(entry.id)}">${icon("refresh-cw")}核对原单项订单</button>` : ""}
-    </div>`).join("")}
-    ${entries.length ? `<div class="draft-submit"><button class="primary" id="submit-draft" ${chosen.length && !state.busy && jobs.state.support === "supported" ? "" : "disabled"}>${icon("send")}${state.busy ? "正在提交生产任务" : `提交 ${chosen.length} 项生产任务`}</button><p class="draft-note">${esc(submissionStatus())}</p></div>` : `<div class="draft-empty">清单为空</div>`}`;
+  panel.innerHTML = state.draftBlocked ? `<p class="error">本机清单或生产任务记录无法恢复。请保留浏览器数据并核对已提交任务，不要重复提交。</p>` : entries.length ? `
+    <div class="draft-toolbar"><label class="check"><input id="draft-check-all" type="checkbox" aria-label="选择全部可编辑条目" ${chosen.length > 0 && chosen.length === summary.editable ? "checked" : ""} ${state.busy || !summary.editable ? "disabled" : ""}><span>全选 <small>${entries.length} 项</small></span></label><div class="draft-toolbar-actions"><button class="icon-button" id="refresh-draft-items" title="刷新清单纹理与库存" aria-label="刷新清单纹理与库存">${icon("refresh-cw")}</button><button class="secondary" id="bulk-cpu" ${!cpuSelectionSupported() || !chosen.length || state.busy ? "disabled" : ""} title="${cpuSelectionTitle()}">${icon("cpu")}批量 CPU</button></div></div>
+    <div class="draft-list" role="list" aria-label="待提交物品">${entries.map(entry => {
+      const item = draftDisplayItem(entry, state.itemCache);
+      const label = catalogDisplayName(item);
+      const editable = entry.status === "draft" && !state.busy;
+      return `<div class="draft-entry" role="listitem" data-draft-id="${esc(entry.id)}" data-selected="${entry.status === "draft" && !state.unchecked.has(entry.id)}" data-status="${entry.status}">
+        <div class="draft-entry-top"><input id="draft-check-${esc(entry.id)}" class="draft-check" type="checkbox" aria-label="选择${esc(label)}" data-check="${esc(entry.id)}" ${entry.status === "draft" && !state.unchecked.has(entry.id) ? "checked" : ""} ${editable ? "" : "disabled"}><span class="draft-entry-media" data-texture-key="${esc(draftTextureKey(item))}">${itemImage(item)}</span><div class="draft-entry-name"><label for="draft-check-${esc(entry.id)}" title="${esc(label)}">${esc(label)}</label><span class="draft-entry-stock" title="${esc(stockText(item))}">${esc(draftStockLabel(item))}</span></div><button class="icon-button" data-remove="${esc(entry.id)}" title="移除草稿" aria-label="移除${esc(label)}草稿" ${editable ? "" : "disabled"}>${icon("trash-2")}</button></div>
+        <div class="draft-entry-fields"><label class="draft-quantity-field"><span>合成数量</span><input class="draft-quantity" data-quantity="${esc(entry.id)}" type="text" inputmode="numeric" maxlength="19" aria-label="${esc(label)}合成数量" value="${esc(entry.quantity)}" ${editable ? "" : "disabled"}></label><div class="draft-cpu-field"><span>合成 CPU</span><button class="cpu-select" data-draft-cpu="${esc(entry.id)}" ${!editable || !cpuSelectionSupported() ? "disabled" : ""} title="${cpuSelectionTitle()}"><span>${esc(entry.cpu_name || "自动分配")}${entry.wait_for_cpu ? " · 等待" : ""}${!cpuSelectionSupported() ? " · 未启用" : ""}</span>${icon("cpu")}</button></div></div>
+        ${entry.status === "draft" && (entry.cpu_name || entry.wait_for_cpu) ? `<button class="text-button draft-reset-cpu" data-reset-cpu="${esc(entry.id)}" ${state.busy ? "disabled" : ""}>恢复自动分配</button>` : ""}
+        ${entry.status !== "draft" || entry.error ? `<p class="draft-note" data-status="${entry.status}">${entry.status === "submitting" ? "正在提交" : entry.status === "uncertain" ? "受理结果待核对 · 此条目已锁定" : esc(entry.error)}</p>` : ""}
+        ${entry.status === "uncertain" ? isJobClaim(entry) ? `<button class="secondary wide" data-job-reconcile="${esc(entry.batch_id.slice(4))}">${icon("refresh-cw")}核对原生产任务</button>` : `<button class="secondary wide" data-reconcile="${esc(entry.id)}">${icon("refresh-cw")}核对原单项订单</button>` : ""}
+      </div>`;
+    }).join("")}</div>
+    <div class="draft-submit"><div class="draft-total"><span>已选 <strong>${summary.selected}</strong> 项</span><span title="所选条目的合成数量合计">共 <strong class="number">${quantityHTML(summary.quantity)}</strong> 件</span></div><button class="primary" id="submit-draft" ${chosen.length && !state.busy && jobs.state.support === "supported" ? "" : "disabled"}>${icon("send")}${state.busy ? "正在提交生产任务" : `提交 ${chosen.length} 项`}</button><p class="draft-note">${esc(submissionStatus() || "提交后可在合成中心查看进度")}</p></div>`
+    : `<div class="draft-empty">${icon("list-plus")}<strong>清单还是空的</strong><span>点击物品右上角的 +，或在物品详情中加入清单</span></div>`;
+  const checkAll = $("#draft-check-all", panel);
+  if (checkAll) checkAll.indeterminate = summary.selected > 0 && summary.selected < summary.editable;
   paint();
+  const list = $(".draft-list", panel);
+  if (list) list.scrollTop = scrollTop;
+  const nextFocus = focusKey ? $(focusKey, panel) : null;
+  nextFocus?.focus({ preventScroll: true });
+  if (selection && nextFocus?.setSelectionRange) nextFocus.setSelectionRange(...selection);
+  scheduleSpriteAnimation();
+}
+
+function draftTextureKey(item) {
+  return JSON.stringify([textureAssetURL(item), state.icons[`${item.name}@${item.damage}`] || "", catalogAnimation(item)]);
+}
+
+function draftStockLabel(item) {
+  if (!quantityKnown(item)) return "库存待查询";
+  return `库存 ${formatCompactQuantity(item.quantity)}${item.current_session ? "" : " · 待同步"}`;
+}
+
+function patchDraftAppearance() {
+  const entries = new Map(state.draft.entries.map(entry => [entry.id, entry]));
+  for (const row of $$("#draft-panel .draft-entry")) {
+    const entry = entries.get(row.dataset.draftId);
+    if (!entry) continue;
+    const item = draftDisplayItem(entry, state.itemCache);
+    const media = $(".draft-entry-media", row);
+    const key = draftTextureKey(item);
+    if (media && media.dataset.textureKey !== key) { media.dataset.textureKey = key; media.innerHTML = itemImage(item); }
+    const label = catalogDisplayName(item);
+    const name = $(".draft-entry-name label", row);
+    if (name) { name.textContent = label; name.title = label; }
+    const stock = $(".draft-entry-stock", row);
+    if (stock) { stock.textContent = draftStockLabel(item); stock.title = stockText(item); }
+    $("[data-check]", row)?.setAttribute("aria-label", `选择${label}`);
+    $("[data-quantity]", row)?.setAttribute("aria-label", `${label}合成数量`);
+    $("[data-remove]", row)?.setAttribute("aria-label", `移除${label}草稿`);
+  }
+  paint();
+  scheduleSpriteAnimation();
+}
+
+async function refreshDraftItems(force = false) {
+  if (!state.network || !state.draft.entries.length) return;
+  const context = state.context;
+  if (draftItemsRequest?.context === context) return draftItemsRequest.promise;
+  if (!force && Date.now() - draftItemsRefreshAt < 10000) { patchDraftAppearance(); return; }
+  const ids = state.draft.entries.map(entry => entry.item.id);
+  const work = { context, promise: null };
+  const button = $("#refresh-draft-items");
+  if (button) button.disabled = true;
+  work.promise = lookupItems(ids).then(() => {
+    if (context !== state.context) return;
+    draftItemsRefreshAt = Date.now();
+    patchDraftAppearance();
+  }).catch(() => {
+    if (force && context === state.context) toast("清单纹理与库存读取失败，已保留当前清单。", true);
+  }).finally(() => {
+    if (draftItemsRequest === work) draftItemsRequest = null;
+    if (context === state.context) { const refresh = $("#refresh-draft-items"); if (refresh) refresh.disabled = false; }
+  });
+  draftItemsRequest = work;
+  return work.promise;
 }
 
 function readLocalDraft(key = state.draftKey) {
@@ -1119,6 +1201,7 @@ async function lookupItems(ids) {
     state.itemCache.set(String(item.id), item);
     if (item.canonical_id) state.itemCache.set(String(item.canonical_id), item);
   }
+  patchDraftAppearance();
   return { items };
 }
 
@@ -1689,6 +1772,7 @@ function applyInventoryPage(destination, page) {
   state.cursors[state.page] = { cursor: state.cursor, anchor: inventoryWindowAnchor() };
   state.cursors.length = state.page + 1;
   state.items.forEach(item => state.itemCache.set(String(item.id), item));
+  patchDraftAppearance();
   const selected = state.itemCache.get(String(state.selected?.id));
   if (selected) state.selected = selected;
   cacheInventoryPage(state.cursor, { ...inventoryQuerySpec(state.inventoryLimit), anchor: destination.anchor || "", page: destination.absolute ? state.page + 1 : "" }, page);
@@ -1845,6 +1929,7 @@ async function refreshInventoryWindow(force = false) {
     state.cursors[state.page] = { cursor: state.cursor, anchor: inventoryWindowAnchor() };
     cacheInventoryPage("", { ...inventoryQuerySpec(state.inventoryLimit), anchor: inventoryWindowAnchor() }, value);
     state.items.forEach(item => state.itemCache.set(String(item.id), item));
+    patchDraftAppearance();
     const selected = state.items.find(item => String(item.id) === String(state.selected?.id)) || state.itemCache.get(String(state.selected?.id));
     if (selected) state.selected = selected;
     if (!patchInventoryRows()) renderInventory();
@@ -1867,6 +1952,7 @@ async function refreshInventoryWindow(force = false) {
 }
 function refreshInventoryObservation() {
   void refreshInventoryStats();
+  if (state.view === "inventory" && state.inspector === "draft") void refreshDraftItems();
   if (Date.now() - catalogListRefreshAt >= 5000 && !state.inventoryLoading) {
     clearTimeout(inventoryRefreshTimer); inventoryRefreshTimer = null;
     catalogListRefreshAt = Date.now();
@@ -1940,6 +2026,7 @@ function connectStream() {
 async function switchNetwork(id) {
   if (state.busy || state.preparing) { $("#network").value = state.network?.id || ""; toast("请等待本轮提交结束。"); return; }
   state.context++;
+  draftItemsRequest = null; draftItemsRefreshAt = 0;
   clearTimeout(inventoryRefreshTimer); inventoryRefreshTimer = null;
   inventoryLiveRequest?.abort(); inventoryLiveRequest = null;
   const network = state.networks.find(n => n.id === id);
@@ -1998,7 +2085,7 @@ async function switchNetwork(id) {
   try { localStorage.setItem("ae-orbit:last-network", network.id); } catch {}
   connectStream();
   const context = state.context;
-  await Promise.all([loadInventory(true), refreshInventoryStats(), refreshOrders(false), refreshCPUs(), refreshNetwork(), refreshJobs()]);
+  await Promise.all([loadInventory(true), refreshInventoryStats(), refreshOrders(false), refreshCPUs(), refreshNetwork(), refreshJobs(), refreshDraftItems(true)]);
   if (context !== state.context) return;
   try {
     for (const intent of jobs.local().intents.filter(intent=>intent.state === "accepted")) {
@@ -2262,6 +2349,7 @@ document.addEventListener("click", async event => {
   if (!button || button.disabled) return;
   if (!button.closest(".inventory-table .item-button")) hideInventoryHover();
   const data = button.dataset;
+  if (button.id === "refresh-draft-items") { void refreshDraftItems(true); return; }
   if (button.id === "sidebar-toggle") {
     updateSettings({ sidebarCollapsed: !state.settings.sidebarCollapsed }, false);
     return;

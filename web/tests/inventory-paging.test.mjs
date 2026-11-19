@@ -53,7 +53,7 @@ function fixture(request) {
     requestAnimationFrame: fn => { frames.set(++frameId,fn); return frameId; }, cancelAnimationFrame: id => frames.delete(id),
     setTimeout: () => 1, clearTimeout() {}, scheduleInventoryImageWarmup() {}, inventoryWheel: createInventoryWheel(),
     networkPath: x => x, api: { request(path) { calls.requests.push(path); return request(path); } },
-    renderInventory() { calls.renders++; context.renderInventoryPager(); }, hideInventoryHover() {}, patchVisibleInventory() {}, patchSelectedDetail() {}, refreshHeader() {},
+    renderInventory() { calls.renders++; context.renderInventoryPager(); }, hideInventoryHover() {}, patchVisibleInventory() {}, patchSelectedDetail() {}, patchDraftAppearance() {}, refreshHeader() {},
     message: (key, text) => { if (text) calls.errors.push(text); }, errorText: e => e.message,
   });
   vm.runInContext(source.slice(source.indexOf("function renderInventoryPager()"), source.indexOf("function patchSelectedDetail(")), context);

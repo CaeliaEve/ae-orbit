@@ -21,7 +21,7 @@ function fixture(request) {
     document: { activeElement: focused }, CSS: { escape: v => v }, window,
     $: selector => selector.startsWith("[data-item=") ? { focus() { calls.focused++; } } : elements.get(selector),
     patchInventoryRows: () => { calls.patches++; return false; }, renderInventory: () => { calls.renders++; window.scrollY=0; },
-    detailNeedsRender: () => false, patchSelectedDetail: item => { calls.detail=item; }, renderDetail() {},
+    detailNeedsRender: () => false, patchSelectedDetail: item => { calls.detail=item; }, patchDraftAppearance() {}, renderDetail() {},
     message() {}, errorText: String, cacheInventoryPage() {}, clearInventoryPages() {}, prefetchInventoryPages() {}, invalidateInventoryPageNumbers() {},
     renderInventoryPager() { elements.get("#page-label").textContent = `第 ${state.page + 1} 页 · ${state.items.length} 项`; elements.get("#next-page").disabled = !state.nextCursor; },
   });
