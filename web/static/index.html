@@ -57,7 +57,7 @@
             <div id="inventory-message" class="inline-message" role="status" hidden></div>
             <div class="table-wrap"><table class="inventory-table"><thead><tr><th>物品</th><th>库存数量</th><th><span class="sr-only">添加</span></th></tr></thead><tbody id="inventory-rows"></tbody></table></div>
             <div id="inventory-empty" class="empty">登录后查看库存</div>
-            <div class="catalog-footer"><span id="page-label">第 1 页</span><div class="pager"><button class="icon-button" id="prev-page" title="上一页" aria-label="上一页" disabled><i data-lucide="chevron-left"></i></button><button class="icon-button" id="next-page" title="下一页" aria-label="下一页" disabled><i data-lucide="chevron-right"></i></button></div></div>
+            <div class="catalog-footer"><div class="paging-status"><span id="page-label" role="status" aria-live="polite" aria-atomic="true">第 1 页</span><span class="paging-hint">滚轮翻页 · PgUp / PgDn</span></div><nav class="pager" aria-label="库存翻页"><button class="page-button" id="first-page" title="返回首页（Home）" disabled>首页</button><button class="page-button" id="prev-page" title="上一页（PageUp）" disabled><i data-lucide="chevron-left"></i><span>上一页</span></button><button class="page-button" id="next-page" title="下一页（PageDown）" disabled><span>下一页</span><i data-lucide="chevron-right"></i></button></nav></div>
           </div>
           <div id="inventory-hover-card" class="inventory-hover-card" role="tooltip" hidden></div>
           <aside id="inspector" class="inspector" aria-label="物品与待提交清单">

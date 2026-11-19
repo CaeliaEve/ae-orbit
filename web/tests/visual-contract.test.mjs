@@ -45,34 +45,17 @@ test("inventory grid fills available width and supports wheel page navigation", 
   assert.match(appSource, /limit: String\(spec\.limit\)/);
   assert.match(appSource, /function refreshInventoryCapacity\(\)/);
   assert.match(appSource, /function changeInventoryPage\(direction\)/);
-  assert.match(appSource, /\.catalog[\s\S]*?addEventListener\("wheel"/);
+  assert.match(appSource, /\.table-wrap[\s\S]*?addEventListener\("wheel"/);
   assert.match(appSource, /event\.preventDefault\(\)/);
 });
 
-test("inventory wheel queues NEI-like continuous page changes", () => {
-  assert.match(appSource, /let inventoryWheelAccumulation = 0/);
-  assert.match(appSource, /function drainInventoryWheel\(\)/);
-  assert.match(appSource, /const INVENTORY_WHEEL_THRESHOLD = 80/);
-  assert.match(appSource, /const INVENTORY_WHEEL_MAX_BACKLOG = INVENTORY_WHEEL_THRESHOLD \* 48/);
-  assert.match(appSource, /inventoryWheelAccumulation \+ delta/);
-  assert.match(appSource, /Math\.min\(/);
-  assert.match(appSource, /INVENTORY_WHEEL_MAX_BACKLOG,\s*\n?\s*Math\.max\(/);
-  assert.match(appSource, /-INVENTORY_WHEEL_MAX_BACKLOG,\s*inventoryWheelAccumulation \+ delta/);
-  assert.match(appSource, /const INVENTORY_WHEEL_MAX_PAGES_PER_FRAME = 12/);
-  assert.match(appSource, /for \(let pages = 0; pages < INVENTORY_WHEEL_MAX_PAGES_PER_FRAME/);
-  assert.match(appSource, /setTimeout\(\(\) => \{[\s\S]*?drainInventoryWheel\(\);[\s\S]*?\}, 0\)/);
-  assert.doesNotMatch(appSource, /INVENTORY_WHEEL_PAGE_INTERVAL/);
-  assert.doesNotMatch(appSource, /inventoryWheelNextAt/);
-  assert.match(appSource, /function clearInventoryWheelDirection\(direction\)/);
-  assert.match(appSource, /const INVENTORY_PREFETCH_DEPTH = 12/);
-  assert.match(appSource, /function prefetchInventoryPages\(cursor, generation, limit\)/);
-  assert.match(appSource, /function applyCachedInventoryPage\(cursor, page\)/);
-  assert.match(appSource, /inventoryPageCache\.get\(key\)/);
-  assert.match(appSource, /const inventoryPageRequests = new Map\(\)/);
-  assert.match(appSource, /function requestInventoryPage\(cursor, limit, signal/);
-  assert.match(appSource, /if \(Math\.abs\(inventoryWheelAccumulation\) >= INVENTORY_WHEEL_THRESHOLD\) scheduleInventoryWheelDrain\(\)/);
-  assert.match(appSource, /changeInventoryPage\(direction\)/);
-  assert.match(compactCSS, /#view-inventory \.table-wrap[\s\S]*?overflow:\s*hidden/);
+test("inventory footer names navigation and announces loading without rebuilding rows", () => {
+  assert.match(indexHTML, /aria-label="库存翻页"/);
+  assert.match(indexHTML, /id="first-page"/);
+  assert.match(indexHTML, /id="page-label"[^>]*aria-live="polite"/);
+  assert.match(indexHTML, /PgUp \/ PgDn/);
+  assert.match(compactCSS, /#inventory-rows\[aria-busy="true"\]/);
+  assert.match(compactCSS, /\.catalog-footer \.page-button[\s\S]*min-height: 44px/);
 });
 
 test("inventory hover card is centered over the catalog and only mouse-triggered", () => {

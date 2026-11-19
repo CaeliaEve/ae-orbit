@@ -6,6 +6,7 @@ import {
   WifiOff,
 } from "lucide";
 import { createAPI } from "./api.mjs";
+import { createInventoryWheel, inventoryKeyboardDirection } from "./inventory-paging.mjs";
 import { quantityKnown, stockText, stockFreshness, inventorySummary } from "./plain-inventory.mjs";
 import { inventoryTrendHTML, loadTrendHistory, recordTrendSample, saveTrendHistory, trendStorageKey } from "./inventory-trend.mjs";
 import { loadOrderSnapshot } from "./orders.mjs";
@@ -62,7 +63,7 @@ const state = {
   orders: [], devices: [], cpus: { cpus: [] }, icons: {}, filter: "", sort: "name", search: "",
   stockView: "stock", inventoryScope: "", inventoryStats: null,
   inventoryTrend: [], inventoryTrendKey: "",
-  cursor: "", anchorCursor: "", nextCursor: "", cursors: [""], page: 0, inventoryLimit: 50, selected: null, amount: "1",
+  cursor: "", anchorCursor: "", nextCursor: "", cursors: [{ cursor: "", anchor: "" }], page: 0, inventoryLimit: 50, inventoryTarget: null, inventoryQueryPending: false, selected: null, amount: "1",
   cpuName: "", waitForCPU: false, inspector: "detail", draft: { version: 1, entries: [], receipts: {} },
   draftKey: "", draftBlocked: false, unchecked: new Set(), busy: false, preparing: false, inventoryLoading: false,
   orderFilter: "active", orderGroup: "batch", stream: null, streamConnected: false, streamState: "closed", generation: 0,
@@ -94,17 +95,15 @@ const attentionStates = new Set(["failed", "needs_review"]);
 const endedStates = new Set(["done", "failed", "canceled", "expired"]);
 const stateNames = { queued: "排队中", assigned: "已派发", computing: "计算中", running: "合成中", done: "已完成", failed: "失败", canceled: "已撤回", expired: "已过期", needs_review: "结果待确认" };
 let searchTimer, toastTimer, streamTimer, streamRefreshTimer, queryController, ordersController, detailController, cpuCallback, inspectorFocus, inventoryResizeTimer;
-let inventoryWheelAccumulation = 0;
-let inventoryWheelDrainTimer = 0;
+const inventoryWheel = createInventoryWheel();
 let spriteAnimationFrame = 0;
 const inventoryPrefetchControllers = new Set();
 const inventoryPageCache = new Map();
 const inventoryPageRequests = new Map();
 let inventoryCacheEpoch = 0, inventoryLiveRequest = null;
-const INVENTORY_WHEEL_THRESHOLD = 80;
-const INVENTORY_WHEEL_MAX_BACKLOG = INVENTORY_WHEEL_THRESHOLD * 48;
-const INVENTORY_WHEEL_MAX_PAGES_PER_FRAME = 12;
-const INVENTORY_PREFETCH_DEPTH = 12;
+const INVENTORY_PREFETCH_DEPTH = 3;
+const INVENTORY_PAGE_CACHE_LIMIT = 48;
+const INVENTORY_PAGE_CACHE_TTL = 15000;
 
 function toast(message, error = false, category = "general") {
   if (!error && category !== "general") {
@@ -614,11 +613,7 @@ function renderInventory() {
   </tr>`).join("");
   $("#inventory-empty").hidden = state.items.length > 0;
   $("#inventory-empty").textContent = state.inventoryLoading ? "正在读取库存…" : !state.member ? "登录后查看库存" : !state.network ? "没有可访问的网络" : "没有匹配的物品";
-  $("#prev-page").hidden = false;
-  $("#next-page").hidden = false;
-  $("#prev-page").disabled = state.page === 0 || state.inventoryLoading;
-  $("#next-page").disabled = !state.nextCursor || state.inventoryLoading;
-  $("#page-label").textContent = `第 ${state.page + 1} 页 · 本页 ${state.items.length} 项`;
+  renderInventoryPager();
   paint();
   scheduleSpriteAnimation();
 }
@@ -674,10 +669,24 @@ function patchInventoryRows() {
     }
   });
   $("#inventory-empty").hidden = state.items.length > 0;
-  $("#page-label").textContent = `第 ${state.page + 1} 页 · 本页 ${state.items.length} 项`;
+  renderInventoryPager();
   paint();
   scheduleSpriteAnimation();
   return true;
+}
+
+function renderInventoryPager() {
+  const loading = state.inventoryLoading;
+  $("#first-page").disabled = loading || state.inventoryQueryPending || state.page === 0;
+  $("#prev-page").disabled = loading || state.inventoryQueryPending || state.page === 0;
+  $("#next-page").disabled = loading || state.inventoryQueryPending || !state.nextCursor;
+  $("#refresh-inventory").disabled = loading;
+  $("#inventory-rows").setAttribute("aria-busy", String(loading));
+  const target = state.inventoryTarget;
+  $("#page-label").textContent = loading
+    ? `第 ${state.page + 1} 页 · 正在读取${target && target.page !== state.page ? `第 ${target.page + 1} 页` : ""}…`
+    : state.inventoryQueryPending ? "读取失败 · 点击刷新重试"
+    : `第 ${state.page + 1} 页 · ${state.items.length} 项${state.items.length && !state.nextCursor ? " · 已到末页" : ""}`;
 }
 
 function patchSelectedDetail(item) {
@@ -1410,21 +1419,23 @@ function inventoryPageLimit() {
   const width = wrap.clientWidth;
   const height = wrap.clientHeight;
   if (wasEmptyVisible) empty.hidden = false;
-  const gap = 8;
-  const cardWidth = 92;
-  const cardHeight = 112;
+  const gridStyle = getComputedStyle($("#inventory-rows"));
+  const gap = parseFloat(gridStyle.gap) || 8;
+  const cardWidth = parseFloat(gridStyle.getPropertyValue("--inventory-card-min")) || 92;
+  const cardHeight = parseFloat(gridStyle.getPropertyValue("--inventory-card-height")) || 144;
   const padding = 24;
   const columns = Math.max(1, Math.floor((width - padding + gap) / (cardWidth + gap)));
   const rows = Math.max(1, Math.floor((height - padding + gap) / (cardHeight + gap)));
   wrap.style.setProperty("--inventory-rows", String(rows));
-  return Math.min(200, Math.max(12, columns * rows));
+  return Math.min(200, columns * rows);
 }
 
 function refreshInventoryCapacity() {
   const nextLimit = inventoryPageLimit();
   if (nextLimit === state.inventoryLimit) return false;
-  state.inventoryLimit = nextLimit;
-  if (state.network && state.view === "inventory" && !state.inventoryLoading) loadInventory(true);
+  if (state.network && state.view === "inventory") {
+    if (!state.inventoryLoading) void loadInventory(false, { page: state.page, cursor: "", anchor: state.page > 0 ? state.anchorCursor : "", limit: nextLimit });
+  } else state.inventoryLimit = nextLimit;
   return true;
 }
 
@@ -1436,12 +1447,39 @@ function inventoryPageKey(cursor, spec) {
   return JSON.stringify([spec.search, spec.sort, spec.filter, spec.limit, spec.view, spec.scope, cursor, spec.anchor || ""]);
 }
 
-function requestInventoryPage(cursor, limit, signal, spec = inventoryQuerySpec(limit)) {
+function cachedInventoryPage(cursor, spec) {
   const key = inventoryPageKey(cursor, spec);
   const cached = inventoryPageCache.get(key);
+  if (!cached) return null;
+  if (Date.now() - cached.cachedAt > INVENTORY_PAGE_CACHE_TTL) {
+    inventoryPageCache.delete(key);
+    return null;
+  }
+  inventoryPageCache.delete(key);
+  inventoryPageCache.set(key, cached);
+  return cached;
+}
+
+function cacheInventoryPage(cursor, spec, page) {
+  const key = inventoryPageKey(cursor, spec);
+  inventoryPageCache.delete(key);
+  inventoryPageCache.set(key, { ...page, cachedAt: Date.now() });
+  while (inventoryPageCache.size > INVENTORY_PAGE_CACHE_LIMIT) inventoryPageCache.delete(inventoryPageCache.keys().next().value);
+}
+
+function clearInventoryPages() {
+  inventoryCacheEpoch++;
+  for (const controller of inventoryPrefetchControllers) controller.abort();
+  inventoryPrefetchControllers.clear();
+  inventoryPageCache.clear(); inventoryPageRequests.clear();
+}
+
+function requestInventoryPage(cursor, limit, signal, spec = inventoryQuerySpec(limit), fresh = false) {
+  const key = inventoryPageKey(cursor, spec);
+  const cached = !fresh && cachedInventoryPage(cursor, spec);
   if (cached) return Promise.resolve(cached);
   const pending = inventoryPageRequests.get(key);
-  if (pending) return pending;
+  if (pending && !fresh && !pending.signal?.aborted) return pending.promise;
   const epoch = inventoryCacheEpoch;
   const query = new URLSearchParams({ q: spec.search, sort: spec.sort, limit: String(spec.limit), consistency: "window" });
   if (spec.filter) query.set("craftable", spec.filter);
@@ -1451,13 +1489,13 @@ function requestInventoryPage(cursor, limit, signal, spec = inventoryQuerySpec(l
   const request = api.request(networkPath(`/items?${query}`), signal ? { signal } : undefined)
     .then(value => {
       const page = { items: value.items || [], nextCursor: value.next_cursor || "", anchorCursor: value.anchor_cursor || "", scope: value.scope || "" };
-      if (epoch === inventoryCacheEpoch) inventoryPageCache.set(key, page);
+      if (epoch === inventoryCacheEpoch && !signal?.aborted) cacheInventoryPage(cursor, spec, page);
       return page;
     })
     .finally(() => {
-      if (inventoryPageRequests.get(key) === request) inventoryPageRequests.delete(key);
+      if (inventoryPageRequests.get(key)?.promise === request) inventoryPageRequests.delete(key);
     });
-  inventoryPageRequests.set(key, request);
+  inventoryPageRequests.set(key, { promise: request, signal });
   return request;
 }
 
@@ -1481,90 +1519,112 @@ async function prefetchInventoryPages(cursor, generation, limit) {
   }
 }
 
-async function loadInventory(reset = false) {
+async function loadInventory(reset = false, target = null) {
   if (!state.network) return;
-  const limit = inventoryPageLimit();
-  if (limit !== state.inventoryLimit) reset = true;
-  state.inventoryLimit = limit;
+  const limit = target?.limit || inventoryPageLimit();
+  const destination = reset ? { page: 0, cursor: "", anchor: "" }
+    : target || { page: state.page, cursor: "", anchor: state.page > 0 ? state.anchorCursor : "" };
   if (reset) {
-    state.anchorCursor = "";
-    inventoryCacheEpoch++;
-    clearTimeout(inventoryWheelDrainTimer);
-    inventoryWheelDrainTimer = 0;
-    for (const controller of inventoryPrefetchControllers) controller.abort();
-    inventoryPrefetchControllers.clear();
-    inventoryPageCache.clear();
-    inventoryPageRequests.clear();
-    state.page = 0;
-    state.cursor = "";
-    state.cursors = [""];
-    inventoryWheelAccumulation = 0;
+    state.inventoryQueryPending = true;
+    clearInventoryPages();
+    inventoryWheel.reset();
   }
   inventoryLiveRequest?.abort(); inventoryLiveRequest = null;
   queryController?.abort();
   queryController = new AbortController();
   const generation = ++state.generation;
-  const cursor = state.cursor;
-  const spec = inventoryQuerySpec(limit);
+  const cursor = destination.cursor;
+  const spec = { ...inventoryQuerySpec(limit), anchor: destination.anchor || "" };
   state.inventoryLoading = true;
-  renderInventory();
+  state.inventoryTarget = destination;
+  renderInventoryPager();
+  if (!state.items.length) renderInventory();
   try {
     const value = await requestInventoryPage(cursor, limit, queryController.signal, spec);
     if (generation !== state.generation) return;
-    state.items = value.items;
-    state.anchorCursor = value.anchorCursor;
-    state.inventoryScope = value.scope;
-    refreshHeader();
-    state.nextCursor = value.nextCursor;
-    state.items.forEach(item => state.itemCache.set(String(item.id), item));
-    message("#inventory-message", "");
-    void prefetchInventoryPages(value.nextCursor, generation, limit);
+    if (reset) { state.cursors = [{ cursor: "", anchor: "" }]; state.inventoryQueryPending = false; }
+    if (limit !== state.inventoryLimit) clearInventoryPages();
+    state.inventoryLimit = limit;
+    applyInventoryPage(destination, value);
   } catch (error) {
     if (generation !== state.generation || error.name === "AbortError") return;
-    inventoryWheelAccumulation = 0;
+    inventoryWheel.reset();
     message("#inventory-message", errorText(error));
-    if (error.code === "view_changed") { state.nextCursor = ""; }
   } finally {
     if (generation === state.generation) {
       state.inventoryLoading = false;
-      renderInventory();
-      if (Math.abs(inventoryWheelAccumulation) >= INVENTORY_WHEEL_THRESHOLD) scheduleInventoryWheelDrain();
+      state.inventoryTarget = null;
+      renderInventoryPager();
+      if (!state.items.length) renderInventory();
+      if (inventoryPageLimit() !== limit && inventoryPageLimit() !== state.inventoryLimit) refreshInventoryCapacity();
     }
   }
 }
 
-function applyCachedInventoryPage(cursor, page) {
-  state.generation++;
-  inventoryLiveRequest?.abort(); inventoryLiveRequest = null;
-  state.cursor = cursor;
+function applyInventoryPage(destination, page) {
+  const navigated = destination.page !== state.page;
+  const hadItemFocus = $("#inventory-rows").contains(document.activeElement);
+  const focusedItem = document.activeElement?.dataset?.item || document.activeElement?.dataset?.quickAdd;
+  const focusKind = document.activeElement?.dataset?.quickAdd ? "data-quick-add" : "data-item";
+  const windowX = window.scrollX, windowY = window.scrollY;
+  hideInventoryHover();
+  state.page = destination.page;
+  state.cursor = destination.cursor;
   state.items = page.items;
   state.anchorCursor = page.anchorCursor;
   state.nextCursor = page.nextCursor;
+  state.inventoryScope = page.scope;
+  state.cursors[state.page] = { cursor: state.cursor, anchor: state.page > 0 ? state.anchorCursor : "" };
+  state.cursors.length = state.page + 1;
   state.items.forEach(item => state.itemCache.set(String(item.id), item));
+  const selected = state.itemCache.get(String(state.selected?.id));
+  if (selected) state.selected = selected;
+  cacheInventoryPage(state.cursor, { ...inventoryQuerySpec(state.inventoryLimit), anchor: destination.anchor || "" }, page);
+  cacheInventoryPage("", { ...inventoryQuerySpec(state.inventoryLimit), anchor: state.page > 0 ? state.anchorCursor : "" }, page);
   state.inventoryLoading = false;
+  state.inventoryTarget = null;
   message("#inventory-message", "");
+  refreshHeader();
   renderInventory();
+  if (!navigated) {
+    if (window.scrollY !== windowY) window.scrollTo(windowX, windowY);
+    if (focusedItem) $(`[${focusKind}="${CSS.escape(focusedItem)}"]`)?.focus({ preventScroll: true });
+  }
+  if (navigated) {
+    const wrap = $("#view-inventory .table-wrap");
+    wrap.scrollTop = 0;
+    if (matchMedia("(max-width: 900px)").matches) wrap.scrollIntoView({ block: "start" });
+    if (hadItemFocus) $("[data-item]", wrap)?.focus({ preventScroll: true });
+  }
+  if (state.selected && state.inspector === "detail") patchSelectedDetail(state.selected);
   void prefetchInventoryPages(page.nextCursor, state.generation, state.inventoryLimit);
+  void patchVisibleInventory();
 }
 
 function changeInventoryPage(direction) {
-  if (!state.network || state.inventoryLoading) return false;
+  if (!state.network || state.inventoryLoading || state.inventoryQueryPending) return false;
+  let destination;
   if (direction < 0) {
     if (state.page === 0) return false;
-    state.page--;
-    state.cursor = state.cursors[state.page];
+    destination = { page: state.page - 1, ...state.cursors[state.page - 1] };
+    if (destination.anchor) destination.cursor = "";
+  } else if (direction === 0) {
+    if (state.page === 0) return false;
+    destination = { page: 0, cursor: "", anchor: "" };
   } else {
     if (!state.nextCursor) return false;
-    state.page++;
-    state.cursor = state.nextCursor;
-    state.cursors[state.page] = state.cursor;
+    destination = { page: state.page + 1, cursor: state.nextCursor, anchor: "" };
   }
-  const cached = inventoryPageCache.get(inventoryPageKey(state.cursor, inventoryQuerySpec(state.inventoryLimit)));
+  const limit = inventoryPageLimit();
+  const cached = cachedInventoryPage(destination.cursor, { ...inventoryQuerySpec(limit), anchor: destination.anchor || "" });
   if (cached) {
-    applyCachedInventoryPage(state.cursor, cached);
+    state.generation++;
+    inventoryLiveRequest?.abort(); inventoryLiveRequest = null;
+    state.inventoryLimit = limit;
+    applyInventoryPage(destination, cached);
     return true;
   }
-  loadInventory();
+  void loadInventory(false, { ...destination, limit });
   return true;
 }
 
@@ -1573,37 +1633,6 @@ function inventoryWheelDelta(event) {
   if (!raw) return 0;
   const multiplier = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? window.innerHeight : 1;
   return raw * multiplier;
-}
-
-function scheduleInventoryWheelDrain() {
-  if (inventoryWheelDrainTimer || state.inventoryLoading) return;
-  inventoryWheelDrainTimer = setTimeout(() => {
-    inventoryWheelDrainTimer = 0;
-    drainInventoryWheel();
-  }, 0);
-}
-
-function clearInventoryWheelDirection(direction) {
-  if ((direction > 0 && inventoryWheelAccumulation > 0) || (direction < 0 && inventoryWheelAccumulation < 0)) {
-    inventoryWheelAccumulation = 0;
-  }
-}
-
-function drainInventoryWheel() {
-  if (state.view !== "inventory" || matchMedia("(max-width: 900px)").matches) {
-    inventoryWheelAccumulation = 0;
-    return;
-  }
-  if (state.inventoryLoading || Math.abs(inventoryWheelAccumulation) < INVENTORY_WHEEL_THRESHOLD) return;
-  const direction = inventoryWheelAccumulation > 0 ? 1 : -1;
-  for (let pages = 0; pages < INVENTORY_WHEEL_MAX_PAGES_PER_FRAME && !state.inventoryLoading && Math.abs(inventoryWheelAccumulation) >= INVENTORY_WHEEL_THRESHOLD; pages++) {
-    if (!changeInventoryPage(direction)) {
-      clearInventoryWheelDirection(direction);
-      return;
-    }
-    inventoryWheelAccumulation -= direction * INVENTORY_WHEEL_THRESHOLD;
-  }
-  if (!state.inventoryLoading && Math.abs(inventoryWheelAccumulation) >= INVENTORY_WHEEL_THRESHOLD) scheduleInventoryWheelDrain();
 }
 
 async function patchVisibleInventory() {
@@ -1659,19 +1688,16 @@ async function refreshInventoryStats() {
 }
 
 let catalogListRefreshAt = 0, inventoryRefreshTimer = null;
-async function refreshInventoryWindow() {
-  if (!state.network || state.inventoryLoading || inventoryLiveRequest) return;
+async function refreshInventoryWindow(force = false) {
+  if (!state.network || state.inventoryLoading || state.inventoryQueryPending || inventoryLiveRequest) return;
   const context = state.context, generation = state.generation;
   const spec = { ...inventoryQuerySpec(state.inventoryLimit), anchor: state.page > 0 ? state.anchorCursor : "" };
   const cursor = spec.anchor ? "" : state.cursor;
-  inventoryCacheEpoch++;
-  for (const controller of inventoryPrefetchControllers) controller.abort();
-  inventoryPrefetchControllers.clear();
-  inventoryPageCache.clear(); inventoryPageRequests.clear();
+  if (force) clearInventoryPages();
   const controller = new AbortController();
   inventoryLiveRequest = controller;
   try {
-    const value = await requestInventoryPage(cursor, spec.limit, controller.signal, spec);
+    const value = await requestInventoryPage(cursor, spec.limit, controller.signal, spec, true);
     if (context !== state.context || generation !== state.generation) return;
     // A selected item can leave the stock filter while its detail stays open.
     const selectedID = state.selected?.id;
@@ -1688,20 +1714,22 @@ async function refreshInventoryWindow() {
     const windowX=window.scrollX, windowY=window.scrollY;
     state.items = value.items; state.nextCursor = value.nextCursor;
     state.anchorCursor = value.anchorCursor || state.anchorCursor;
+    state.cursors[state.page] = { cursor: state.cursor, anchor: state.page > 0 ? state.anchorCursor : "" };
+    cacheInventoryPage("", { ...inventoryQuerySpec(state.inventoryLimit), anchor: state.page > 0 ? state.anchorCursor : "" }, value);
     state.items.forEach(item => state.itemCache.set(String(item.id), item));
     const selected = state.items.find(item => String(item.id) === String(state.selected?.id)) || state.itemCache.get(String(state.selected?.id));
     if (selected) state.selected = selected;
     if (!patchInventoryRows()) renderInventory();
     if (scroll) scroll.scrollTop = scrollTop;
     if (window.scrollY!==windowY) window.scrollTo(windowX,windowY);
-    $("#page-label").textContent = `第 ${state.page + 1} 页 · 本页 ${state.items.length} 项`;
-    $("#next-page").disabled = !state.nextCursor;
+    renderInventoryPager();
     if (focusItem) $(`[${focusKind}="${CSS.escape(focusItem)}"]`)?.focus({ preventScroll: true });
     if (state.inspector === "detail" && state.selected) {
       if (detailNeedsRender(previousSelected, state.selected)) renderDetail();
       else patchSelectedDetail(state.selected);
     }
     message("#inventory-message", "");
+    void prefetchInventoryPages(value.nextCursor, generation, spec.limit);
   } catch (error) {
     if (context === state.context && generation === state.generation && error.name !== "AbortError") message("#inventory-message", errorText(error));
   } finally {
@@ -1810,6 +1838,9 @@ async function switchNetwork(id) {
   state.selected = null;
   state.items = [];
   state.nextCursor = "";
+  state.page = 0; state.cursor = ""; state.anchorCursor = "";
+  state.cursors = [{ cursor: "", anchor: "" }]; state.inventoryTarget = null; state.inventoryQueryPending = false;
+  clearInventoryPages(); inventoryWheel.reset();
   state.inventoryLoading = false;
   state.orders = [];
   state.orderSnapshot = null;
@@ -1923,20 +1954,25 @@ $("#search").addEventListener("compositionend", event => {
 });
 $("#sort").addEventListener("change", event => { state.sort = event.target.value; loadInventory(true); });
 $("#stock-view").addEventListener("change", event => { state.stockView = event.target.value; loadInventory(true); });
-$("#refresh-inventory").addEventListener("click", () => { void refreshInventoryWindow(); void refreshInventoryStats(); });
-$("#prev-page").addEventListener("click", () => changeInventoryPage(-1));
-$("#next-page").addEventListener("click", () => changeInventoryPage(1));
-$(".catalog").addEventListener("wheel", event => {
+$("#refresh-inventory").addEventListener("click", () => { void (state.inventoryQueryPending ? loadInventory(true) : refreshInventoryWindow(true)); void refreshInventoryStats(); });
+$("#first-page").addEventListener("click", () => { inventoryWheel.reset(); changeInventoryPage(0); });
+$("#prev-page").addEventListener("click", () => { inventoryWheel.reset(); changeInventoryPage(-1); });
+$("#next-page").addEventListener("click", () => { inventoryWheel.reset(); changeInventoryPage(1); });
+$("#view-inventory .table-wrap").addEventListener("wheel", event => {
   if (matchMedia("(max-width: 900px)").matches || state.view !== "inventory") return;
+  if (event.ctrlKey || event.target.closest("input, select, textarea")) return;
   const delta = inventoryWheelDelta(event);
   if (!delta) return;
   event.preventDefault();
-  inventoryWheelAccumulation = Math.min(
-    INVENTORY_WHEEL_MAX_BACKLOG,
-    Math.max(-INVENTORY_WHEEL_MAX_BACKLOG, inventoryWheelAccumulation + delta),
-  );
-  scheduleInventoryWheelDrain();
+  const direction = inventoryWheel.consume(delta, performance.now(), state.inventoryLoading);
+  if (direction) changeInventoryPage(direction);
 }, { passive: false });
+document.addEventListener("keydown", event => {
+  if (state.view !== "inventory" || $$("dialog[open]").length) return;
+  const direction = inventoryKeyboardDirection(event);
+  if (direction === null) return;
+  event.preventDefault(); inventoryWheel.reset(); changeInventoryPage(direction);
+});
 $("#open-draft").addEventListener("click", () => openInspector("draft"));
 $("#detail-tab").addEventListener("click", () => openInspector("detail"));
 $("#draft-tab").addEventListener("click", () => openInspector("draft"));

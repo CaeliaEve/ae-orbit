@@ -952,6 +952,7 @@ html[data-inventory-layout="wide"] .inventory-table tbody { --inventory-card-min
   .inventory-table tbody,
   html[data-inventory-layout="dense"] .inventory-table tbody,
   html[data-inventory-layout="wide"] .inventory-table tbody {
+    --inventory-card-height: 144px;
     grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
     gap: 7px;
   }
@@ -987,6 +988,14 @@ html[data-inventory-layout="wide"] .inventory-table tbody { --inventory-card-min
   .inventory-table tbody {
     gap: 8px;
   }
+
+  #view-inventory .inventory-table tr {
+    height: var(--inventory-card-height);
+    min-height: var(--inventory-card-height);
+  }
+  #view-inventory .inventory-table td:first-child { min-height: 0; overflow: hidden; }
+  #view-inventory .inventory-table .item-meta { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #view-inventory .inventory-table .missing-image { width: 32px; min-width: 32px; height: 32px; }
 
   .inventory-table tr,
   html[data-density="compact"] .inventory-table tr {
@@ -1284,6 +1293,29 @@ html[data-inventory-layout="wide"] .inventory-table tbody { --inventory-card-min
   .inventory-hover-card {
     display: none !important;
   }
+}
+
+.catalog-footer .paging-status { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.paging-hint { color: var(--muted); font-size: 10px; }
+.catalog-footer .pager { gap: 6px; flex-shrink: 0; }
+.catalog-footer .page-button { display: inline-flex; align-items: center; justify-content: center; gap: 4px; min-height: 36px; padding: 6px 9px; border: 1px solid var(--line); border-radius: 5px; background: transparent; color: inherit; font-size: 12px; white-space: nowrap; }
+.page-button svg { width: 14px; height: 14px; }
+.catalog-footer .page-button:hover:not(:disabled) { background: #1a1e24; }
+.catalog-footer .page-button:disabled { opacity: .35; cursor: default; }
+#inventory-rows[aria-busy="true"] { opacity: .6; pointer-events: none; }
+@media (max-width: 900px) {
+  .paging-hint { display: none; }
+  .app-frame, #view-inventory .catalog { overflow: clip; }
+  .catalog-footer { position: sticky; bottom: 0; z-index: 4; gap: 8px; }
+  .catalog-footer .page-button { min-height: 44px; }
+  #view-inventory .table-wrap { scroll-margin-top: 12px; }
+}
+@media (max-width: 800px) {
+  .catalog-footer { bottom: 60px; }
+}
+@media (max-width: 420px) {
+  .catalog-footer { flex-wrap: wrap; justify-content: center; gap: 6px; }
+  .catalog-footer .paging-status { width: 100%; text-align: center; }
 }
 
 /* The desktop shell is a fixed control surface; only mobile keeps document flow. */

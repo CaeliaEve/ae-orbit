@@ -7,7 +7,7 @@ const source = await readFile(new URL("../src/app.mjs", import.meta.url), "utf8"
 function fixture(request) {
   const old = { id: "42", quantity: "5" };
   const state = { network: { id: "n" }, inventoryLoading: false, context: 1, generation: 3, page: 4,
-    anchorCursor: "anchor-42", cursor: "boundary", inventoryLimit: 2, selected: old, items: [old],
+    cursors: [], anchorCursor: "anchor-42", cursor: "boundary", inventoryLimit: 2, selected: old, items: [old],
     inspector: "detail", itemCache: new Map() };
   const elements = new Map([[".table-wrap", { scrollTop: 120 }], ["#page-label", {}], ["#next-page", {}]]);
   const focused = { dataset: { item: "42" } };
@@ -22,9 +22,10 @@ function fixture(request) {
     $: selector => selector.startsWith("[data-item=") ? { focus() { calls.focused++; } } : elements.get(selector),
     patchInventoryRows: () => { calls.patches++; return false; }, renderInventory: () => { calls.renders++; window.scrollY=0; },
     detailNeedsRender: () => false, patchSelectedDetail: item => { calls.detail=item; }, renderDetail() {},
-    message() {}, errorText: String,
+    message() {}, errorText: String, cacheInventoryPage() {}, clearInventoryPages() {}, prefetchInventoryPages() {},
+    renderInventoryPager() { elements.get("#page-label").textContent = `第 ${state.page + 1} 页 · ${state.items.length} 项`; elements.get("#next-page").disabled = !state.nextCursor; },
   });
-  const start = source.indexOf("async function refreshInventoryWindow()");
+  const start = source.indexOf("async function refreshInventoryWindow(");
   const end = source.indexOf("function refreshInventoryObservation()",start);
   vm.runInContext(source.slice(start,end),context);
   return { state, context, calls, elements, window, refresh: () => context.refreshInventoryWindow() };
@@ -41,7 +42,7 @@ test("live window keeps page, selected item, focus and mobile scroll while updat
   assert.equal(f.calls.focused,1);
   assert.equal(f.window.scrollY,480);
   assert.equal(f.elements.get(".table-wrap").scrollTop,120);
-  assert.equal(f.elements.get("#page-label").textContent,"第 5 页 · 本页 2 项");
+  assert.equal(f.elements.get("#page-label").textContent,"第 5 页 · 2 项");
 });
 
 test("selected item leaving the stock view stays selected with confirmed zero detail",async()=>{
