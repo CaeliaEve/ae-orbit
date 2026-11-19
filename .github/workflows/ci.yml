@@ -86,7 +86,7 @@ jobs:
           git diff --check
       - name: Test Go with PostgreSQL and race detector
         run: |
-          go test -race -count=1 -timeout=5m -json ./... | tee "$RUNNER_TEMP/ae-orbit-tests.jsonl"
+          go test -race -count=1 -timeout=10m -json ./... | tee "$RUNNER_TEMP/ae-orbit-tests.jsonl"
           python - <<'PY'
           import json, os, pathlib
           events = [json.loads(line) for line in pathlib.Path(os.environ['RUNNER_TEMP'], 'ae-orbit-tests.jsonl').read_text().splitlines()]

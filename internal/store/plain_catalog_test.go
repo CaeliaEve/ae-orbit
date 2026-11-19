@@ -258,7 +258,9 @@ func TestPlainCatalogPreservesExistingPendingProductionIntent(t *testing.T) {
 
 func TestPlainCatalogFullExportFitsRequestBudget(t *testing.T) {
 	f := plainFixtureCount(t, 53689)
-	budget, cancel := context.WithTimeout(ctx, 15*time.Second)
+	// The profile activation route has a one-minute request budget. Using the
+	// ordinary 15-second budget here rejects valid imports under race overhead.
+	budget, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
 	started := time.Now()
 	stats, err := f.s.EnablePlainCatalog(budget, f.admin.ID, f.network.ID)
