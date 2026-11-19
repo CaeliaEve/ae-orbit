@@ -1737,3 +1737,106 @@ html[data-inventory-layout="wide"] .inventory-table tbody { --inventory-card-min
   #view-inventory .sort { min-width: 0; max-width: 100%; gap: 6px; font-size: 12px; }
   #view-inventory .sort select { min-width: 0; min-height: 40px; max-width: 100%; font-size: 12px; }
 }
+
+/* Open surfaces use spacing for content and reserve outlines for interaction. */
+body { padding: 0; background: #0a0a0b; }
+.app-frame { margin: 0; border: 0; border-radius: 0; box-shadow: none; }
+#sidebar { border-right: 0; background: #101215; }
+#sidebar .sidebar-secondary, #sidebar-tools, #sidebar .sidebar-foot { border: 0; }
+#sidebar > button, #sidebar .sidebar-secondary button { border-color: transparent; }
+#sidebar > button[aria-current="page"], #sidebar .sidebar-secondary button[aria-current="page"] { border-color: transparent; background: #292d33; }
+#global-controls .network-picker { border-color: transparent; background: #191c20; }
+
+#view-dashboard .dashboard-grid { gap: 24px; padding-bottom: 26px; }
+#view-dashboard .metric-card { min-height: 100px; padding: 8px 0; background: transparent; border: 0; border-radius: 0; box-shadow: none; }
+#view-dashboard .metric-label { color: #929ba7; font-size: 12px; font-weight: 500; }
+#view-dashboard .metric-card strong { margin-top: 8px; font-size: 32px; }
+#view-dashboard .metric-meta { margin-top: 5px; color: #929ba7; font-size: 11px; }
+#view-dashboard .metric-ring::before { background: #0a0a0b; }
+#view-dashboard .dashboard-columns { gap: 32px; }
+.view .panel, .view .cpu-overview, #view-orders #jobs-panel, #view-orders #legacy-panel, #view-cpus #cpu-list { border: 0; border-radius: 0; background: transparent; box-shadow: none; }
+#view-dashboard .panel-heading { padding: 0 0 14px; border: 0; }
+#view-dashboard .panel-heading h2 { font-size: 16px; font-weight: 600; }
+#view-dashboard .panel-heading .muted { margin-top: 4px; color: #929ba7; font-size: 11px; }
+#view-dashboard .activity-list, #view-dashboard .health-list { padding: 0; }
+#view-dashboard .activity-row, #view-dashboard .health-row { min-height: 58px; border: 0; }
+#view-dashboard .activity-row strong { font-size: 13px; }
+#view-dashboard .activity-row small, #view-dashboard .activity-row time { font-size: 11px; color: #929ba7; }
+#view-dashboard .activity-icon { width: 22px; min-width: 22px; background: transparent; border: 0; color: #929ba7; }
+#view-dashboard .trend-chart { padding: 16px 0 0; }
+#view-dashboard .trend-grid path { stroke: #25292e; }
+#view-dashboard .trend-area { fill: rgb(244 244 245 / 7%); }
+
+#view-inventory .catalog { border: 0; border-radius: 0; background: transparent; box-shadow: none; }
+#view-inventory .inspector { border: 0; background: #111316; box-shadow: none; }
+#view-inventory .catalog-footer { background: #0a0a0b; border: 0; }
+#view-inventory .inventory-table tbody tr { border: 1px solid transparent; background: transparent; box-shadow: none; transform: none; }
+#view-inventory .inventory-table tbody tr[data-selected="true"] { border-color: transparent; background: #252a31; box-shadow: inset 0 0 0 1px rgb(240 242 244 / 24%); }
+#view-inventory .inventory-table .missing-image { border: 0; background: transparent; }
+#view-inventory .inventory-table .item-button:focus-visible { outline: 2px solid #f0f2f4; outline-offset: -2px; border-radius: 4px; }
+#draft-panel .draft-entry { border-color: transparent; background: #191c21; }
+#draft-panel .draft-entry[data-selected="false"] { background: #14171b; }
+#draft-panel .draft-entry[data-status="uncertain"] { border-color: #68552e; }
+#draft-panel .draft-entry-media { border: 0; background: transparent; }
+#draft-panel .draft-toolbar { border: 0; }
+#draft-panel .draft-submit { background: #111316; }
+
+#view-orders #jobs-panel > .filters, #view-orders #legacy-panel > .filters { padding: 0 0 14px; }
+#view-orders .aux-list, #view-cpus .aux-list { padding-left: 0; padding-right: 0; }
+#view-orders .job-row, #view-orders .task-row, #view-cpus .cpu-row { border-color: #20242a; }
+#view-cpus .cpu-row { padding: 14px 0; min-height: 0; }
+#view-cpus .cpu-row h2 { font-size: 16px; }
+#view-cpus .cpu-row p { font-size: 12px; }
+#view-cpus .cpu-row .state-label { font-size: 12px; }
+#view-cpus .cpu-overview { padding: 10px 0 22px; }
+
+#view-network .network-dashboard { gap: 24px; }
+#view-network .network-hero, #view-network .network-metric, #view-network .network-panel { border: 0; border-radius: 0; background: transparent; }
+#view-network .network-hero { padding: 4px 0 0; }
+#view-network .network-metric { min-height: 80px; padding: 8px 0; }
+#view-network .network-dashboard-grid { gap: 28px; }
+#view-network .network-panel-heading { padding: 0 0 14px; border: 0; }
+#view-network .network-capabilities, #view-network .network-facts { gap: 8px; background: transparent; }
+#view-network .network-capability, #view-network .network-fact { border-radius: 6px; background: #111316; }
+#view-network .network-capability-icon { border: 0; }
+#view-network .network-devices-panel .device-cards { padding: 0 0 14px; }
+#view-network .device-card { border-color: transparent; background: #111316; }
+#view-network .device-icon { border: 0; background: transparent; }
+#view-network .network-device-table { border: 0; }
+#view-network .network-table-head, #view-network .network-table-row { padding-left: 0; padding-right: 0; }
+#view-network .device-cards > .empty { border: 0; background: #111316; }
+
+#view-settings .settings-panel { background: #111316; border-radius: 7px; }
+#view-settings .settings-panel .panel-heading { border: 0; }
+#view-settings .settings-row { border-color: transparent; }
+#view-settings .settings-detail { border: 0; padding-top: 0; }
+#view-settings .settings-detail-heading { border: 0; }
+#view-settings .connection-diagnostics-grid { border: 0; gap: 8px; background: transparent; }
+#view-settings .diagnostic-fact { background: #111316; border-radius: 6px; }
+#view-github .github-card { padding: 8px 0; }
+#view-github .panel-link { border-color: transparent; background: #111316; }
+
+@media (hover: hover) {
+  #view-inventory .inventory-table tbody tr:hover { border-color: transparent; background: #171b20; box-shadow: none; transform: none; }
+  #view-inventory .inventory-table tbody tr[data-selected="true"]:hover { background: #2a3038; box-shadow: inset 0 0 0 1px rgb(240 242 244 / 24%); }
+}
+@media (min-width: 901px) {
+  .app-frame, .shell { height: 100dvh; min-height: 0; }
+  #view-dashboard, #view-github, #view-settings { overflow-y: auto; scrollbar-width: thin; }
+  #view-cpus #cpu-overview { flex: 0 0 auto; }
+  #view-cpus #cpu-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; scrollbar-width: thin; }
+  #view-orders #jobs-panel, #view-orders #legacy-panel { min-height: 0; overflow-y: auto; scrollbar-width: thin; }
+  #view-inventory .inspector { border-radius: 7px; }
+}
+@media (max-width: 900px) {
+  #view-dashboard .dashboard-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; padding: 0 0 24px; }
+  #view-dashboard .metric-card { min-height: 92px; padding: 4px 0; }
+  #view-dashboard .metric-card strong { font-size: 28px; }
+  #view-dashboard .metric-card-wide { grid-template-columns: minmax(0, 1fr); grid-column: auto; }
+  #view-dashboard .metric-ring { display: none; }
+  #view-dashboard .dashboard-columns { gap: 28px; padding: 0; }
+  #view-dashboard .activity-row { min-height: 54px; }
+  #view-network .network-dashboard { gap: 20px; }
+  #view-network .network-hero { padding: 4px 0 0; }
+  #view-network .network-panel-heading { padding: 0 0 12px; }
+}
