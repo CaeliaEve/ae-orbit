@@ -1302,7 +1302,7 @@ html[data-inventory-layout="wide"] .inventory-table tbody { --inventory-card-min
 .page-button svg { width: 14px; height: 14px; }
 .catalog-footer .page-button:hover:not(:disabled) { background: #1a1e24; }
 .catalog-footer .page-button:disabled { opacity: .35; cursor: default; }
-#inventory-rows[aria-busy="true"] { opacity: .6; pointer-events: none; }
+#inventory-rows[aria-busy="true"] { pointer-events: none; }
 @media (max-width: 900px) {
   .paging-hint { display: none; }
   .app-frame, #view-inventory .catalog { overflow: clip; }

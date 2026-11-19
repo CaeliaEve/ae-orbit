@@ -342,3 +342,6 @@ OC 对非致命传输故障重试，对身份、ACK 和协议不一致停止。i
 
 
 NEI 式翻页使用 `consistency=window&pagination=pages`，返回当前筛选结果的 `total`、`page_number`、`page_count`，数量和页面读取处于同一数据库快照。可使用 `page=1` 等正整数或 `page=last` 直接读取，不能同时携带 anchor/cursor；超出末页夹到末页，空结果为 1 个空页。未启用 pages 的现有游标客户端行为保持不变。按页读取不冻结跨页数据，实时更新仍可用 anchor 保留当前物品，前端保持正在浏览的页码；首尾循环由前端实现。所有操作只读取已上传的观察，不触发 OC 或 AE 整网扫描。
+
+
+分页预读可携带 `page_size`（1 到 limit，且只用于 pages、不与 anchor/cursor 同用），此时 page 和 page_count 按显示页大小解释，limit 控制一次读取的连续物品数，仍最多 200 项。响应的 page_anchors 按显示页给出第一项签名锚点。前端拆成相邻页缓存，后台核验数量；缓存仅供浏览，提交任务仍按原有服务端校验。

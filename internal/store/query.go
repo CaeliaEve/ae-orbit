@@ -97,6 +97,14 @@ func (s *Store) Items(ctx context.Context, userID, networkID string, q protocol.
 	if (q.Pagination != "" && q.Pagination != "pages") || (q.Pagination == "pages" && q.Consistency != "window") || q.Page < 0 || ((q.Page > 0 || q.LastPage) && (q.Pagination != "pages" || q.Anchor != "" || q.Cursor != "")) {
 		return page, ErrInvalid
 	}
+	if q.PageSize < 0 || q.PageSize > q.Limit || (q.PageSize > 0 && (q.Pagination != "pages" || q.Anchor != "" || q.Cursor != "")) {
+		return page, ErrInvalid
+	}
+	pageSize := q.Limit
+	if q.PageSize > 0 {
+		pageSize = q.PageSize
+		page.PageSize = pageSize
+	}
 	var cursor pageCursor
 	var err error
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
@@ -223,11 +231,11 @@ func (s *Store) Items(ctx context.Context, userID, networkID string, q protocol.
 		}
 		value := protocol.Quantity(total)
 		page.Total = &value
-		page.PageCount = int((total + int64(q.Limit) - 1) / int64(q.Limit))
+		page.PageCount = int((total + int64(pageSize) - 1) / int64(pageSize))
 		if page.PageCount < 1 {
 			page.PageCount = 1
 		}
-		page.PageNumber = int(before/int64(q.Limit)) + 1
+		page.PageNumber = int(before/int64(pageSize)) + 1
 		if q.Page > 0 {
 			page.PageNumber = q.Page
 		}
@@ -238,7 +246,7 @@ func (s *Store) Items(ctx context.Context, userID, networkID string, q protocol.
 			page.PageNumber = page.PageCount
 		}
 		if q.Page > 0 || q.LastPage {
-			offset = int64(page.PageNumber-1) * int64(q.Limit)
+			offset = int64(page.PageNumber-1) * int64(pageSize)
 		}
 	}
 	if boundary != "" {
@@ -295,6 +303,12 @@ func (s *Store) Items(ctx context.Context, userID, networkID string, q protocol.
 	if len(page.Items) > 0 && q.Consistency == "window" {
 		first := page.Items[0]
 		page.AnchorCursor = s.encodeCursor(pageCursor{Query: queryKey, Revision: page.Revision, ID: first.ID, Name: names[0], Quantity: first.Quantity, CatalogRevision: catalogRevision, CraftableRevision: craftableRevision})
+		if q.PageSize > 0 {
+			for index := 0; index < len(page.Items); index += pageSize {
+				item := page.Items[index]
+				page.PageAnchors = append(page.PageAnchors, s.encodeCursor(pageCursor{Query: queryKey, Revision: page.Revision, ID: item.ID, Name: names[index], Quantity: item.Quantity, CatalogRevision: catalogRevision, CraftableRevision: craftableRevision}))
+			}
+		}
 	}
 	return page, tx.Commit(ctx)
 }

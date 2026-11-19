@@ -59,6 +59,34 @@ func TestHTTPInventoryNumberedPagesLoopAndCount(t *testing.T) {
 	}
 }
 
+func TestHTTPInventoryPrefetchBlocksKeepPageSizeAndAnchors(t *testing.T) {
+	for _, sort := range []string{"name", "quantity"} {
+		t.Run(sort, func(t *testing.T) {
+			f, _, _, _ := browsingFixture(t)
+			base := browsePath(f) + "?consistency=window&pagination=pages&sort=" + sort
+			block := decode[protocol.ItemPage](t, send(t, f, "GET", base+"&limit=3&page_size=1&page=1", adminToken, ""), 200)
+			if block.PageCount != 3 || block.PageSize != 1 || len(block.Items) != 3 || len(block.PageAnchors) != 3 {
+				t.Fatal(block)
+			}
+			for index, anchor := range block.PageAnchors {
+				page := decode[protocol.ItemPage](t, send(t, f, "GET", base+"&limit=1&anchor="+url.QueryEscape(anchor), adminToken, ""), 200)
+				if page.Items[0].ID != block.Items[index].ID {
+					t.Fatal(index, page)
+				}
+			}
+			last := decode[protocol.ItemPage](t, send(t, f, "GET", base+"&limit=3&page_size=2&page=last", adminToken, ""), 200)
+			if last.PageCount != 2 || last.PageNumber != 2 || len(last.Items) != 1 {
+				t.Fatal(last)
+			}
+			for _, suffix := range []string{"&limit=2&page_size=0", "&limit=2&page_size=3", "&limit=2&page_size=-1", "&limit=2&page_size=1&page_size=2", "&limit=2&page_size=1&anchor=" + url.QueryEscape(block.AnchorCursor)} {
+				if r := send(t, f, "GET", base+suffix, adminToken, ""); r.StatusCode != 400 {
+					t.Fatal(suffix, r.StatusCode)
+				}
+			}
+		})
+	}
+}
+
 func TestHTTPInventoryWindowKeepsAnchorAndFilters(t *testing.T) {
 	for _, sort := range []string{"name", "quantity"} {
 		t.Run(sort, func(t *testing.T) {

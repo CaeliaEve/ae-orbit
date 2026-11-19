@@ -228,6 +228,8 @@ type ItemPage struct {
 	Total        *Quantity `json:"total,omitempty"`
 	PageNumber   int       `json:"page_number,omitempty"`
 	PageCount    int       `json:"page_count,omitempty"`
+	PageSize     int       `json:"page_size,omitempty"`
+	PageAnchors  []string  `json:"page_anchors,omitempty"`
 }
 
 type ItemQuery struct {
@@ -242,6 +244,7 @@ type ItemQuery struct {
 	Pagination  string
 	Page        int
 	LastPage    bool
+	PageSize    int
 }
 
 type ItemLookup struct {

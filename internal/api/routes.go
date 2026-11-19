@@ -107,6 +107,17 @@ func (s *Server) routes() {
 		}
 		q.Anchor = r.URL.Query().Get("anchor")
 		q.Pagination = r.URL.Query().Get("pagination")
+		if len(r.URL.Query()["page_size"]) > 1 {
+			fail(w, store.ErrInvalid)
+			return
+		}
+		if value := r.URL.Query().Get("page_size"); value != "" {
+			q.PageSize, err = strconv.Atoi(value)
+			if err != nil || q.PageSize < 1 {
+				fail(w, store.ErrInvalid)
+				return
+			}
+		}
 		if value := r.URL.Query().Get("page"); value != "" {
 			if value == "last" {
 				q.LastPage = true

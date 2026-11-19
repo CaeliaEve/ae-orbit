@@ -1,5 +1,5 @@
 import {
-  createIcons, Orbit, Network, LogOut, Boxes, ListChecks, Cpu, RadioTower, RefreshCw,
+  createIcons, createElement, Orbit, Network, LogOut, Boxes, ListChecks, Cpu, RadioTower, RefreshCw,
   Search, ListPlus, ChevronLeft, ChevronRight, ChevronDown, X, Plus, Minus, Package,
   Trash2, Check, Clock, CircleAlert, LogIn, ArrowUpRight, Server, Send, Pause, Play, Square,
   LayoutDashboard, Settings, Github, Bell, Activity, Monitor, SlidersHorizontal, Code2, FileText, CircleHelp, Copy,
@@ -54,8 +54,24 @@ const esc = value => String(value ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;
 const quantityHTML = value => formatQuantity(value).replaceAll(",", ",<wbr>");
 const compactQuantityHTML = value => esc(formatCompactQuantity(value));
 const icon = name => `<i data-lucide="${name}" aria-hidden="true"></i>`;
+const inventoryIconCache = new Map();
+function inventoryIcon(name) {
+  if (!inventoryIconCache.has(name)) {
+    const node = createElement(name === "plus" ? Plus : Package);
+    node.setAttribute("aria-hidden", "true");
+    node.setAttribute("class", `lucide lucide-${name}`);
+    inventoryIconCache.set(name, node.outerHTML);
+  }
+  return inventoryIconCache.get(name);
+}
 const icons = { Orbit, Network, LogOut, Boxes, ListChecks, Cpu, RadioTower, RefreshCw, Search, ListPlus, ChevronLeft, ChevronRight, ChevronDown, X, Plus, Minus, Package, Trash2, Check, Clock, CircleAlert, LogIn, ArrowUpRight, Server, Send, Pause, Play, Square, LayoutDashboard, Settings, Github, Bell, Activity, Monitor, SlidersHorizontal, Code2, FileText, CircleHelp, Copy, WifiOff };
-const paint = () => createIcons({ icons });
+const paint = () => {
+  const pending = $$('i[data-lucide]');
+  if (!pending.length) return;
+  for (const element of pending) element.setAttribute("data-icon-pending", element.getAttribute("data-lucide"));
+  createIcons({ icons, nameAttr: "data-icon-pending" });
+  for (const element of $$('[data-icon-pending]')) element.removeAttribute("data-icon-pending");
+};
 const api = createAPI();
 const texturePack = createTexturePackStore();
 const state = {
@@ -101,9 +117,15 @@ const inventoryPrefetchControllers = new Set();
 const inventoryPageCache = new Map();
 const inventoryPageRequests = new Map();
 let inventoryCacheEpoch = 0, inventoryLiveRequest = null;
-const INVENTORY_PREFETCH_DEPTH = 8;
-const INVENTORY_PAGE_CACHE_LIMIT = 48;
-const INVENTORY_PAGE_CACHE_TTL = 15000;
+let inventoryPrefetchJob = null, inventoryPrefetchTarget = null;
+let inventoryNavigationFrame = 0, inventoryVisibleTimer = 0, inventoryImageTimer = 0;
+let inventoryDirection = 1;
+const inventoryImages = new Map();
+const INVENTORY_PREFETCH_DEPTH = 24;
+const INVENTORY_PAGE_CACHE_LIMIT = 160;
+const INVENTORY_PAGE_CACHE_TTL = 120000;
+const INVENTORY_PAGE_FRESH_TTL = 10000;
+const INVENTORY_PAGE_CACHE_ITEMS = 6000;
 
 function toast(message, error = false, category = "general") {
   if (!error && category !== "general") {
@@ -363,7 +385,7 @@ function age(value) {
 function itemImage(item) {
   const source = itemTextureSource(item);
   if (source) return source;
-  return `<span class="missing-image" title="暂无已核验图标">${icon("package")}</span>`;
+  return `<span class="missing-image" title="暂无已核验图标">${inventoryIcon("package")}</span>`;
 }
 
 function itemTextureSource(item) {
@@ -609,7 +631,7 @@ function renderInventory() {
   tbody.innerHTML = state.items.map(item => `<tr data-selected="${state.selected?.id === item.id}" data-id="${esc(item.id)}">
     <td><button class="item-button ${itemHasTexture(item) ? "" : "missing-texture"}" data-item="${esc(item.id)}" aria-label="${esc(`${catalogDisplayName(item)}，库存 ${stockText(item)}`)}">${itemImage(item)}<span class="item-copy"><span class="item-name">${esc(catalogDisplayName(item))}</span><span class="item-meta">${esc(item.name.split(":")[0])}${item.craftable ? " · 可合成" : ""}${!item.exact ? " · 身份待确认" : ""}</span></span></button></td>
     <td><span class="stock-value ${String(item.quantity).length > 12 ? "long-number" : ""} ${item.current_session ? "" : "stale"}" title="${esc(stockText(item))}">${(quantityKnown(item) ? compactQuantityHTML(item.quantity) : "未查询")}</span><span class="freshness ${item.current_session ? "" : "stale"}">${stockFreshness(item, age)}</span></td>
-    <td><button class="icon-button" data-quick-add="${esc(item.id)}" title="加入清单" aria-label="将${esc(catalogDisplayName(item))}加入清单" ${item.craftable && item.exact && !state.draftBlocked && !state.busy && !state.preparing ? "" : "disabled"}>${icon("plus")}</button></td>
+    <td><button class="icon-button" data-quick-add="${esc(item.id)}" title="加入清单" aria-label="将${esc(catalogDisplayName(item))}加入清单" ${item.craftable && item.exact && !state.draftBlocked && !state.busy && !state.preparing ? "" : "disabled"}>${inventoryIcon("plus")}</button></td>
   </tr>`).join("");
   $("#inventory-empty").hidden = state.items.length > 0;
   $("#inventory-empty").textContent = state.inventoryLoading ? "正在读取库存…" : !state.member ? "登录后查看库存" : !state.network ? "没有可访问的网络" : "没有匹配的物品";
@@ -677,11 +699,11 @@ function patchInventoryRows() {
 
 function renderInventoryPager() {
   const loading = state.inventoryLoading;
-  $("#first-page").disabled = loading || state.inventoryQueryPending || state.page === 0;
+  $("#first-page").disabled = state.inventoryQueryPending || state.page === 0;
   $("#prev-page").disabled = state.inventoryQueryPending || state.inventoryPageCount <= 1;
   $("#next-page").disabled = state.inventoryQueryPending || state.inventoryPageCount <= 1;
   $("#refresh-inventory").disabled = loading;
-  $("#inventory-rows").setAttribute("aria-busy", String(loading));
+  $("#inventory-rows").setAttribute("aria-busy", String(loading && !state.inventoryTarget?.absolute));
   const targetPage = state.inventoryDesiredPage ?? state.inventoryTarget?.page;
   const position = `${state.page + 1} / ${state.inventoryPageCount}`;
   $("#page-label").textContent = loading
@@ -1448,7 +1470,7 @@ function inventoryPageKey(cursor, spec) {
   return JSON.stringify([spec.search, spec.sort, spec.filter, spec.limit, spec.view, spec.scope, cursor, spec.anchor || "", spec.page || ""]);
 }
 
-function cachedInventoryPage(cursor, spec) {
+function cachedInventoryPage(cursor, spec, fresh = false) {
   const key = inventoryPageKey(cursor, spec);
   const cached = inventoryPageCache.get(key);
   if (!cached) return null;
@@ -1456,6 +1478,7 @@ function cachedInventoryPage(cursor, spec) {
     inventoryPageCache.delete(key);
     return null;
   }
+  if (fresh && Date.now() - cached.cachedAt > INVENTORY_PAGE_FRESH_TTL) return null;
   inventoryPageCache.delete(key);
   inventoryPageCache.set(key, cached);
   return cached;
@@ -1466,6 +1489,18 @@ function cacheInventoryPage(cursor, spec, page) {
   inventoryPageCache.delete(key);
   inventoryPageCache.set(key, { ...page, cachedAt: Date.now() });
   while (inventoryPageCache.size > INVENTORY_PAGE_CACHE_LIMIT) inventoryPageCache.delete(inventoryPageCache.keys().next().value);
+  let items = [...inventoryPageCache.values()].reduce((sum, page) => sum + page.items.length, 0);
+  while (items > INVENTORY_PAGE_CACHE_ITEMS && inventoryPageCache.size > 1) {
+    const first = inventoryPageCache.keys().next().value;
+    items -= inventoryPageCache.get(first).items.length;
+    inventoryPageCache.delete(first);
+  }
+}
+
+function invalidateInventoryPageNumbers(total, pageCount) {
+  for (const [key, page] of inventoryPageCache) {
+    if (JSON.parse(key)[8]) { page.cachedAt = Math.min(page.cachedAt, Date.now() - INVENTORY_PAGE_FRESH_TTL - 1); page.pageCount = pageCount; page.total = total; }
+  }
 }
 
 function clearInventoryPages() {
@@ -1473,6 +1508,9 @@ function clearInventoryPages() {
   for (const controller of inventoryPrefetchControllers) controller.abort();
   inventoryPrefetchControllers.clear();
   inventoryPageCache.clear(); inventoryPageRequests.clear();
+  inventoryPrefetchJob = null; inventoryPrefetchTarget = null;
+  clearTimeout(inventoryVisibleTimer); clearTimeout(inventoryImageTimer);
+  cancelAnimationFrame(inventoryNavigationFrame); inventoryNavigationFrame = 0;
 }
 
 function requestInventoryPage(cursor, limit, signal, spec = inventoryQuerySpec(limit), fresh = false) {
@@ -1501,26 +1539,74 @@ function requestInventoryPage(cursor, limit, signal, spec = inventoryQuerySpec(l
   return request;
 }
 
-async function prefetchInventoryPages(pageIndex, generation, limit) {
+function prefetchInventoryPages(pageIndex, generation, limit) {
   const spec = inventoryQuerySpec(limit);
+  inventoryPrefetchTarget = { pageIndex, spec, direction: inventoryDirection };
+  if (inventoryPrefetchJob) return inventoryPrefetchJob.promise;
   const controller = new AbortController();
+  const job = { controller, epoch: inventoryCacheEpoch, promise: null };
+  inventoryPrefetchJob = job;
   inventoryPrefetchControllers.add(controller);
-  const pages = [];
-  for (let n = 1; n <= INVENTORY_PREFETCH_DEPTH; n++) {
-    pages.push((pageIndex + n) % state.inventoryPageCount, (pageIndex - n + state.inventoryPageCount) % state.inventoryPageCount);
+  job.promise = (async () => {
+    try {
+      while (!controller.signal.aborted && job.epoch === inventoryCacheEpoch) {
+        const target = inventoryPrefetchTarget;
+        if (!target || state.inventoryLoading || state.inventoryQueryPending) break;
+        const count = state.inventoryPageCount;
+        const depth = Math.min(count - 1, INVENTORY_PREFETCH_DEPTH, Math.floor(INVENTORY_PAGE_CACHE_ITEMS / target.spec.limit / 2));
+        const candidates = [];
+        for (let n = 1; n <= depth; n++) {
+          candidates.push({ index: (target.pageIndex + target.direction * n + count) % count, direction: target.direction });
+          if (n <= 4) candidates.push({ index: (target.pageIndex - target.direction * n + count) % count, direction: -target.direction });
+        }
+        const missing = candidates.find(value => !cachedInventoryPage("", { ...target.spec, page: value.index + 1 }, true));
+        if (missing == null) break;
+        const batch = Math.max(1, Math.min(Math.floor(200 / target.spec.limit), depth, missing.direction < 0 ? missing.index + 1 : count - missing.index));
+        const start = missing.direction < 0 ? Math.max(0, missing.index - batch + 1) : missing.index;
+        const value = await requestInventoryBlock(start, batch, target.spec, controller.signal, job.epoch);
+        if (job.epoch !== inventoryCacheEpoch || controller.signal.aborted) break;
+        if (value.total != null && state.inventoryTotal != null && value.total !== state.inventoryTotal) break;
+      }
+    } catch {} finally {
+      inventoryPrefetchControllers.delete(controller);
+      if (inventoryPrefetchJob === job) inventoryPrefetchJob = null;
+      scheduleInventoryImageWarmup();
+    }
+  })();
+  return job.promise;
+}
+
+async function requestInventoryBlock(start, pages, spec, signal, epoch) {
+  const query = new URLSearchParams({ q: spec.search, sort: spec.sort, limit: String(Math.min(200, pages * spec.limit)), page_size: String(spec.limit), consistency: "window", pagination: "pages", page: String(start + 1) });
+  if (spec.filter) query.set("craftable", spec.filter);
+  if (spec.scope === "nesql_plain") query.set("view", spec.view);
+  const value = await api.request(networkPath(`/items?${query}`), { signal });
+  if (epoch !== inventoryCacheEpoch || signal.aborted) return value;
+  if (value.total != null && state.inventoryTotal != null && value.total !== state.inventoryTotal) invalidateInventoryPageNumbers(value.total, value.page_count);
+  for (let offset = 0; offset < value.items.length; offset += spec.limit) {
+    const index = value.page_number - 1 + offset / spec.limit;
+    const page = { items: value.items.slice(offset, offset + spec.limit), anchorCursor: value.page_anchors?.[offset / spec.limit] || "", nextCursor: index < value.page_count - 1 ? value.next_cursor || "more" : "", scope: value.scope, pageNumber: index + 1, pageCount: value.page_count, total: value.total };
+    cacheInventoryPage("", { ...spec, page: index + 1 }, page);
   }
-  try {
-    for (const pageIndex of new Set(pages.filter(n => n >= 0 && n !== state.page))) {
-      if (generation !== state.generation || controller.signal.aborted) return;
-      try {
-        await requestInventoryPage("", limit, controller.signal, { ...spec, page: pageIndex + 1 });
-      } catch {
-        return;
+  return value;
+}
+
+function scheduleInventoryImageWarmup() {
+  clearTimeout(inventoryImageTimer);
+  inventoryImageTimer = setTimeout(() => {
+    const spec = inventoryQuerySpec(state.inventoryLimit);
+    for (const distance of [1, -1, 2, 3]) {
+      const index = (state.page + inventoryDirection * distance + state.inventoryPageCount) % state.inventoryPageCount;
+      const page = cachedInventoryPage("", { ...spec, page: index + 1 });
+      for (const item of page?.items || []) {
+        const url = textureAssetURL(item);
+        if (!url || inventoryImages.has(url)) continue;
+        const img = new Image(); img.decoding = "async"; img.src = url;
+        inventoryImages.set(url, img);
+        while (inventoryImages.size > 320) inventoryImages.delete(inventoryImages.keys().next().value);
       }
     }
-  } finally {
-    inventoryPrefetchControllers.delete(controller);
-  }
+  }, 120);
 }
 
 async function loadInventory(reset = false, target = null) {
@@ -1547,7 +1633,6 @@ async function loadInventory(reset = false, target = null) {
   try {
     const value = await requestInventoryPage(cursor, limit, queryController.signal, spec);
     if (generation !== state.generation) return;
-    if (state.inventoryDesiredPage != null && state.inventoryDesiredPage !== destination.page) return;
     if (reset) { state.cursors = [{ cursor: "", anchor: "" }]; state.inventoryQueryPending = false; }
     if (limit !== state.inventoryLimit) clearInventoryPages();
     state.inventoryLimit = limit;
@@ -1564,8 +1649,7 @@ async function loadInventory(reset = false, target = null) {
       state.inventoryTarget = null;
       renderInventoryPager();
       if (!state.items.length) renderInventory();
-      if (state.inventoryDesiredPage != null) navigateInventoryPage(state.inventoryDesiredPage);
-      else if (inventoryPageLimit() !== limit && inventoryPageLimit() !== state.inventoryLimit) refreshInventoryCapacity();
+      if (inventoryPageLimit() !== limit && inventoryPageLimit() !== state.inventoryLimit) refreshInventoryCapacity();
     }
   }
 }
@@ -1577,6 +1661,7 @@ function applyInventoryPage(destination, page) {
   const focusKind = document.activeElement?.dataset?.quickAdd ? "data-quick-add" : "data-item";
   const windowX = window.scrollX, windowY = window.scrollY;
   hideInventoryHover();
+  if (page.total != null && state.inventoryTotal != null && page.total !== state.inventoryTotal) invalidateInventoryPageNumbers(page.total, page.pageCount);
   state.page = page.pageNumber ? page.pageNumber - 1 : destination.page;
   state.inventoryPageCount = page.pageCount || state.inventoryPageCount;
   state.inventoryTotal = page.total ?? state.inventoryTotal;
@@ -1596,7 +1681,7 @@ function applyInventoryPage(destination, page) {
   state.inventoryLoading = false;
   state.inventoryTarget = null;
   message("#inventory-message", "");
-  refreshHeader();
+  $("#stock-view-label").hidden = state.inventoryScope !== "nesql_plain";
   renderInventory();
   if (!navigated) {
     if (window.scrollY !== windowY) window.scrollTo(windowX, windowY);
@@ -1610,7 +1695,9 @@ function applyInventoryPage(destination, page) {
   }
   if (state.selected && state.inspector === "detail") patchSelectedDetail(state.selected);
   void prefetchInventoryPages(state.page, state.generation, state.inventoryLimit);
-  void patchVisibleInventory();
+  scheduleInventoryImageWarmup();
+  clearTimeout(inventoryVisibleTimer);
+  inventoryVisibleTimer = setTimeout(() => { if (!state.inventoryLoading) { void patchVisibleInventory(); void refreshInventoryWindow(); } }, 180);
 }
 
 function changeInventoryPage(direction) {
@@ -1618,8 +1705,16 @@ function changeInventoryPage(direction) {
   const current = state.inventoryDesiredPage ?? state.inventoryTarget?.page ?? state.page;
   const next = direction === 0 ? 0 : (current + direction + state.inventoryPageCount) % state.inventoryPageCount;
   state.inventoryDesiredPage = next;
-  if (state.inventoryLoading && !cachedInventoryPage("", { ...inventoryQuerySpec(state.inventoryLimit), page: next + 1 })) { renderInventoryPager(); return true; }
-  navigateInventoryPage(next);
+  if (direction) inventoryDirection = direction;
+  if (cachedInventoryPage("", { ...inventoryQuerySpec(state.inventoryLimit), page: next + 1 })) {
+    cancelAnimationFrame(inventoryNavigationFrame); inventoryNavigationFrame = 0;
+    navigateInventoryPage(next);
+  } else {
+    if (!inventoryNavigationFrame) inventoryNavigationFrame = requestAnimationFrame(() => {
+      inventoryNavigationFrame = 0;
+      if (state.inventoryDesiredPage != null) navigateInventoryPage(state.inventoryDesiredPage);
+    });
+  }
   return true;
 }
 
@@ -1724,7 +1819,9 @@ async function refreshInventoryWindow(force = false) {
     const scrollTop = scroll?.scrollTop || 0;
     const windowX=window.scrollX, windowY=window.scrollY;
     state.items = value.items; state.nextCursor = value.nextCursor;
-    if (value.total != null && state.inventoryTotal != null && value.total !== state.inventoryTotal) clearInventoryPages();
+    if (value.total != null && state.inventoryTotal != null && value.total !== state.inventoryTotal) {
+      invalidateInventoryPageNumbers(value.total, value.pageCount);
+    }
     state.inventoryPageCount = value.pageCount || state.inventoryPageCount;
     state.inventoryTotal = value.total ?? state.inventoryTotal;
     state.page = Math.min(state.page, state.inventoryPageCount - 1);

@@ -55,6 +55,7 @@ test("inventory footer names navigation and announces loading without rebuilding
   assert.match(indexHTML, /id="page-label"[^>]*aria-live="polite"/);
   assert.match(indexHTML, /PgUp \/ PgDn/);
   assert.match(compactCSS, /#inventory-rows\[aria-busy="true"\]/);
+  assert.doesNotMatch(compactCSS, /#inventory-rows\[aria-busy="true"\]\s*\{[^}]*opacity/);
   assert.match(compactCSS, /\.catalog-footer \.page-button[\s\S]*min-height: 44px/);
 });
 

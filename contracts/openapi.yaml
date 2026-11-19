@@ -449,6 +449,7 @@ paths:
         - {name: cursor, in: query, schema: {type: string, maxLength: 4096}}
         - {name: anchor, in: query, description: Refresh inclusively from the first visible item using anchor_cursor; requires window and excludes cursor, schema: {type: string, maxLength: 4096}}
         - {name: pagination, in: query, description: Opt in to numbered page counts and direct jumps; requires window, schema: {type: string, enum: [pages]}}
+        - {name: page_size, in: query, description: Optional display page size for a contiguous prefetch block. Requires pages pagination and excludes anchor/cursor. Must not exceed limit; at most 200 items are returned., schema: {type: integer, minimum: 1, maximum: 200}}
         - {name: page, in: query, description: Positive one-based page number or last. Requires pagination=pages; excludes anchor and cursor. Pages beyond the end clamp to the last page., schema: {type: string, pattern: "^([1-9][0-9]*|last)$"}}
       responses:
         '200':
@@ -1312,6 +1313,8 @@ components:
         total: {$ref: '#/components/schemas/Quantity'}
         page_number: {type: integer, minimum: 1, description: One-based position in the current query}
         page_count: {type: integer, minimum: 1, description: Current number of pages; an empty result uses one empty page}
+        page_size: {type: integer, minimum: 1, maximum: 200}
+        page_anchors: {type: array, maxItems: 200, items: {type: string}, description: Inclusive first-item anchors for each display page inside a prefetch block}
     ItemLookup:
       type: object
       required: [items, missing_ids, revision]
