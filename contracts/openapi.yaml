@@ -440,13 +440,14 @@ paths:
         that shrink are compressed; explicitly refusing identity can require gzip for smaller bodies.
         Returns 406 if neither gzip nor identity is acceptable. OC and SSE encodings are unchanged.
       parameters:
-        - {name: q, in: query, schema: {type: string, maxLength: 128}}
+        - {name: q, in: query, description: 'Chinese label, pinyin, first letters or registry name; whitespace terms are ANDed and @modid selects an exact registry namespace', schema: {type: string, maxLength: 128}}
         - {name: sort, in: query, schema: {type: string, enum: [name, quantity], default: name}}
-        - {name: consistency, in: query, schema: {type: string, enum: [strict, live], default: strict}, description: Live consistency requires name sorting.}
+        - {name: consistency, in: query, schema: {type: string, enum: [strict, live, window], default: strict}, description: Live requires name sorting. Window follows a moving keyset boundary across membership changes for either sort.}
         - {name: craftable, in: query, schema: {type: boolean}}
         - {name: view, in: query, schema: {type: string, enum: [stock, all, observed]}, description: 'NESQL plain profile defaults to stock (confirmed positive observations since enablement). all includes explicitly unqueried candidates; only this profile supports all. Stock cursors enforce quantity revision even when live is requested.'}
         - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}
         - {name: cursor, in: query, schema: {type: string, maxLength: 4096}}
+        - {name: anchor, in: query, description: Refresh inclusively from the first visible item using anchor_cursor; requires window and excludes cursor, schema: {type: string, maxLength: 4096}}
       responses:
         '200':
           description: One inventory page; decimal strings remain exact after decompression.
@@ -1305,6 +1306,7 @@ components:
         items: {type: array, maxItems: 200, items: {$ref: '#/components/schemas/Item'}}
         revision: {$ref: '#/components/schemas/Quantity'}
         next_cursor: {type: string}
+        anchor_cursor: {type: string, description: First visible item boundary for window refresh}
     ItemLookup:
       type: object
       required: [items, missing_ids, revision]

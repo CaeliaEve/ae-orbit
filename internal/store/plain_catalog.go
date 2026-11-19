@@ -54,14 +54,20 @@ func (s *Store) EnablePlainCatalog(ctx context.Context, adminID, network string)
 		}
 		// COPY avoids repeated identity resolution and round trips for large
 		// exports. The temporary relation and activation remain one transaction.
-		if _, err = tx.Exec(ctx, `CREATE TEMP TABLE plain_catalog_import(identity_key text,name text,damage int,label text) ON COMMIT DROP`); err != nil {
+		if _, err = tx.Exec(ctx, `CREATE TEMP TABLE plain_catalog_import(identity_key text,name text,damage int,label text,search_text text) ON COMMIT DROP`); err != nil {
 			return fmt.Errorf("create plain catalog import: %w", err)
 		}
 		rows := make([][]any, len(candidates))
+		searches := make(map[string]string)
 		for i, d := range candidates {
-			rows[i] = []any{d.Key(), d.Name, d.Damage, d.Label}
+			search, ok := searches[d.Label]
+			if !ok {
+				search = searchLabel(d.Label)
+				searches[d.Label] = search
+			}
+			rows[i] = []any{d.Key(), d.Name, d.Damage, d.Label, search}
 		}
-		if _, err = tx.CopyFrom(ctx, pgx.Identifier{"plain_catalog_import"}, []string{"identity_key", "name", "damage", "label"}, pgx.CopyFromRows(rows)); err != nil {
+		if _, err = tx.CopyFrom(ctx, pgx.Identifier{"plain_catalog_import"}, []string{"identity_key", "name", "damage", "label", "search_text"}, pgx.CopyFromRows(rows)); err != nil {
 			return fmt.Errorf("copy plain catalog metadata: %w", err)
 		}
 		// Temporary tables have no autovacuum statistics. Refresh the estimates
@@ -69,16 +75,16 @@ func (s *Store) EnablePlainCatalog(ctx context.Context, adminID, network string)
 		if _, err = tx.Exec(ctx, "ANALYZE plain_catalog_import"); err != nil {
 			return fmt.Errorf("analyze plain catalog import: %w", err)
 		}
-		if _, err = tx.Exec(ctx, `INSERT INTO item_definitions(network_id,identity_key,kind,name,damage,nbt,label,exact)
-			SELECT $1,identity_key,'item',name,damage,'',label,true FROM plain_catalog_import
+		if _, err = tx.Exec(ctx, `INSERT INTO item_definitions(network_id,identity_key,kind,name,damage,nbt,label,exact,search_label)
+			SELECT $1,identity_key,'item',name,damage,'',label,true,search_text FROM plain_catalog_import
 			ON CONFLICT(network_id,identity_key) DO NOTHING`, network); err != nil {
 			return fmt.Errorf("register plain catalog definitions: %w", err)
 		}
 		if _, err = tx.Exec(ctx, "ANALYZE item_definitions"); err != nil {
 			return fmt.Errorf("analyze plain catalog definitions: %w", err)
 		}
-		inserted, err := tx.Exec(ctx, `INSERT INTO plain_catalog_candidates(network_id,item_id,label)
-			SELECT $1,d.id,x.label FROM plain_catalog_import x
+		inserted, err := tx.Exec(ctx, `INSERT INTO plain_catalog_candidates(network_id,item_id,label,search_text)
+			SELECT $1,d.id,x.label,x.search_text FROM plain_catalog_import x
 			JOIN item_definitions requested ON requested.network_id=$1 AND requested.identity_key=x.identity_key
 			LEFT JOIN item_aliases a ON a.network_id=requested.network_id AND a.alias_id=requested.id
 			JOIN item_definitions d ON d.network_id=requested.network_id AND d.id=coalesce(a.canonical_id,requested.id)

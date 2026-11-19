@@ -47,6 +47,11 @@ func (s *Store) Migrate(ctx context.Context) error {
 					return err
 				}
 			}
+			if name == "migrations/016_inventory_search.sql" {
+				if err = backfillSearch(ctx, tx); err != nil {
+					return err
+				}
+			}
 			if _, err = tx.Exec(ctx, "INSERT INTO schema_versions(version) VALUES($1)", name); err != nil {
 				return err
 			}

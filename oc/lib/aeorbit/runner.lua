@@ -5,6 +5,7 @@ local tracker = require("aeorbit.tracker")
 local read_diagnostics = require("aeorbit.read_diagnostics")
 local latency = require("aeorbit.latency")
 local cancel = require("aeorbit.cancel")
+local cpu_packet = require("aeorbit.cpu_packet")
 local native_pcall=pcall
 local default_scan_memory_floor=524288
 local function preserve_stop(ok,...)
@@ -238,12 +239,7 @@ function M.new(config,deps)
         local ok,cpus,truncated=pcall(self.adapter.cpus,self.adapter)
         self.next_cpu=deps.now()+(config.cpu_interval or 10)
         if ok then
-          body.cpus=json.array({});body.cpus_truncated=truncated
-          for _,cpu in ipairs(cpus) do
-            if #body.cpus>=self.limits.cpus then body.cpus_truncated=true;break end
-            body.cpus[#body.cpus+1]=cpu
-            if not pcall(json.encode,body,limit-64) then body.cpus[#body.cpus]=nil;body.cpus_truncated=true;break end
-          end
+          cpu_packet.pack(body,cpus,truncated,self.limits.cpus,limit-64)
         else self:diagnose("cpu_unavailable") end
       end
       local samples,diagnostic_token=self.read_diagnostics:snapshot(self.diagnostic_samples)

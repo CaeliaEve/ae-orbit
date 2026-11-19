@@ -289,6 +289,7 @@ func (s *Store) acceptCooperativeInventory(ctx context.Context, tx pgx.Tx, d Dev
 		Label       string            `json:"label"`
 		NBT         string            `json:"nbt"`
 		Observation protocol.Quantity `json:"observation"`
+		SearchLabel string            `json:"search_label"`
 	}
 	metadata := map[protocol.Quantity]metadataWrite{}
 	for i, u := range b.Updates {
@@ -402,7 +403,7 @@ func (s *Store) acceptCooperativeInventory(ctx context.Context, tx pgx.Tx, d Dev
 			if label == "" {
 				label = u.Item.Name
 			}
-			m := metadataWrite{ID: id, Label: label, NBT: u.Item.NBT, Observation: u.Observation}
+			m := metadataWrite{ID: id, Label: label, NBT: u.Item.NBT, Observation: u.Observation, SearchLabel: searchLabel(label)}
 			old, found := metadata[id]
 			if found && old.Observation == m.Observation && (old.Label != m.Label || old.NBT != m.NBT) {
 				err = ErrConflict
@@ -504,9 +505,9 @@ func (s *Store) acceptCooperativeInventory(ctx context.Context, tx pgx.Tx, d Dev
 			input = append(input, m)
 		}
 		data, _ := json.Marshal(input)
-		_, err = tx.Exec(ctx, `UPDATE item_definitions d SET label=x.label,nbt=x.nbt,
+		_, err = tx.Exec(ctx, `UPDATE item_definitions d SET label=x.label,search_label=x.search_label,nbt=x.nbt,
 			discovery_session_id=$3,discovery_observation=x.observation,updated_at=now()
-			FROM jsonb_to_recordset($2::jsonb) AS x(id bigint,label text,nbt text,observation bigint)
+			FROM jsonb_to_recordset($2::jsonb) AS x(id bigint,label text,nbt text,observation bigint,search_label text)
 			WHERE d.network_id=$1 AND d.id=x.id`, d.NetworkID, data, b.SessionID)
 	}
 	return

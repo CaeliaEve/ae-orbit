@@ -512,3 +512,18 @@ Windows 竞争检测需要兼容 C 编译器和 `CGO_ENABLED=1`；发行二进�
 | deploy/、scripts/ | 部署、构建和验证 |
 
 进一步阅读：[协议语义](contracts/protocol-v1.md)、[OpenAPI](contracts/openapi.yaml)、[前端下单边界](contracts/frontend-orders.md)。
+
+
+库存连续浏览与搜索：网页使用 `consistency=window` 按当前位置读取，每次返回 `anchor_cursor`（本页第一项）和 `next_cursor`。收到库存事件后最多每 5 秒刷新当前窗口，数量就地更新，保持页码、选择和焦点；搜索、筛选、排序改变才回到第一页。窗口包含该次请求时已确认的数据，不冻结快照：数量排序会跟随锚点物品的新排名，归零或不再符合筛选时用后续结果补位。首次查询与低频兜底仍依赖 OC 的精确扫描进度，网页实时显示的是服务端已收到的数据。
+
+搜索支持中文、完整拼音、拼音首字母及 registry 名称；多个空格分隔的条件同时满足。`@gregtech gangding` / `@gregtech gd` 可搜索 GregTech 的钢锭，`@minecraft` 只筛选完整的 Mod ID，`lv`、`lü`、`lu:` 均可用于“铝”。拼音使用字典常用读音，不做所有多音字组合或无限模糊匹配。索引在服务端生成并迁移已有标签，不触发游戏整网扫描，也不重置库存观察或调度。中文输入法组字期间不会发起搜索。
+
+旧主 OC 的 CPU 数量上限需用新配置更新，网页无法显示 OC 没有上传的 CPU：
+
+```sh
+wget -f http://125.77.172.25:8080/oc/bin/ae-orbit-cpu-full.lua /tmp/ae-orbit-cpu-full.lua
+lua /tmp/ae-orbit-cpu-full.lua
+reboot
+```
+
+重启后运行 `ae-orbit start`。更新器保留角色、连接设置、缓存与任务日志，备份原配置到 `/etc/ae-orbit.cfg.before-cpu-full`，保持 `exact_only` 和关闭原生事件，CPU 上限为 64；CPU 基础列表优先于可选产物详情，包大小仍受限。此更改不改变全组读取额度或 NESQL 无 NBT 身份检查。超过限额时页面明确显示列表不完整。未命名和重名 CPU 逐台展示；严格指定仍须在游戏内设置唯一名称。

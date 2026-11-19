@@ -22,7 +22,9 @@ function M.new(me,config)
     assert(M.has_method(me,"allItems"),"adapter: missing allItems; select an AE controller or full ME interface")
   end
   assert(M.has_method(me,"getItemInNetwork"),"adapter: missing getItemInNetwork; requires OC 1.12.47-GTNH+ (table/NBT API)")
-  local adapter={me=me,identity_bytes=config.identity_bytes or 4096,cpu_limit=config.cpu_limit or 16,cpu_generation="0",
+  local cpu_limit=config.cpu_limit or 64
+  assert(type(cpu_limit)=="number" and cpu_limit%1==0 and cpu_limit>=1 and cpu_limit<=64,"adapter: CPU limit must be 1..64")
+  local adapter={me=me,identity_bytes=config.identity_bytes or 4096,cpu_limit=cpu_limit,cpu_generation="0",
     nbt_cache=cache.new(64,32768)}
   local function cpu_name(raw)
     return tostring(raw and raw.name or ""):sub(1,256)
@@ -240,7 +242,7 @@ function M.new(me,config)
         if ok and type(output)=="table" then
           local precise,count=pcall(self.count,self,output)
           if not precise then cancel.rethrow(count) end
-          if precise then cpu.output={name=output.name or "",label=output.label or "",quantity=count}
+          if precise then cpu.output={name=tostring(output.name or ""):sub(1,256),label=tostring(output.label or ""):sub(1,512),quantity=count}
           else cpu.output_unavailable="quantity precision unavailable" end
         else cpu.output_unavailable=ok and tostring(reason or "output unavailable"):sub(1,256) or "monitor unavailable" end
       elseif cpu.busy then cpu.output_unavailable="monitor unavailable" end

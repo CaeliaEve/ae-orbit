@@ -14,7 +14,8 @@ import (
 )
 
 type definitionRow struct {
-	Key string `json:"identity_key"`
+	Key         string `json:"identity_key"`
+	SearchLabel string `json:"search_label"`
 	protocol.Definition
 }
 type inventoryRow struct {
@@ -28,6 +29,7 @@ type inventoryRow struct {
 	Refresh                 string            `json:"refresh,omitempty"`
 	RefreshObservation      protocol.Quantity `json:"refresh_observation,omitempty"`
 	Label                   *string           `json:"label"`
+	SearchLabel             *string           `json:"search_label"`
 	NBT                     *string           `json:"nbt"`
 }
 
@@ -98,6 +100,8 @@ func (s *Store) Ingest(ctx context.Context, d Device, b protocol.InventoryBatch)
 					label = u.Item.Name
 				}
 				row.Label = &label
+				search := searchLabel(label)
+				row.SearchLabel = &search
 				nbt := u.Item.NBT
 				row.NBT = &nbt
 			}
@@ -199,14 +203,14 @@ func (s *Store) resolveDefinitions(ctx context.Context, tx pgx.Tx, networkID str
 			if d.Label == "" {
 				d.Label = d.Name
 			}
-			input = append(input, definitionRow{Key: key, Definition: d})
+			input = append(input, definitionRow{Key: key, Definition: d, SearchLabel: searchLabel(d.Label)})
 			keys = append(keys, key)
 		}
 		sort.Slice(input, func(i, j int) bool { return input[i].Key < input[j].Key })
 		encoded, _ := json.Marshal(input)
-		if _, err := tx.Exec(ctx, `INSERT INTO item_definitions(network_id,identity_key,kind,name,damage,nbt,label,exact)
-            SELECT $1,identity_key,kind,name,damage,coalesce(nbt,''),label,exact FROM jsonb_to_recordset($2::jsonb)
-            AS x(identity_key text,kind text,name text,damage int,nbt text,label text,exact boolean)
+		if _, err := tx.Exec(ctx, `INSERT INTO item_definitions(network_id,identity_key,kind,name,damage,nbt,label,exact,search_label)
+			SELECT $1,identity_key,kind,name,damage,coalesce(nbt,''),label,exact,search_label FROM jsonb_to_recordset($2::jsonb)
+			AS x(identity_key text,kind text,name text,damage int,nbt text,label text,exact boolean,search_label text)
             ON CONFLICT(network_id,identity_key) DO NOTHING`, networkID, encoded); err != nil {
 			return nil, nil, err
 		}

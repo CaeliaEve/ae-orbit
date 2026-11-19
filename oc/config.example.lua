@@ -25,7 +25,7 @@ return {
   batch_interval_seconds = 0.25,
   scan_interval = 60,
   cpu_interval = 10,
-  cpu_limit = 16,
+  cpu_limit = 64,
   http_timeout = 10,
 
   -- OC persists native subscriptions and sends complete change batches as

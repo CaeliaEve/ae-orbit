@@ -220,10 +220,11 @@ type CatalogFrame struct {
 }
 
 type ItemPage struct {
-	Scope      string   `json:"scope,omitempty"`
-	Items      []Item   `json:"items"`
-	Revision   Quantity `json:"revision"`
-	NextCursor string   `json:"next_cursor,omitempty"`
+	Scope        string   `json:"scope,omitempty"`
+	Items        []Item   `json:"items"`
+	Revision     Quantity `json:"revision"`
+	NextCursor   string   `json:"next_cursor,omitempty"`
+	AnchorCursor string   `json:"anchor_cursor,omitempty"`
 }
 
 type ItemQuery struct {
@@ -233,6 +234,7 @@ type ItemQuery struct {
 	Craftable   *bool
 	Limit       int
 	Cursor      string
+	Anchor      string
 	Consistency string
 }
 

@@ -62,7 +62,7 @@ const state = {
   orders: [], devices: [], cpus: { cpus: [] }, icons: {}, filter: "", sort: "name", search: "",
   stockView: "stock", inventoryScope: "", inventoryStats: null,
   inventoryTrend: [], inventoryTrendKey: "",
-  cursor: "", nextCursor: "", cursors: [""], page: 0, inventoryLimit: 50, selected: null, amount: "1",
+  cursor: "", anchorCursor: "", nextCursor: "", cursors: [""], page: 0, inventoryLimit: 50, selected: null, amount: "1",
   cpuName: "", waitForCPU: false, inspector: "detail", draft: { version: 1, entries: [], receipts: {} },
   draftKey: "", draftBlocked: false, unchecked: new Set(), busy: false, preparing: false, inventoryLoading: false,
   orderFilter: "active", orderGroup: "batch", stream: null, streamConnected: false, streamState: "closed", generation: 0,
@@ -100,6 +100,7 @@ let spriteAnimationFrame = 0;
 const inventoryPrefetchControllers = new Set();
 const inventoryPageCache = new Map();
 const inventoryPageRequests = new Map();
+let inventoryCacheEpoch = 0, inventoryLiveRequest = null;
 const INVENTORY_WHEEL_THRESHOLD = 80;
 const INVENTORY_WHEEL_MAX_BACKLOG = INVENTORY_WHEEL_THRESHOLD * 48;
 const INVENTORY_WHEEL_MAX_PAGES_PER_FRAME = 12;
@@ -497,7 +498,7 @@ function renderDashboard() {
   $("#dashboard-inventory-count").textContent = state.inventoryStats ? formatQuantity(state.inventoryStats.entries) : "—";
   $("#dashboard-job-count").textContent = formatQuantity(activeJobs || 0);
   $("#dashboard-cpu-state").textContent = cpus.length ? `${busy} / ${cpus.length}` : "暂无观测";
-  $("#dashboard-cpu-meta").textContent = cpus.length ? "忙碌 / 已观测" : "等待 CPU 状态";
+  $("#dashboard-cpu-meta").textContent = cpus.length ? `忙碌 / 已观测${state.cpus.truncated ? " · 列表不完整，请更新主 OC" : ""}` : "等待 CPU 状态";
   $("#dashboard-cpu-ring").style.setProperty("--ring", cpus.length ? `${Math.round((busy / cpus.length) * 100)}%` : "0%");
   $("#dashboard-cpu-ring span").textContent = cpus.length ? `${Math.round((busy / cpus.length) * 100)}%` : "—";
   $("#dashboard-sync").textContent = network?.last_seen ? `最近同步 ${age(network.last_seen)}` : "等待同步";
@@ -549,7 +550,7 @@ function refreshHeader() {
   $("#connection").dataset.state = !state.member || !network ? "idle" : recovery.tone === "ok" ? "online" : recovery.tone === "warn" ? "offline" : "reconnecting";
   $("#network-quality").textContent = network ? networkQualityLabel(network.quality) : "";
   const summary = inventorySummary(state.inventoryStats, age);
-  $("#inventory-summary").textContent = network ? summary || `${network.name} · ${network.online ? "在线" : "离线"}` : "尚未连接网络";
+  $("#inventory-summary").textContent = network ? (summary ? `${summary}${network.online ? "" : " · OC 离线，显示缓存"}` : "") || `${network.name} · ${network.online ? "在线" : "离线"}` : "尚未连接网络";
   $("#stock-view-label").hidden = state.inventoryScope !== "nesql_plain";
   $("#draft-count").textContent = state.draft.entries.length;
   renderDashboard();
@@ -1432,7 +1433,7 @@ function inventoryQuerySpec(limit) {
 }
 
 function inventoryPageKey(cursor, spec) {
-  return JSON.stringify([spec.search, spec.sort, spec.filter, spec.limit, spec.view, spec.scope, cursor]);
+  return JSON.stringify([spec.search, spec.sort, spec.filter, spec.limit, spec.view, spec.scope, cursor, spec.anchor || ""]);
 }
 
 function requestInventoryPage(cursor, limit, signal, spec = inventoryQuerySpec(limit)) {
@@ -1441,14 +1442,16 @@ function requestInventoryPage(cursor, limit, signal, spec = inventoryQuerySpec(l
   if (cached) return Promise.resolve(cached);
   const pending = inventoryPageRequests.get(key);
   if (pending) return pending;
-  const query = new URLSearchParams({ q: spec.search, sort: spec.sort, limit: String(spec.limit), consistency: spec.sort === "name" ? "live" : "strict" });
+  const epoch = inventoryCacheEpoch;
+  const query = new URLSearchParams({ q: spec.search, sort: spec.sort, limit: String(spec.limit), consistency: "window" });
   if (spec.filter) query.set("craftable", spec.filter);
   if (spec.scope === "nesql_plain") query.set("view", spec.view);
   if (cursor) query.set("cursor", cursor);
+  if (spec.anchor) query.set("anchor", spec.anchor);
   const request = api.request(networkPath(`/items?${query}`), signal ? { signal } : undefined)
     .then(value => {
-      const page = { items: value.items || [], nextCursor: value.next_cursor || "", scope: value.scope || "" };
-      inventoryPageCache.set(key, page);
+      const page = { items: value.items || [], nextCursor: value.next_cursor || "", anchorCursor: value.anchor_cursor || "", scope: value.scope || "" };
+      if (epoch === inventoryCacheEpoch) inventoryPageCache.set(key, page);
       return page;
     })
     .finally(() => {
@@ -1465,6 +1468,7 @@ async function prefetchInventoryPages(cursor, generation, limit) {
   let nextCursor = cursor;
   try {
     for (let index = 0; index < INVENTORY_PREFETCH_DEPTH && nextCursor; index++) {
+      if (generation !== state.generation || controller.signal.aborted) return;
       try {
         const page = await requestInventoryPage(nextCursor, limit, controller.signal, spec);
         nextCursor = page.nextCursor;
@@ -1483,6 +1487,8 @@ async function loadInventory(reset = false) {
   if (limit !== state.inventoryLimit) reset = true;
   state.inventoryLimit = limit;
   if (reset) {
+    state.anchorCursor = "";
+    inventoryCacheEpoch++;
     clearTimeout(inventoryWheelDrainTimer);
     inventoryWheelDrainTimer = 0;
     for (const controller of inventoryPrefetchControllers) controller.abort();
@@ -1494,6 +1500,7 @@ async function loadInventory(reset = false) {
     state.cursors = [""];
     inventoryWheelAccumulation = 0;
   }
+  inventoryLiveRequest?.abort(); inventoryLiveRequest = null;
   queryController?.abort();
   queryController = new AbortController();
   const generation = ++state.generation;
@@ -1505,6 +1512,7 @@ async function loadInventory(reset = false) {
     const value = await requestInventoryPage(cursor, limit, queryController.signal, spec);
     if (generation !== state.generation) return;
     state.items = value.items;
+    state.anchorCursor = value.anchorCursor;
     state.inventoryScope = value.scope;
     refreshHeader();
     state.nextCursor = value.nextCursor;
@@ -1526,8 +1534,11 @@ async function loadInventory(reset = false) {
 }
 
 function applyCachedInventoryPage(cursor, page) {
+  state.generation++;
+  inventoryLiveRequest?.abort(); inventoryLiveRequest = null;
   state.cursor = cursor;
   state.items = page.items;
+  state.anchorCursor = page.anchorCursor;
   state.nextCursor = page.nextCursor;
   state.items.forEach(item => state.itemCache.set(String(item.id), item));
   state.inventoryLoading = false;
@@ -1596,10 +1607,11 @@ function drainInventoryWheel() {
 }
 
 async function patchVisibleInventory() {
-  if (!state.network || !state.items.length || state.inventoryLoading) return;
+  if (!state.network || !state.items.length || state.inventoryLoading || inventoryLiveRequest) return;
+  const generation = state.generation, context = state.context;
   try {
     const value = await lookupItems(state.items.map(i => i.id).concat(state.selected?.id || []));
-    if (!value) return;
+    if (!value || generation !== state.generation || context !== state.context) return;
     const previousSelected = state.selected;
     const live = new Map(value.items.map(i => [String(i.id), i]));
     state.items = state.items.map(item => live.get(String(item.id)) || item);
@@ -1646,14 +1658,72 @@ async function refreshInventoryStats() {
   return promise;
 }
 
-let catalogListRefreshAt = 0;
+let catalogListRefreshAt = 0, inventoryRefreshTimer = null;
+async function refreshInventoryWindow() {
+  if (!state.network || state.inventoryLoading || inventoryLiveRequest) return;
+  const context = state.context, generation = state.generation;
+  const spec = { ...inventoryQuerySpec(state.inventoryLimit), anchor: state.page > 0 ? state.anchorCursor : "" };
+  const cursor = spec.anchor ? "" : state.cursor;
+  inventoryCacheEpoch++;
+  for (const controller of inventoryPrefetchControllers) controller.abort();
+  inventoryPrefetchControllers.clear();
+  inventoryPageCache.clear(); inventoryPageRequests.clear();
+  const controller = new AbortController();
+  inventoryLiveRequest = controller;
+  try {
+    const value = await requestInventoryPage(cursor, spec.limit, controller.signal, spec);
+    if (context !== state.context || generation !== state.generation) return;
+    // A selected item can leave the stock filter while its detail stays open.
+    const selectedID = state.selected?.id;
+    if (selectedID && !value.items.some(item => String(item.id) === String(selectedID))) {
+      try { await lookupItems([selectedID]); } catch {}
+      if (context !== state.context || generation !== state.generation) return;
+    }
+    const previousSelected = state.selected;
+    const focused = document.activeElement;
+    const focusKind = focused?.dataset?.quickAdd ? "data-quick-add" : "data-item";
+    const focusItem = focused?.dataset?.item || focused?.dataset?.quickAdd;
+    const scroll = $(".table-wrap");
+    const scrollTop = scroll?.scrollTop || 0;
+    const windowX=window.scrollX, windowY=window.scrollY;
+    state.items = value.items; state.nextCursor = value.nextCursor;
+    state.anchorCursor = value.anchorCursor || state.anchorCursor;
+    state.items.forEach(item => state.itemCache.set(String(item.id), item));
+    const selected = state.items.find(item => String(item.id) === String(state.selected?.id)) || state.itemCache.get(String(state.selected?.id));
+    if (selected) state.selected = selected;
+    if (!patchInventoryRows()) renderInventory();
+    if (scroll) scroll.scrollTop = scrollTop;
+    if (window.scrollY!==windowY) window.scrollTo(windowX,windowY);
+    $("#page-label").textContent = `第 ${state.page + 1} 页 · 本页 ${state.items.length} 项`;
+    $("#next-page").disabled = !state.nextCursor;
+    if (focusItem) $(`[${focusKind}="${CSS.escape(focusItem)}"]`)?.focus({ preventScroll: true });
+    if (state.inspector === "detail" && state.selected) {
+      if (detailNeedsRender(previousSelected, state.selected)) renderDetail();
+      else patchSelectedDetail(state.selected);
+    }
+    message("#inventory-message", "");
+  } catch (error) {
+    if (context === state.context && generation === state.generation && error.name !== "AbortError") message("#inventory-message", errorText(error));
+  } finally {
+    if (inventoryLiveRequest === controller) inventoryLiveRequest = null;
+  }
+}
 function refreshInventoryObservation() {
   void refreshInventoryStats();
-  if (state.inventoryScope === "nesql_plain" && Date.now() - catalogListRefreshAt >= 5000
-      && !$(".catalog").contains(document.activeElement) && !state.inventoryLoading) {
+  if (Date.now() - catalogListRefreshAt >= 5000 && !state.inventoryLoading) {
+    clearTimeout(inventoryRefreshTimer); inventoryRefreshTimer = null;
     catalogListRefreshAt = Date.now();
-    void loadInventory(true);
-  } else void patchVisibleInventory();
+    void refreshInventoryWindow();
+  } else {
+    void patchVisibleInventory();
+    if (!inventoryRefreshTimer) {
+      const context = state.context;
+      inventoryRefreshTimer = setTimeout(() => {
+        inventoryRefreshTimer = null;
+        if (context === state.context) refreshInventoryObservation();
+      }, Math.max(500, 5000 - (Date.now() - catalogListRefreshAt)));
+    }
+  }
 }
 
 function connectStream() {
@@ -1713,6 +1783,8 @@ function connectStream() {
 async function switchNetwork(id) {
   if (state.busy || state.preparing) { $("#network").value = state.network?.id || ""; toast("请等待本轮提交结束。"); return; }
   state.context++;
+  clearTimeout(inventoryRefreshTimer); inventoryRefreshTimer = null;
+  inventoryLiveRequest?.abort(); inventoryLiveRequest = null;
   const network = state.networks.find(n => n.id === id);
   queryController?.abort();
   ordersController?.abort();
@@ -1842,11 +1914,16 @@ $("#refresh-dashboard").addEventListener("click", () => {
 });
 $("#search").addEventListener("input", event => {
   clearTimeout(searchTimer);
+  if (event.isComposing) return;
+  searchTimer = setTimeout(() => { state.search = event.target.value.trim(); loadInventory(true); }, 220);
+});
+$("#search").addEventListener("compositionend", event => {
+  clearTimeout(searchTimer);
   searchTimer = setTimeout(() => { state.search = event.target.value.trim(); loadInventory(true); }, 220);
 });
 $("#sort").addEventListener("change", event => { state.sort = event.target.value; loadInventory(true); });
 $("#stock-view").addEventListener("change", event => { state.stockView = event.target.value; loadInventory(true); });
-$("#refresh-inventory").addEventListener("click", () => { void loadInventory(true); void refreshInventoryStats(); });
+$("#refresh-inventory").addEventListener("click", () => { void refreshInventoryWindow(); void refreshInventoryStats(); });
 $("#prev-page").addEventListener("click", () => changeInventoryPage(-1));
 $("#next-page").addEventListener("click", () => changeInventoryPage(1));
 $(".catalog").addEventListener("wheel", event => {
@@ -2185,7 +2262,7 @@ window.addEventListener("resize", () => {
   inventoryResizeTimer = setTimeout(() => refreshInventoryCapacity(), 120);
 });
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible" && state.member && state.network) { refreshNetwork(); patchVisibleInventory(); refreshOrders(false); refreshJobs(); }
+  if (document.visibilityState === "visible" && state.member && state.network) { refreshNetwork(); refreshInventoryObservation(); refreshOrders(false); refreshJobs(); }
 });
 document.addEventListener("error", event => {
   if (event.target instanceof HTMLImageElement && event.target.classList.contains("item-image")) {

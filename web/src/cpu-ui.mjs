@@ -36,6 +36,7 @@ export function cpuOutputText(cpu) {
   if (normalized === "quantity precision unavailable") {
     return "最终产物数量精度不可用";
   }
+  if (normalized === "packet budget") return "本次优先同步 CPU 列表，产物详情暂未传输";
   if (reason) return `最终产物不可用：${reason}`;
   return cpu?.busy ? "最终产物暂不可用" : "当前空闲，无合成输出";
 }

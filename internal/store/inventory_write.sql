@@ -1,6 +1,6 @@
 WITH input AS (
     SELECT * FROM jsonb_to_recordset($2::jsonb)
-    AS x(id bigint,quantity bigint,observation bigint,craftable boolean,craftable_observation bigint,label text,nbt text,verification text,verification_observation bigint,refresh text,refresh_observation bigint)
+    AS x(id bigint,quantity bigint,observation bigint,craftable boolean,craftable_observation bigint,label text,search_label text,nbt text,verification text,verification_observation bigint,refresh text,refresh_observation bigint)
 ), previous AS (
     SELECT x.*,i.quantity AS previous_quantity,i.craftable AS previous_craftable,
         i.session_id AS previous_session,i.observation AS previous_observation,
@@ -21,6 +21,7 @@ WITH input AS (
         CASE WHEN accept_recipe THEN now() WHEN previous_session=$3 THEN previous_recipe_time ELSE NULL END AS craftable_observed_at,
         CASE WHEN accept_recipe THEN $3 WHEN previous_session=$3 THEN $3 ELSE '' END AS craftable_session_id,
         CASE WHEN accept_quantity THEN label ELSE NULL END AS label,
+        CASE WHEN accept_quantity THEN search_label ELSE NULL END AS search_label,
         CASE WHEN accept_quantity THEN nbt ELSE NULL END AS nbt,
         verification,verification_observation,refresh,refresh_observation,previous_quantity,previous_craftable,
         previous_session,previous_observation,previous_label
@@ -49,7 +50,7 @@ WITH input AS (
     ON CONFLICT(network_id,item_id) DO NOTHING
     RETURNING item_id
 ), labels AS (
-    UPDATE item_definitions d SET label=coalesce(e.label,d.label),nbt=coalesce(e.nbt,d.nbt),updated_at=now() FROM eligible e
+    UPDATE item_definitions d SET label=coalesce(e.label,d.label),search_label=coalesce(e.search_label,d.search_label),nbt=coalesce(e.nbt,d.nbt),updated_at=now() FROM eligible e
     WHERE d.network_id=$1 AND d.id=e.id AND ((e.label IS NOT NULL AND d.label IS DISTINCT FROM e.label)
        OR (e.nbt IS NOT NULL AND d.nbt IS DISTINCT FROM e.nbt))
     RETURNING d.id

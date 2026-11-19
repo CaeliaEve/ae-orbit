@@ -91,7 +91,7 @@ func (s *Store) Items(ctx context.Context, userID, networkID string, q protocol.
 	if q.Limit < 1 || q.Limit > 200 || len(q.Search) > 128 || !utf8.ValidString(q.Search) || (q.Sort != "name" && q.Sort != "quantity") {
 		return page, ErrInvalid
 	}
-	if (q.Consistency != "strict" && q.Consistency != "live") || (q.Consistency == "live" && q.Sort != "name") {
+	if (q.Consistency != "strict" && q.Consistency != "live" && q.Consistency != "window") || (q.Consistency == "live" && q.Sort != "name") || (q.Anchor != "" && (q.Consistency != "window" || q.Cursor != "")) {
 		return page, ErrInvalid
 	}
 	var cursor pageCursor
@@ -124,16 +124,20 @@ func (s *Store) Items(ctx context.Context, userID, networkID string, q protocol.
 	if plain {
 		page.Scope = "nesql_plain"
 	}
-	// Positive-stock membership changes with quantities, so a live cursor must
-	// also protect the quantity revision in this view.
-	if q.View == "stock" {
+	// Window browsing keeps its keyset boundary across membership/quantity changes.
+	// Existing snapshot clients retain their revision checks.
+	if q.View == "stock" && q.Consistency != "window" {
 		q.Consistency = "strict"
 	}
 	queryBytes, _ := json.Marshal([]any{networkID, q.Search, q.Sort, q.Craftable, q.Consistency, q.View, enabledAt})
 	fingerprint := sha256.Sum256(queryBytes)
 	queryKey := hex.EncodeToString(fingerprint[:])
-	if q.Cursor != "" {
-		cursor, err = s.decodeCursor(q.Cursor)
+	boundary := q.Cursor
+	if q.Anchor != "" {
+		boundary = q.Anchor
+	}
+	if boundary != "" {
+		cursor, err = s.decodeCursor(boundary)
 		if err != nil || cursor.Query != queryKey {
 			return page, ErrInvalid
 		}
@@ -149,9 +153,11 @@ func (s *Store) Items(ctx context.Context, userID, networkID string, q protocol.
 	args := []any{networkID, session}
 	conditions := []string{"d.network_id=$1"}
 	label := "d.label"
+	indexed := "d.search_label"
 	join := "JOIN inventory i ON i.network_id=d.network_id AND i.item_id=d.id"
 	if plain {
 		label = "c.label"
+		indexed = "c.search_text"
 		join = "JOIN plain_catalog_candidates c ON c.network_id=d.network_id AND c.item_id=d.id LEFT JOIN inventory i ON i.network_id=d.network_id AND i.item_id=d.id AND i.observed_at>="
 		args = append(args, enabledAt)
 		join += "$3"
@@ -164,16 +170,11 @@ func (s *Store) Items(ctx context.Context, userID, networkID string, q protocol.
 		conditions = append(conditions, "i.quantity>0")
 	}
 	param := func(value any) string { args = append(args, value); return fmt.Sprintf("$%d", len(args)) }
-	if q.Search != "" {
-		value := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(q.Search)
-		if utf8.RuneCountInString(q.Search) < 3 {
-			p := param(value + "%")
-			conditions = append(conditions, "(lower("+label+") LIKE lower("+p+") OR lower(d.name) LIKE lower("+p+"))")
-		} else {
-			p := param("%" + value + "%")
-			conditions = append(conditions, "lower("+label+" || ' ' || d.name) LIKE lower("+p+")")
-		}
+	search, err := searchConditions(q.Search, label, indexed, param)
+	if err != nil {
+		return page, err
 	}
+	conditions = append(conditions, search...)
 	if q.Craftable != nil {
 		conditions = append(conditions, "i.craftable="+param(*q.Craftable))
 	}
@@ -181,13 +182,26 @@ func (s *Store) Items(ctx context.Context, userID, networkID string, q protocol.
 	if q.Sort == "quantity" {
 		order = "coalesce(i.quantity,0) DESC,d.id"
 	}
-	if q.Cursor != "" {
+	if q.Anchor != "" {
+		// Follow the first visible item when its quantity/rank changes. If it
+		// leaves this view, use the old boundary to fill the vacated window.
+		anchorArgs := append(append([]any{}, args...), int64(cursor.ID))
+		err = tx.QueryRow(ctx, "SELECT lower("+label+"),coalesce(i.quantity,0) FROM item_definitions d "+join+" WHERE $2::text IS NOT NULL AND "+strings.Join(conditions, " AND ")+fmt.Sprintf(" AND d.id=$%d", len(anchorArgs)), anchorArgs...).Scan(&cursor.Name, &cursor.Quantity)
+		if err != nil && err != pgx.ErrNoRows {
+			return page, err
+		}
+	}
+	if boundary != "" {
+		comparison := ">"
+		if q.Anchor != "" {
+			comparison = ">="
+		}
 		if q.Sort == "quantity" {
 			count := param(int64(cursor.Quantity))
 			id := param(int64(cursor.ID))
-			conditions = append(conditions, "(coalesce(i.quantity,0)<"+count+" OR (coalesce(i.quantity,0)="+count+" AND d.id>"+id+"))")
+			conditions = append(conditions, "(coalesce(i.quantity,0)<"+count+" OR (coalesce(i.quantity,0)="+count+" AND d.id"+comparison+id+"))")
 		} else {
-			conditions = append(conditions, "(lower("+label+"),d.id)>("+param(cursor.Name)+","+param(int64(cursor.ID))+")")
+			conditions = append(conditions, "(lower("+label+"),d.id)"+comparison+"("+param(cursor.Name)+","+param(int64(cursor.ID))+")")
 		}
 	}
 	limit := param(q.Limit + 1)
@@ -223,6 +237,10 @@ func (s *Store) Items(ctx context.Context, userID, networkID string, q protocol.
 			next.CatalogRevision, next.CraftableRevision = catalogRevision, craftableRevision
 		}
 		page.NextCursor = s.encodeCursor(next)
+	}
+	if len(page.Items) > 0 && q.Consistency == "window" {
+		first := page.Items[0]
+		page.AnchorCursor = s.encodeCursor(pageCursor{Query: queryKey, Revision: page.Revision, ID: first.ID, Name: names[0], Quantity: first.Quantity, CatalogRevision: catalogRevision, CraftableRevision: craftableRevision})
 	}
 	return page, tx.Commit(ctx)
 }

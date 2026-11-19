@@ -37,7 +37,7 @@
         <div class="page-heading"><div><h1>工作台</h1><span class="muted">集中查看网络、库存与生产任务状态</span></div><div class="heading-actions"><span class="sync-label" id="dashboard-sync">等待同步</span><button class="icon-button" id="refresh-dashboard" title="刷新工作台" aria-label="刷新工作台"><i data-lucide="refresh-cw"></i></button></div></div>
         <div class="dashboard-grid">
           <article class="metric-card" id="dashboard-network-card"><span class="metric-label">网络状态</span><strong id="dashboard-network-state">未连接</strong><span class="metric-meta" id="dashboard-network-meta">等待登录</span></article>
-          <article class="metric-card"><span class="metric-label">当前页库存</span><strong id="dashboard-inventory-count">0</strong><span class="metric-meta">已加载物品</span></article>
+          <article class="metric-card"><span class="metric-label">有库存物品</span><strong id="dashboard-inventory-count">0</strong><span class="metric-meta">已确认有库存的种类</span></article>
           <article class="metric-card"><span class="metric-label">未完成任务</span><strong id="dashboard-job-count">0</strong><span class="metric-meta">生产任务与订单</span></article>
           <article class="metric-card metric-card-wide"><div><span class="metric-label">CPU 占用</span><strong id="dashboard-cpu-state">暂无观测</strong><span class="metric-meta" id="dashboard-cpu-meta">等待 CPU 状态</span></div><div class="metric-ring" id="dashboard-cpu-ring" aria-hidden="true"><span>—</span></div></article>
         </div>
@@ -49,7 +49,7 @@
       <section id="view-inventory" class="view" hidden>
         <div class="page-heading"><div><h1>库存</h1><span id="inventory-summary" class="muted">尚未连接网络</span></div><button class="icon-button" id="refresh-inventory" title="刷新库存列表" aria-label="刷新库存列表"><i data-lucide="refresh-cw"></i></button></div>
         <div class="inventory-toolbar">
-          <div class="search-row"><label class="search"><i data-lucide="search"></i><input id="search" type="search" maxlength="128" placeholder="搜索物品名称、标签或 Mod…" aria-label="搜索物品" autocomplete="off"></label><button id="open-draft" class="secondary"><i data-lucide="list-plus"></i><span>清单</span><span id="draft-count">0</span></button></div>
+          <div class="search-row"><label class="search"><i data-lucide="search"></i><input id="search" type="search" maxlength="128" placeholder="中文 / 拼音 / 首字母 / @modid" title="例如：钢锭、gangding、gd、@gregtech gangding；空格分隔条件，@ 后填写完整 Mod ID" aria-label="搜索物品" autocomplete="off"></label><button id="open-draft" class="secondary"><i data-lucide="list-plus"></i><span>清单</span><span id="draft-count">0</span></button></div>
           <div class="filters"><div class="segments" role="group" aria-label="合成能力筛选"><button data-filter="" aria-pressed="true">不限合成能力</button><button data-filter="true" aria-pressed="false">可合成</button><button data-filter="false" aria-pressed="false">未确认可合成</button></div><label id="stock-view-label" class="sort" hidden><span>显示</span><select id="stock-view" aria-label="库存范围"><option value="stock">已确认有库存</option><option value="all">全部 NESQL 无 NBT 候选</option></select></label><label class="sort"><span>排序</span><select id="sort" aria-label="库存排序"><option value="name">物品名称</option><option value="quantity">库存数量</option></select></label></div>
         </div>
         <div class="workbench">

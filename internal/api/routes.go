@@ -101,6 +101,11 @@ func (s *Server) routes() {
 		}
 		q := protocol.ItemQuery{Search: r.URL.Query().Get("q"), Sort: r.URL.Query().Get("sort"), Cursor: r.URL.Query().Get("cursor"), Limit: limit, Consistency: r.URL.Query().Get("consistency")}
 		q.View = r.URL.Query().Get("view")
+		if len(r.URL.Query()["anchor"]) > 1 || len(r.URL.Query()["cursor"]) > 1 {
+			fail(w, store.ErrInvalid)
+			return
+		}
+		q.Anchor = r.URL.Query().Get("anchor")
 		if value := r.URL.Query().Get("craftable"); value != "" {
 			yes, err := strconv.ParseBool(value)
 			if err != nil {

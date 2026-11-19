@@ -11,10 +11,10 @@ test("unqueried candidates are distinct from confirmed zero and stale stock", ()
 });
 test("summary describes export scope, partial progress and observation freshness", () => {
   assert.equal(inventorySummary(null, () => ""), "");
-  const summary = inventorySummary({ scope: "nesql_plain", candidates: "53689", checked: "12", entries: "3", total_quantity: "9007199254740993", oldest_observation: "old" }, () => "20分钟前");
+  const summary = inventorySummary({ scope: "nesql_plain", candidates: "53689", checked: "12", entries: "3", total_quantity: "9007199254740993", last_observation: "recent", pending: "1" }, () => "20分钟前");
   assert.match(summary, /无 NBT/);
   assert.match(summary, /有库存 3 种/);
   assert.match(summary, /12\/53,689/);
   assert.match(summary, /9,007,199,254,740,993 件/);
-  assert.match(summary, /最早观测 20分钟前/);
+  assert.match(summary, /最近更新 20分钟前/);
 });

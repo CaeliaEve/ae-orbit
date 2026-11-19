@@ -4,6 +4,7 @@ local cache=require("aeorbit.cache")
 local tracker=require("aeorbit.tracker")
 local read_diagnostics=require("aeorbit.read_diagnostics")
 local cancel=require("aeorbit.cancel")
+local cpu_packet=require("aeorbit.cpu_packet")
 local native_pcall=pcall
 local function preserve_stop(ok,...)
   if not ok then cancel.rethrow((...)) end
@@ -268,13 +269,7 @@ function M.new(config,deps)
           self.next_cpu=deps.now()+(config.cpu_interval or 10)
           local ok,cpus,truncated=pcall(self.adapter.cpus,self.adapter)
           if ok then
-            body.cpus=json.array({});body.cpus_truncated=truncated
-            for _,cpu in ipairs(cpus) do
-              body.cpus[#body.cpus+1]=cpu
-              if #body.cpus>self.limits.cpus or not pcall(json.encode,body,self.client.request_bytes-64) then
-                body.cpus[#body.cpus]=nil;body.cpus_truncated=true;break
-              end
-            end
+            cpu_packet.pack(body,cpus,truncated,self.limits.cpus,self.client.request_bytes-64)
           else self:diagnose("cpu_unavailable") end
         end
         if self.dirty.count>0 then

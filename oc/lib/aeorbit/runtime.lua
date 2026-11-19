@@ -85,7 +85,7 @@ function M.run(context,config_path,report,mode)
     local store=primary and journal.new(fs,state_dir.."/journal",32768) or nil
     phase="config_error"
     local clock={now=computer.uptime,sleep=context.sleep,check=context.check}
-    local adapter_config={identity_bytes=config.identity_bytes or 4096,cpu_limit=config.cpu_limit or 16,role=role,
+    local adapter_config={identity_bytes=config.identity_bytes or 4096,cpu_limit=config.cpu_limit or 64,role=role,
       inventory_mode=config.inventory_mode,
       wait=function(seconds) context.check();context.sleep(seconds);context.check() end,
       now=computer.uptime,cpu_wait_interval=config.cpu_wait_interval or 0.1,

@@ -206,6 +206,12 @@ func TestPlainCatalogRequiresSafeDevicesAndAuthenticatedFirstObservation(t *test
 	if err != nil || len(chinese.Items) != 1 || chinese.Items[0].Label != "石头" {
 		t.Fatal("catalog Chinese search failed", chinese, err)
 	}
+	for _, query := range []string{"shitou", "st", "@minecraft shitou", "@minecraft st"} {
+		page, err := f.s.Items(ctx, f.admin.ID, f.network.ID, protocol.ItemQuery{Search: query})
+		if err != nil || len(page.Items) != 1 || page.Items[0].Label != "石头" {
+			t.Fatal("plain pinyin search", query, page, err)
+		}
+	}
 }
 
 func TestPlainCatalogPendingRefreshAndCursorIsolation(t *testing.T) {
