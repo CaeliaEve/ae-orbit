@@ -30,13 +30,12 @@ import {
 } from "./texture-pack.mjs";
 import { clearSession, loadSession, saveSession } from "./session.mjs";
 import { connectionTestTone, connectionTestText } from "./connection-status.mjs";
-import { deviceState, healthSummary, networkDeviceSummary, roleLabel } from "./device-status.mjs";
+import { networkDeviceSummary } from "./device-status.mjs";
+import { networkNodeModel, networkNodesHTML, networkOverviewHTML, networkSidebarHTML } from "./network-monitor.mjs";
 import {
   networkCreateResult,
   networkRefreshState,
   normalizeNetworkDraft,
-  networkDashboardSummary,
-  networkCapabilityRows,
 } from "./network-ui.mjs";
 import { connectionDiagnostics, streamStateTone, streamStateText } from "./connection-diagnostics.mjs";
 import { networkErrorKind, networkRecoveryState } from "./network-recovery.mjs";
@@ -89,6 +88,7 @@ const state = {
   orderFilter: "active", orderGroup: "batch", stream: null, streamConnected: false, streamState: "closed", generation: 0,
   context: 0, orderGeneration: 0, orderSnapshot: null, ordersLoading: false, ordersError: false,
   cpuMonitor: { search: "", filter: "all", sort: "network", expanded: new Set() },
+  networkNodes: { search: "", filter: "all", role: "all", expanded: new Set() },
   activeOrderCount: 0, activeOrdersTruncated: false, detailId: "", detailGeneration: 0,
   taskMode: "jobs", jobFilter: "unsettled", jobStorageError: false,
   settings: loadSettings(), settingsSection: "display", session: null,
@@ -434,11 +434,13 @@ function message(id, text) {
 }
 
 function dateTime(value) {
+  if (!value) return "尚无记录";
   const date = new Date(value);
   return Number.isFinite(date.getTime()) ? date.toLocaleString("zh-CN", { hour12: false }) : "尚无记录";
 }
 
 function age(value) {
+  if (!value) return "未观测";
   const time = new Date(value).getTime();
   if (!Number.isFinite(time)) return "未观测";
   const seconds = Math.max(0, Math.floor((Date.now() - time) / 1000));
@@ -1396,7 +1398,7 @@ function renderNetwork() {
   const feedback = $("#network-feedback");
   if (feedback) {
     const status = networkRefreshState({ loading: state.networkLoading, error: state.networkError, hasSnapshot: state.networkSnapshotReady });
-    feedback.hidden = status.hidden;
+    feedback.hidden = status.hidden || state.networkLoading && state.networkSnapshotReady;
     feedback.dataset.state = status.tone;
     feedback.innerHTML = status.hidden ? "" : `<span>${esc(status.text)}</span>${status.retry ? `<button type="button" class="secondary" data-network-retry><i data-lucide="refresh-cw"></i>重试</button>` : ""}`;
   }
@@ -1416,7 +1418,7 @@ function renderNetwork() {
       network: state.network,
       devices: state.devices,
       streamState: state.streamState,
-      loading: state.networkLoading,
+      loading: state.networkLoading && !state.networkSnapshotReady,
       error: state.networkError,
       errorKind: state.networkErrorKind,
       hasSnapshot: state.networkSnapshotReady,
@@ -1427,61 +1429,44 @@ function renderNetwork() {
     recovery.dataset.state = status.key;
     recovery.innerHTML = networkRecoveryHTML(status);
   }
+  $("#network-empty").hidden = !!network;
+  $("#network-info").hidden = !network;
   if (!network) {
     $("#network-summary").textContent = "尚未连接网络";
-    $("#network-info").innerHTML = `<div class="empty empty-state"><i data-lucide="wifi-off"></i><strong>尚未连接网络</strong><span>添加或选择一个网络后查看 OC 节点、服务能力与同步状态。</span><button class="secondary" data-view="settings">打开设置</button></div>`;
     renderDashboard();
     paint();
     return;
   }
   $("#network-summary").textContent = network.name;
-  const caps = network.capabilities || {};
-  const services = network.services || {};
-  const deviceSummary = networkDeviceSummary(state.devices);
-  const dashboard = networkDashboardSummary(network, state.devices);
-  const bridgeMode = network.bridge_mode === "cooperative" ? "多 OC 协作" : network.bridge_mode === "single" ? "单 OC" : network.bridge_mode || "标准";
-  const healthLabel = dashboard.health === "healthy"
-    ? "网络健康"
-    : dashboard.health === "degraded"
-      ? "存在同步告警"
-      : dashboard.health === "waiting" ? "等待节点" : "网络离线";
-  const healthTone = dashboard.health === "healthy" ? "ok" : dashboard.health === "waiting" ? "idle" : "warn";
-  const healthIcon = dashboard.health === "healthy" ? "check" : dashboard.health === "offline" ? "wifi-off" : "circle-alert";
-  const capabilityRows = networkCapabilityRows(caps, services);
-  const facts = [
-    ["最近通信", dateTime(network.last_seen), "网络或 OC 节点最近一次心跳"],
-    ["最近库存观测", dateTime(network.last_inventory), "库存同步最近一次收到的时间"],
-    ["最近 CPU 观测", dateTime(services.cpu_observed_at), "CPU 状态快照最近更新时间"],
-    ["单次最大合成量", formatQuantity(caps.max_craft_quantity), "当前 OC 报告的上限"],
-    ["数据质量", networkQualityLabel(network.quality), "服务端对当前快照的判断"],
-    ["数量读取器", `${formatQuantity(services.quantity_readers || 0)} 个`, "参与库存数量读取的 OC 节点"],
-  ];
-  const deviceCards = state.devices.length ? state.devices.map(device => {
-    const status = deviceState(device);
-    const health = healthSummary(device.health);
-    const details = [
-      `通信 · ${age(device.last_seen)}`,
-      `库存 · ${age(device.last_inventory)}`,
-      health.diagnostics + health.readFailures > 0 ? `${health.diagnostics + health.readFailures} 项诊断` : "无诊断",
-    ];
-    return `<article class="device-card" data-state="${status.key}"><div class="device-card-head"><span class="device-icon">${icon(device.role === "primary" ? "radio-tower" : "boxes")}</span><span class="state-label ${status.tone}"><i class="status-dot" data-tone="${status.tone === "online" ? "ok" : status.tone === "busy" ? "warn" : "idle"}></i>${status.label}</span></div><div class="device-card-title"><h3>${esc(device.name || device.id)}</h3><span>${esc(roleLabel(device.role))}</span></div><div class="device-card-meta">${details.map(detail => `<span>${esc(detail)}</span>`).join("")}</div><small class="device-card-session">会话 ${esc(device.session_id || "未建立")}</small></article>`;
-  }).join("") : `<div class="empty">暂无设备观测</div>`;
-  const deviceRows = state.devices.length ? state.devices.map(device => {
-    const status = deviceState(device);
-    return `<div class="network-table-row"><span><strong>${esc(device.name || device.id)}</strong><small class="task-sub">${esc(device.id)}</small></span><span>${esc(roleLabel(device.role))}</span><span class="state-label ${status.tone}">${status.label}</span><span>${esc(age(device.last_seen))}</span><span>${esc(age(device.last_inventory))}</span><span class="muted">${esc(device.session_id || "未建立会话")}</span></div>`;
-  }).join("") : `<div class="empty">暂无设备观测</div>`;
-  const deviceStatus = deviceSummary.total ? `${deviceSummary.online} / ${deviceSummary.total} 在线${deviceSummary.stale ? ` · ${deviceSummary.stale} 台滞后` : ""}` : "暂无设备观测";
-  const capabilityHTML = capabilityRows.map(row => `<div class="network-capability" data-state="${esc(row.tone)}"><span class="network-capability-icon">${icon(row.tone === "ok" ? "check" : "minus")}</span><span><strong>${esc(row.label)}</strong><small>${esc(row.detail)}</small></span><b>${esc(row.value)}</b></div>`).join("");
-  const factHTML = facts.map(([label, value, detail]) => `<div class="network-fact"><span>${esc(label)}</span><strong>${esc(value)}</strong><small>${esc(detail)}</small></div>`).join("");
-  const metricHTML = [
-    ["OC 节点", dashboard.total ? `${dashboard.online} / ${dashboard.total}` : "—", dashboard.total ? (dashboard.stale ? `${dashboard.stale} 台数据滞后` : "在线节点") : "等待节点上报", dashboard.total && dashboard.offline === 0 && dashboard.stale === 0 ? "ok" : dashboard.total ? "warn" : "idle"],
-    ["桥接模式", bridgeMode, network.online ? "实时心跳" : "等待 OC 恢复", network.online ? "ok" : "warn"],
-    ["服务能力", `${dashboard.serviceCount} / 5`, caps.cpu_selection ? "包含严格 CPU 指定" : "基础能力可用", dashboard.serviceCount >= 3 ? "ok" : "idle"],
-    ["事件流", state.streamState === "connected" ? "已连接" : state.streamState === "reconnecting" ? "重连中" : "已关闭", "浏览器实时刷新", state.streamState === "connected" ? "ok" : "warn"],
-  ].map(([label, value, detail, tone]) => `<div class="network-metric" data-state="${esc(tone)}"><span>${esc(label)}</span><strong>${esc(value)}</strong><small>${esc(detail)}</small></div>`).join("");
-  $("#network-info").innerHTML = `<section class="network-hero"><div class="network-hero-copy"><span class="network-eyebrow">当前网络</span><div class="network-title-row"><h2>${esc(network.name)}</h2><span class="network-health" data-state="${esc(healthTone)}">${icon(healthIcon)}${esc(healthLabel)}</span></div><p class="network-id">${esc(network.id)} · ${esc(deviceStatus)}</p></div><div class="network-hero-meta"><span>最近通信</span><strong>${esc(dashboard.lastCommunication ? age(dashboard.lastCommunication) : "未观测")}</strong><small>${network.online ? "网络正在接收 OC 心跳" : "等待 OpenComputers 恢复"}</small></div></section><section class="network-metrics" aria-label="网络摘要">${metricHTML}</section><div class="network-dashboard-grid"><section class="network-panel network-capabilities-panel"><div class="network-panel-heading"><div><span class="network-eyebrow">能力矩阵</span><h2>服务能力</h2></div><span class="network-panel-count">${dashboard.serviceCount} / 5</span></div><div class="network-capabilities">${capabilityHTML}</div></section><section class="network-panel network-facts-panel"><div class="network-panel-heading"><div><span class="network-eyebrow">同步观测</span><h2>运行事实</h2></div><i data-lucide="activity" aria-hidden="true"></i></div><div class="network-facts">${factHTML}</div></section></div><section class="network-panel network-devices-panel" aria-label="OC 节点"><div class="network-panel-heading"><div><span class="network-eyebrow">设备编排</span><h2>OC 节点</h2><span class="muted">每台设备的连接、角色与库存同步状态</span></div><span class="network-panel-count">${esc(deviceStatus)}</span></div><div class="device-cards">${deviceCards}</div><div class="network-device-table"><div class="network-table-head"><span>设备</span><span>角色</span><span>状态</span><span>最近通信</span><span>库存观测</span><span>会话</span></div>${deviceRows}</div></section>`;
+  const view = $("#view-network"), scroll = view.scrollTop;
+  patchDashboardHTML("#network-overview", networkOverviewHTML(network, state.devices, state.streamState, { age }));
+  renderNetworkNodes();
+  const identifiersOpen = $(".network-identifiers", $("#network-sidebar"))?.open || false;
+  patchDashboardHTML("#network-sidebar", networkSidebarHTML(network, state.streamState, { dateTime }));
+  const identifiers = $(".network-identifiers", $("#network-sidebar"));
+  if (identifiers) identifiers.open = identifiersOpen;
   renderDashboard();
   paint();
+  view.scrollTop = scroll;
+}
+
+function renderNetworkNodes() {
+  const model = networkNodeModel(state.devices, state.networkNodes);
+  const view = $("#view-network"), scroll = view.scrollTop;
+  const focusedRow = document.activeElement?.closest(".network-node");
+  const focusedKey = focusedRow?.dataset.nodeKey;
+  $("#network-nodes-count").textContent = model.visible.length === model.counts.all
+    ? model.counts.all + " 台节点"
+    : "显示 " + model.visible.length + " / " + model.counts.all + " 台";
+  for (const key of ["all", "online", "attention"]) $("#network-nodes-" + key).textContent = model.counts[key];
+  $$("[data-network-node-filter]").forEach(button => button.setAttribute("aria-pressed", String(button.dataset.networkNodeFilter === state.networkNodes.filter)));
+  patchDashboardHTML("#network-nodes-list", networkNodesHTML(model, { expanded: state.networkNodes.expanded, age, dateTime }));
+  if (focusedKey) {
+    const row = $$(".network-node", $("#network-nodes-list")).find(node => node.dataset.nodeKey === focusedKey);
+    if (row) $("summary", row)?.focus({ preventScroll: true });
+  }
+  paint();
+  view.scrollTop = scroll;
 }
 
 function networkRecoveryHTML(status) {
@@ -2148,6 +2133,9 @@ async function switchNetwork(id) {
   state.activeOrderCount = 0;
   state.activeOrdersTruncated = false;
   state.devices = [];
+  state.networkNodes = { search: "", filter: "all", role: "all", expanded: new Set() };
+  $("#network-nodes-search").value = "";
+  $("#network-nodes-role").value = "all";
   state.networkLoading = false;
   state.networkError = "";
   state.networkErrorKind = "";
@@ -2346,6 +2334,38 @@ $("#view-cpus").addEventListener("click", event => {
   renderCPUs();
 });
 $("#refresh-network").addEventListener("click", () => refreshNetwork());
+$("#network-nodes-search").addEventListener("input", () => {
+  state.networkNodes.search = $("#network-nodes-search").value;
+  renderNetworkNodes();
+});
+$("#network-nodes-role").addEventListener("change", event => {
+  state.networkNodes.role = event.target.value;
+  renderNetworkNodes();
+});
+$("#network-nodes-list").addEventListener("toggle", event => {
+  const row = event.target;
+  if (!row.matches?.(".network-node") || !row.isConnected) return;
+  if (row.open) state.networkNodes.expanded.add(row.dataset.nodeKey);
+  else state.networkNodes.expanded.delete(row.dataset.nodeKey);
+}, true);
+$("#view-network").addEventListener("click", async event => {
+  const button = event.target.closest("button");
+  if (!button) return;
+  if (button.dataset.networkNodeFilter) {
+    state.networkNodes.filter = button.dataset.networkNodeFilter;
+    renderNetworkNodes();
+  } else if ("networkNodesReset" in button.dataset) {
+    state.networkNodes.search = "";
+    state.networkNodes.filter = "all";
+    state.networkNodes.role = "all";
+    $("#network-nodes-search").value = "";
+    $("#network-nodes-role").value = "all";
+    renderNetworkNodes();
+  } else if ("copyNetworkId" in button.dataset && state.network) {
+    try { await navigator.clipboard.writeText(state.network.id); toast("网络 ID 已复制"); }
+    catch { toast("请手动选择并复制网络 ID。", true); }
+  }
+});
 $("#add-network").addEventListener("click", () => openNetworkDialog());
 $("#network-form").addEventListener("submit", createNetwork);
 $("#network-dialog").addEventListener("cancel", event => { if (state.networkCreateBusy) event.preventDefault(); });

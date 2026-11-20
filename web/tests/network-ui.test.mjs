@@ -87,3 +87,23 @@ test("network capability rows expose stable labels and tones", () => {
     { key: "cpu_selection", label: "严格指定 CPU", value: "不可用", tone: "idle", detail: "需 OC 支持唯一 CPU 名称" },
   ]);
 });
+
+test("network overview counts stale and unknown nodes consistently with connection diagnostics", () => {
+  const now = Date.parse("2026-11-20T12:00:00Z");
+  const summary = networkDashboardSummary({ online: true }, [
+    { online: true, last_seen: "2026-11-20T11:59:45Z" },
+    { online: true, last_seen: "2026-11-20T11:50:00Z" },
+    { id: "unknown" },
+    { online: true, revoked: true },
+  ], now);
+  assert.equal(summary.online, 1);
+  assert.equal(summary.stale, 1);
+  assert.equal(summary.offline, 2);
+  assert.equal(summary.health, "degraded");
+});
+
+test("undeclared services never imply that production is supported", () => {
+  const rows = networkCapabilityRows({ craft: false });
+  assert.equal(rows.find(row => row.key === "craft").detail, "当前网络未声明");
+  assert.equal(networkCapabilityRows({ inventory: true })[0].detail, "同步已确认的物品数量");
+});

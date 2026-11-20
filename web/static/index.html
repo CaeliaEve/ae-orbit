@@ -110,10 +110,25 @@
       </section>
       <section id="view-network" class="view" hidden>
         <h1 class="sr-only">网络管理</h1>
-        <div class="network-toolbar"><span>已配置网络</span><button class="primary" id="add-network" type="button"><i data-lucide="plus"></i>添加网络</button></div>
+        <div class="network-toolbar"><span>网络管理</span><button class="secondary" id="add-network" type="button"><i data-lucide="plus"></i>添加网络</button></div>
         <div id="network-feedback" class="inline-message" role="status" hidden></div>
         <div id="network-recovery" class="network-recovery" role="status" aria-live="polite" hidden></div>
-        <div id="network-info" class="network-dashboard"></div>
+        <div id="network-empty" class="network-nodes-empty" hidden><i data-lucide="network" aria-hidden="true"></i><strong>尚未选择网络</strong><span>从左侧选择一个网络，或添加新的网络。</span></div>
+        <div id="network-info" class="network-dashboard">
+          <section id="network-overview" aria-label="当前网络概况"></section>
+          <div class="network-management-layout">
+            <section class="network-roster" aria-labelledby="network-nodes-title">
+              <div class="network-section-heading"><h2 id="network-nodes-title">OC 节点</h2><span id="network-nodes-count" role="status"></span></div>
+              <div class="network-nodes-toolbar">
+                <label class="network-node-search"><i data-lucide="search" aria-hidden="true"></i><input id="network-nodes-search" type="search" maxlength="128" placeholder="搜索节点名称或 ID" aria-label="搜索 OC 节点名称、ID 或会话" autocomplete="off"></label>
+                <label class="network-role-select"><span class="sr-only">节点角色</span><select id="network-nodes-role" aria-label="节点角色"><option value="all">全部角色</option><option value="primary">主设备</option><option value="quantity_worker">数量助手</option></select></label>
+                <div class="network-node-filters" role="group" aria-label="OC 节点状态"><button type="button" data-network-node-filter="all" aria-pressed="true">全部 <span id="network-nodes-all">0</span></button><button type="button" data-network-node-filter="online" aria-pressed="false">在线 <span id="network-nodes-online">0</span></button><button type="button" data-network-node-filter="attention" aria-pressed="false">需关注 <span id="network-nodes-attention">0</span></button></div>
+              </div>
+              <div id="network-nodes-list" aria-label="OC 节点列表"></div>
+            </section>
+            <aside id="network-sidebar" class="network-management-sidebar" aria-label="网络能力与同步记录"></aside>
+          </div>
+        </div>
       </section>
       <section id="view-github" class="view" hidden>
         <h1 class="sr-only">GitHub</h1>

@@ -82,19 +82,15 @@ test("inventory hover exposes catalog metadata without inventing missing values"
   assert.match(compactCSS, /\.inventory-hover-tooltip/);
 });
 
-test("network management uses one structured operations dashboard", () => {
-  assert.match(appSource, /class="network-hero"/);
-  assert.match(appSource, /class="network-metrics"/);
-  assert.match(appSource, /class="network-dashboard-grid"/);
-  assert.match(appSource, /class="network-capabilities"/);
-  assert.match(appSource, /network-devices-panel/);
-  assert.doesNotMatch(appSource, /<div class="network-table" id="network-table">/);
-  assert.match(compactCSS, /\.network-dashboard\s*\{/);
-  assert.match(compactCSS, /\.network-metrics\s*\{/);
-  assert.match(compactCSS, /\.network-dashboard-grid\s*\{/);
-  assert.match(compactCSS, /\.network-capability\s*\{/);
-  assert.match(compactCSS, /\.network-devices-panel\s+\.device-cards\s*\{/);
-  assert.match(compactCSS, /#view-network #network-info\.network-dashboard\s*\{[\s\S]*?overflow-y:\s*auto/);
+test("network management uses one reachable roster and preserves its controls during refresh", () => {
+  assert.match(indexHTML, /id="network-nodes-search"/);
+  assert.match(indexHTML, /id="network-nodes-list"/);
+  assert.match(indexHTML, /id="network-sidebar"/);
+  assert.doesNotMatch(appSource, /class="device-card"|class="network-table-row"/);
+  assert.match(appSource, /patchDashboardHTML\("#network-nodes-list"/);
+  assert.match(appSource, /state\.networkNodes\.expanded/);
+  assert.match(compactCSS, /#view-network\s*\{[^}]*overflow-y:\s*auto/);
+  assert.match(compactCSS, /\.network-management-layout\s*\{[^}]*minmax\(0,\s*1fr\)/);
 });
 
 test("CPU summary has one stable host and desktop lists remain reachable", () => {
