@@ -123,6 +123,7 @@ type ProductionJobSummary struct {
 	ID             string              `json:"id"`
 	NetworkID      string              `json:"network_id"`
 	OwnerID        string              `json:"owner_id"`
+	OwnerName      string              `json:"owner_name,omitempty"`
 	Name           string              `json:"name"`
 	ManifestDigest string              `json:"manifest_digest"`
 	Control        string              `json:"control"`
@@ -154,8 +155,16 @@ type ProductionJobEntry struct {
 }
 
 type ProductionJobDetail struct {
-	Summary ProductionJobSummary `json:"summary"`
-	Entries []ProductionJobEntry `json:"entries"`
+	Summary  ProductionJobSummary    `json:"summary"`
+	Entries  []ProductionJobEntry    `json:"entries"`
+	Activity []ProductionJobActivity `json:"activity,omitempty"`
+}
+
+type ProductionJobActivity struct {
+	ActorID   string    `json:"actor_id"`
+	ActorName string    `json:"actor_name"`
+	Action    string    `json:"action"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 type ProductionJobReceipt struct {

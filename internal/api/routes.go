@@ -24,6 +24,7 @@ func integerQuery(r *http.Request, key string) (int, error) {
 }
 
 func (s *Server) routes() {
+	s.playerRoutes()
 	s.productionJobRoutes()
 	s.mux.HandleFunc("GET /api/v1/networks/{network}/devices", s.user(s.devices))
 	s.mux.HandleFunc("POST /api/v1/networks/{network}/devices", s.user(s.createDevice))

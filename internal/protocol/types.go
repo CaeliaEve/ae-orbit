@@ -462,6 +462,7 @@ type Order struct {
 	ID         string    `json:"id"`
 	NetworkID  string    `json:"network_id"`
 	UserID     string    `json:"user_id"`
+	OwnerName  string    `json:"owner_name,omitempty"`
 	ItemID     Quantity  `json:"item_id"`
 	Quantity   Quantity  `json:"quantity"`
 	State      string    `json:"state"`
@@ -518,9 +519,12 @@ type DeviceView struct {
 }
 
 type Member struct {
-	ID    string `json:"id"`
-	Name  string `json:"name"`
-	Admin bool   `json:"admin"`
+	ID            string `json:"id"`
+	Name          string `json:"name"`
+	Admin         bool   `json:"admin"`
+	GameID        string `json:"game_id,omitempty"`
+	PasswordLogin bool   `json:"password_login,omitempty"`
+	AuthVersion   int64  `json:"-"`
 }
 
 type Grant struct {

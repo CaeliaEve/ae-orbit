@@ -99,6 +99,19 @@ test("late submission response cannot clean another network generation",async()=
   controller.reset({...scope,networkId:"network-2"}); release(); await pending;
   assert.equal(loadDraft(storage,storageKey(scope.memberId,scope.networkId)).entries.length,2);
 });
+test("switching players during submission preserves both members' own drafts",async()=>{
+  let release;
+  const {controller,storage}=setup((path,o)=>o.method==="POST"?new Promise(resolve=>{release=()=>resolve(receipt(o.body));}):path.endsWith("/jobs")?snapshot:{changes:[],next_after:"0",watermark:"0",has_more:false,reset:false});
+  const other={...scope,memberId:"member-2"};
+  saveDraft(storage,storageKey(other.memberId,other.networkId),{entries:[row("other-player-row")]});
+  await controller.sync();
+  const pending=controller.submit(["source-001"]);
+  await new Promise(resolve=>setImmediate(resolve));
+  controller.reset(other);release();await pending;
+  assert.deepEqual(controller.local().draft.entries.map(e=>e.id),["other-player-row"]);
+  assert.equal(loadDraft(storage,storageKey(scope.memberId,scope.networkId)).entries.length,2);
+  assert.equal(controller.local().intents.length,0);
+});
 test("uncertain controls replay only the exact explicitly selected operation",async()=>{
   const detail=receipt({entries:[{entry_key:"draft-source-001",item_id:"1",quantity:"64"}]}).job;
   const {controller,requests}=setup((path,o)=>{

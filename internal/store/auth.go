@@ -17,7 +17,7 @@ func (s *Store) Bootstrap(ctx context.Context, token string) (protocol.Member, e
 	h := hashToken(token)
 	err := s.pool.QueryRow(ctx, `INSERT INTO members(id,name,token_hash,is_admin) VALUES($1,'admin',$2,true)
         ON CONFLICT(name) DO UPDATE SET token_hash=excluded.token_hash,revoked=false WHERE members.is_admin
-        RETURNING id,name,is_admin`, newID(), h[:]).Scan(&member.ID, &member.Name, &member.Admin)
+        RETURNING id,name,is_admin,auth_version`, newID(), h[:]).Scan(&member.ID, &member.Name, &member.Admin, &member.AuthVersion)
 	return member, err
 }
 
@@ -27,7 +27,7 @@ func (s *Store) AuthMember(ctx context.Context, token string) (protocol.Member, 
 		return m, ErrUnauthorized
 	}
 	h := hashToken(token)
-	err := s.pool.QueryRow(ctx, "SELECT id,name,is_admin FROM members WHERE token_hash=$1 AND NOT revoked", h[:]).Scan(&m.ID, &m.Name, &m.Admin)
+	err := s.pool.QueryRow(ctx, "SELECT id,name,is_admin,game_id,password_hash IS NOT NULL,auth_version FROM members WHERE token_hash=$1 AND NOT revoked", h[:]).Scan(&m.ID, &m.Name, &m.Admin, &m.GameID, &m.PasswordLogin, &m.AuthVersion)
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = ErrUnauthorized
 	}

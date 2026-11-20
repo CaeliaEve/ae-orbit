@@ -31,7 +31,9 @@ export function validateJobDetail(value, scope, jobId) {
     entry.wait_for_cpu = waitForCPU;
   });
   if (Object.keys(counts).some(key => String(counts[key]) !== summary.counts[key])) throw new Error("Invalid entry counts.");
-  return { summary, entries };
+  const activity = Array.isArray(value.activity) ? structuredClone(value.activity) : [];
+  if (activity.length > 1024 || activity.some(event => typeof event.actor_id !== "string" || typeof event.actor_name !== "string" || !["pause","resume","stop"].includes(event.action) || !Number.isFinite(Date.parse(event.created_at)))) throw new Error("Invalid task activity.");
+  return { summary, entries, activity };
 }
 
 export function createJobController({ storage, request, makeKey = newId, lock = (_key, work) => work(), onChange = () => {} }) {
@@ -47,7 +49,8 @@ export function createJobController({ storage, request, makeKey = newId, lock = 
     if (error.uncertain === false && (
       error.status === 429 && error.code === "capacity_exceeded" ||
       error.status === 403 && ["forbidden", "capability_unavailable"].includes(error.code) ||
-      error.status === 400 && ["invalid_request", "invalid_reference", "capability_unavailable"].includes(error.code)
+      error.status === 400 && ["invalid_request", "invalid_reference", "capability_unavailable"].includes(error.code) ||
+      error.status === 409 && error.code === "identity_changed"
     )) savedJournal.markDefiniteRejected(requestKey, error);
   }
   function local() {

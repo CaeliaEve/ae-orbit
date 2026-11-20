@@ -47,6 +47,7 @@ type Server struct {
 	started        time.Time
 	performance    httpMetrics
 	eventMetrics   streamMetrics
+	playerLogin    loginLimiter
 }
 
 func New(db *store.Store, options Options) *Server {
@@ -55,6 +56,7 @@ func New(db *store.Store, options Options) *Server {
 		value = db.Catalog()
 	}
 	s := &Server{db: db, catalog: value, options: options, mux: http.NewServeMux(), requests: make(chan struct{}, options.MaxConcurrent), streams: make(chan struct{}, options.MaxStreams), deviceInFlight: map[string]int{}, started: time.Now()}
+	s.playerLogin = loginLimiter{clients: make(map[string]loginAttempt), active: make(chan struct{}, 2)}
 	s.routes()
 	return s
 }

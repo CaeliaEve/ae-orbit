@@ -3,7 +3,7 @@ import {
   Search, ListPlus, ChevronLeft, ChevronRight, ChevronDown, X, Plus, Minus, Package,
   Trash2, Check, Clock, CircleAlert, LogIn, ArrowUpRight, Server, Send, Pause, Play, Square,
   LayoutDashboard, Settings, Github, Bell, Activity, Monitor, SlidersHorizontal, Code2, FileText, CircleHelp, Copy,
-  WifiOff, PanelLeftClose,
+  WifiOff, PanelLeftClose, UserRound,
 } from "lucide";
 import { createAPI } from "./api.mjs";
 import { createInventoryWheel, inventoryKeyboardDirection } from "./inventory-paging.mjs";
@@ -30,6 +30,7 @@ import {
   loadTexturePackURL,
   saveCachedTexturePack,
 } from "./texture-pack.mjs";
+import { playerName, submitterName, loginPayload, playerAccountHTML } from "./player-identity.mjs";
 import { clearSession, loadSession, saveSession } from "./session.mjs";
 import { connectionTestTone, connectionTestText } from "./connection-status.mjs";
 import { networkDeviceSummary } from "./device-status.mjs";
@@ -66,7 +67,7 @@ function inventoryIcon(name) {
   }
   return inventoryIconCache.get(name);
 }
-const icons = { Orbit, Network, LogOut, Boxes, ListChecks, Cpu, RadioTower, RefreshCw, Search, ListPlus, ChevronLeft, ChevronRight, ChevronDown, X, Plus, Minus, Package, Trash2, Check, Clock, CircleAlert, LogIn, ArrowUpRight, Server, Send, Pause, Play, Square, LayoutDashboard, Settings, Github, Bell, Activity, Monitor, SlidersHorizontal, Code2, FileText, CircleHelp, Copy, WifiOff, PanelLeftClose };
+const icons = { Orbit, Network, LogOut, Boxes, ListChecks, Cpu, RadioTower, RefreshCw, Search, ListPlus, ChevronLeft, ChevronRight, ChevronDown, X, Plus, Minus, Package, Trash2, Check, Clock, CircleAlert, LogIn, ArrowUpRight, Server, Send, Pause, Play, Square, LayoutDashboard, Settings, Github, Bell, Activity, Monitor, SlidersHorizontal, Code2, FileText, CircleHelp, Copy, WifiOff, PanelLeftClose, UserRound };
 const paint = () => {
   const pending = $$('i[data-lucide]');
   if (!pending.length) return;
@@ -91,7 +92,7 @@ const state = {
   activeOrderCount: 0, activeOrdersTruncated: false, detailId: "", detailGeneration: 0,
   taskMode: "jobs", jobFilter: "unsettled", jobStorageError: false,
   crafting: { search: "", sort: "newest", owner: "all", orderSearch: "" },
-  settings: loadSettings(), settingsSection: "display", session: null,
+  settings: loadSettings(), settingsSection: "display", session: null, loginMode: "player", teamMembers: [], teamInvitations: [],
   texturePackStatus: texturePack.status(), texturePackLoading: false, texturePackError: "",
   connectionTest: { status: "idle", checkedAt: "", message: "" },
   networkLoading: false, networkError: "", networkErrorKind: "", networkSnapshotReady: false, networkCreateBusy: false,
@@ -393,6 +394,10 @@ function renderSettings() {
   const detail = $("#settings-detail");
   if (!detail) return;
   const section = state.settingsSection;
+  $$("[data-settings-section]").forEach(button => {
+    button.setAttribute("aria-selected", String(button.dataset.settingsSection === section));
+    button.setAttribute("aria-current", String(button.dataset.settingsSection === section));
+  });
   const sections = {
     display: {
       title: "显示",
@@ -409,6 +414,7 @@ function renderSettings() {
       description: "使用服务器按需纹理，或导入可复用的本地纹理包。",
       body: textureSettingsHTML(),
     },
+    account: { title: "玩家与团队", description: "每位玩家使用独立身份，下单自动署名。", body: playerAccountHTML(state.member,state.networks,state.teamMembers,state.teamInvitations) },
     connection: {
       title: "连接与凭据",
       description: "管理服务连接、自动重连和浏览器会话。",
@@ -422,7 +428,14 @@ function renderSettings() {
 
 function errorText(error) {
   if (error?.name === "AbortError") return "";
-  if (error?.status === 401) showLogin();
+  if (error?.code === "identity_changed") {
+    api.setCSRF("");
+    state.session = null;
+    clearSession(localStorage,sessionStorage);
+    state.stream?.close();
+    showLogin();
+  }
+  else if (error?.status === 401) showLogin();
   if (error?.status || error?.code) return error.message;
   return "操作未完成，请检查数量、当前状态或浏览器存储。";
 }
@@ -665,7 +678,7 @@ function renderDashboard() {
 }
 
 function refreshHeader() {
-  $("#member-name").textContent = state.member?.name || "未登录";
+  $("#member-name").textContent = playerName(state.member);
   $("#logout").hidden = !state.member;
   const network = state.network;
   const recovery = networkRecoveryState({
@@ -886,7 +899,7 @@ function renderDetail() {
     <label class="field-label" for="craft-quantity">合成数量</label><div class="stepper"><button data-step="-1" title="减少数量" aria-label="减少数量">${icon("minus")}</button><input id="craft-quantity" type="text" inputmode="numeric" maxlength="19" value="${esc(state.amount)}" autocomplete="off"><button data-step="1" title="增加数量" aria-label="增加数量">${icon("plus")}</button></div>
     <span class="field-label">合成 CPU</span><button class="cpu-select" id="detail-cpu" ${state.busy || state.preparing || !state.network ? "disabled" : ""} title="${cpuSelectionTitle()}"><span>${esc(state.cpuName || "自动分配")}${state.waitForCPU ? " · 等待" : ""}${!cpuSelectionSupported() ? " · 当前 OC 未启用" : ""}</span>${icon("cpu")}</button>
     <div class="detail-actions"><button class="primary wide" id="add-to-draft" ${canAdd ? "" : "disabled"}>${icon("list-plus")}加入清单</button><button class="secondary wide" id="submit-immediately" ${canAdd && jobs.state.support === "supported" && !state.busy ? "" : "disabled"}>${icon("send")}立即提交</button></div>
-    <p id="detail-feedback" class="detail-feedback" role="status">${esc(reason || submissionStatus())}</p>`;
+    <p class="draft-submitter">下单人：${esc(playerName(state.member))}</p><p id="detail-feedback" class="detail-feedback" role="status">${esc(reason || submissionStatus())}</p>`;
   paint();
   scheduleSpriteAnimation();
 }
@@ -1023,7 +1036,7 @@ function renderDraft() {
         ${entry.status === "uncertain" ? isJobClaim(entry) ? `<button class="secondary wide" data-job-reconcile="${esc(entry.batch_id.slice(4))}">${icon("refresh-cw")}核对原生产任务</button>` : `<button class="secondary wide" data-reconcile="${esc(entry.id)}">${icon("refresh-cw")}核对原单项订单</button>` : ""}
       </div>`;
     }).join("")}</div>
-    <div class="draft-submit"><div class="draft-total"><span>已选 <strong>${summary.selected}</strong> 项</span><span title="所选条目的合成数量合计">共 <strong class="number">${quantityHTML(summary.quantity)}</strong> 件</span></div><button class="primary" id="submit-draft" ${chosen.length && !state.busy && jobs.state.support === "supported" ? "" : "disabled"}>${icon("send")}${state.busy ? "正在提交生产任务" : `提交 ${chosen.length} 项`}</button><p class="draft-note">${esc(submissionStatus() || "提交后可在合成中心查看进度")}</p></div>`
+    <div class="draft-submit"><p class="draft-submitter">以 <strong>${esc(playerName(state.member))}</strong> 的身份提交</p><div class="draft-total"><span>已选 <strong>${summary.selected}</strong> 项</span><span title="所选条目的合成数量合计">共 <strong class="number">${quantityHTML(summary.quantity)}</strong> 件</span></div><button class="primary" id="submit-draft" ${chosen.length && !state.busy && jobs.state.support === "supported" ? "" : "disabled"}>${icon("send")}${state.busy ? "正在提交生产任务" : `提交 ${chosen.length} 项`}</button><p class="draft-note">${esc(submissionStatus() || "提交后可在合成中心查看进度")}</p></div>`
     : `<div class="draft-empty">${icon("list-plus")}<strong>清单还是空的</strong><span>点击物品右上角的 +，或在物品详情中加入清单</span></div>`;
   const checkAll = $("#draft-check-all", panel);
   if (checkAll) checkAll.indeterminate = summary.selected > 0 && summary.selected < summary.editable;
@@ -1156,7 +1169,7 @@ async function submitDraft(ids = selectedDraftIds()) {
   renderDraft(); renderDetail(); renderInventory();
   try {
     await jobs.submit(ids);
-    if (context === state.context) { toast(`生产任务已受理 · ${ids.length} 项`, false, "task"); await refreshJobs(); }
+    if (context === state.context) { toast(`${playerName(state.member)} 的生产任务已受理 · ${ids.length} 项`, false, "task"); await refreshJobs(); }
   } catch (error) {
     if (context === state.context) toast(`${errorText(error)} 原清单保持锁定，请到生产任务核对。`, true);
   } finally {
@@ -1303,9 +1316,9 @@ function renderOrders() {
   $("#order-list").setAttribute("aria-busy", String(state.ordersLoading));
   if (state.taskMode === "orders") $("#refresh-orders").disabled = state.ordersLoading;
   const terms = state.crafting.orderSearch.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
-  const visible = orders.filter(order => terms.every(term => [itemFor(order.item_id)?.label, itemFor(order.item_id)?.name, order.id, order.cpu_name, stateNames[order.state]].join(" ").toLocaleLowerCase().includes(term)));
+  const visible = orders.filter(order => terms.every(term => [itemFor(order.item_id)?.label, itemFor(order.item_id)?.name, order.id, order.owner_name, order.cpu_name, stateNames[order.state]].join(" ").toLocaleLowerCase().includes(term)));
   const view = $("#view-orders"), scroll = view.scrollTop;
-  const groupsHTML = visible.length ? craftingOrdersHTML(visible, { group: state.orderGroup, itemFor, itemImage, age, dateTime })
+  const groupsHTML = visible.length ? craftingOrdersHTML(visible, { group: state.orderGroup, itemFor, itemImage, age, dateTime, member:state.member })
     : '<div class="crafting-empty">' + icon("list-checks") + '<strong>' + (!snapshot ? state.ordersLoading ? "正在读取订单…" : state.ordersError ? "订单读取失败" : "等待订单观测" : orders.length ? "没有匹配的订单" : "当前筛选没有订单") + '</strong><span>搜索仅匹配已读取的订单；可调整条件或从左侧刷新。</span></div>';
   patchDashboardHTML("#order-list", groupsHTML);
   if (snapshot && state.crafting.orderSearch) $("#orders-summary").textContent += " · 匹配 " + visible.length + " 项";
@@ -1401,8 +1414,8 @@ function showOrder(id) {
 
 function renderOrderDetail(order, history) {
   const item = itemFor(order.item_id);
-  $("#order-facts").innerHTML = `<div class="detail-heading">${itemImage(item)}<h2>${esc(item?.label || `物品 #${order.item_id}`)}</h2></div><div class="order-detail-facts"><div class="fact"><span>数量</span><span class="number">${formatQuantity(order.quantity)}</span></div><div class="fact"><span>状态</span><span>${esc(stateNames[order.state] || order.state)}</span></div><div class="fact"><span>CPU 策略</span><span>${esc(order.cpu_name || "自动分配")}</span></div><div class="fact"><span>提交时间</span><span>${esc(dateTime(order.created_at))}</span></div><div class="fact"><span>过期时间</span><span>${esc(dateTime(order.expires_at))}</span></div></div>${order.reason ? `<p class="error">${esc(order.reason)}</p>` : ""}`;
-  $("#order-actions").innerHTML = order.state === "queued" ? `<div class="order-actions"><button class="secondary" data-cancel-detail="${esc(order.id)}">${icon("x")}撤回未派发任务</button></div>` : "";
+  $("#order-facts").innerHTML = `<div class="detail-heading">${itemImage(item)}<h2>${esc(item?.label || `物品 #${order.item_id}`)}</h2></div><div class="order-detail-facts"><div class="fact"><span>数量</span><span class="number">${formatQuantity(order.quantity)}</span></div><div class="fact"><span>状态</span><span>${esc(stateNames[order.state] || order.state)}</span></div><div class="fact"><span>CPU 策略</span><span>${esc(order.cpu_name || "自动分配")}</span></div><div class="fact"><span>下单人</span><span>${esc(submitterName(order))}</span></div><div class="fact"><span>提交时间</span><span>${esc(dateTime(order.created_at))}</span></div><div class="fact"><span>过期时间</span><span>${esc(dateTime(order.expires_at))}</span></div></div>${order.reason ? `<p class="error">${esc(order.reason)}</p>` : ""}`;
+  $("#order-actions").innerHTML = order.state === "queued" && (state.member?.admin || state.member?.id === order.user_id) ? `<div class="order-actions"><button class="secondary" data-cancel-detail="${esc(order.id)}">${icon("x")}撤回未派发任务</button></div>` : "";
   const review = $("#order-review");
   if (order.state === "needs_review" && state.member?.admin) {
     // Keep the live form connected so background reads cannot discard an edit.
@@ -2178,11 +2191,11 @@ async function switchNetwork(id) {
   state.inventoryLoading = false;
   state.orders = [];
   state.orderSnapshot = null;
-  state.crafting = { search: "", sort: "newest", owner: "all", orderSearch: "" };
+  state.crafting = { search: "", sort: "newest", owner: state.member?.admin ? "all" : "mine", orderSearch: "" };
   $("#crafting-search").value = "";
   $("#crafting-order-search").value = "";
   $("#crafting-sort").value = "newest";
-  $("#crafting-owner").value = "all";
+  $("#crafting-owner").value = state.crafting.owner;
   state.ordersLoading = false;
   state.ordersError = false;
   state.activeOrderCount = 0;
@@ -2228,17 +2241,112 @@ function showLogin() {
   if (!$("#auth-dialog").open) $("#auth-dialog").showModal();
 }
 
+$("#auth-dialog").addEventListener("click", event => {
+  const mode = event.target.closest("[data-login-mode]")?.dataset.loginMode;
+  if (!mode || $("#login-button").disabled) return;
+  state.loginMode = mode;
+  $("#player-login-fields").hidden = mode === "token";
+  $("#token-login-fields").hidden = mode !== "token";
+  $("#player-register-fields").hidden = mode !== "register";
+  $("#token").required = mode === "token";
+  for (const id of ["#login-game-id", "#login-password"]) { $(id).required = mode !== "token"; $(id).disabled = mode === "token"; }
+  for (const id of ["#login-confirm-password", "#login-invitation"]) { $(id).required = mode === "register"; $(id).disabled = mode !== "register"; }
+  $("#login-password").autocomplete = mode === "register" ? "new-password" : "current-password";
+  $("#login-password").minLength = mode === "register" ? 10 : 1;
+  $("#login-error").textContent = "";
+  $("#login-button").innerHTML = `${icon("log-in")}${mode === "register" ? "注册并登录" : "登录"}`;
+  $$("[data-login-mode]").forEach(button => button.setAttribute("aria-pressed", String(button.dataset.loginMode === mode)));
+  paint();
+});
+
+async function refreshPlayerTeam() {
+  if (!state.member?.admin) return;
+  const memberID = state.member.id;
+  try {
+    const [members, invitations] = await Promise.all([api.request("/api/v1/members"),api.request("/api/v1/player-invitations")]);
+    if (state.member?.id !== memberID) return;
+    state.teamMembers = members; state.teamInvitations = invitations;
+    if (state.settingsSection === "account") renderSettings();
+  } catch (error) { toast(errorText(error),true); }
+}
+
+$("#settings-detail").addEventListener("submit", async event => {
+  const form = event.target;
+  if (!["player-profile-form","player-invite-form","player-reset-form"].includes(form.id)) return;
+  event.preventDefault();
+  if (state.busy || state.preparing) { toast("请等待当前提交结束。",true); return; }
+  const button = $("button[type=submit]",form); button.disabled = true;
+  const errorTarget = $(".error",form); if (errorTarget) errorTarget.textContent = "";
+  try {
+    if (form.id === "player-profile-form") {
+      const value = await api.request("/api/v1/me/player",{method:"PUT",body:{game_id:$("#profile-game-id").value.trim(),current_password:$("#profile-current-password")?.value || "",password:$("#profile-password").value}});
+      await acceptSession(value.member,value.csrf,value.expires_at); renderSettings(); toast("玩家身份已保存，旧订单署名保留。");
+    } else if (form.id === "player-invite-form") {
+      const value = await api.request("/api/v1/player-invitations",{method:"POST",body:{network_id:$("#invite-network").value,can_craft:$("#invite-permission").value === "craft",max_uses:Number($("#invite-uses").value)}});
+      state.teamInvitations.unshift(value.invitation);
+      $("#player-invite-code").textContent = value.code; $("#player-invite-result").hidden = false;
+    } else {
+      const id = $("#player-reset-member").value;
+      const member = await api.request(`/api/v1/members/${encodeURIComponent(id)}/player`,{method:"PUT",body:{game_id:$("#player-reset-game-id").value.trim(),password:$("#player-reset-password").value}});
+      $("#player-reset-password").value = "";
+      if (member.id === state.member.id) { showLogin(); toast("凭据已更新，请重新登录。"); }
+      else { await refreshPlayerTeam(); toast("成员身份与密码已重设。"); }
+    }
+  } catch (error) { if (errorTarget) errorTarget.textContent = errorText(error); }
+  finally { if (button.isConnected) button.disabled = false; }
+});
+
+$("#settings-detail").addEventListener("click", async event => {
+  const edit = event.target.closest("[data-edit-player]");
+  if (edit) {
+    const member = state.teamMembers.find(m=>m.id===edit.dataset.editPlayer); if (!member) return;
+    $("#player-reset-form").hidden=false; $("#player-reset-member").value=member.id;
+    $("#player-reset-name").textContent=`重设 ${playerName(member)}`;
+    $("#player-reset-game-id").value=member.game_id || ""; $("#player-reset-password").value="";
+    $("#player-reset-game-id").focus(); return;
+  }
+  if (event.target.closest("#copy-player-invite")) {
+    const code = $("#player-invite-code");
+    try {
+      if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(code.textContent);
+      else {
+        const range = document.createRange(); range.selectNodeContents(code);
+        const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range);
+        if (!document.execCommand("copy")) throw new Error("copy unavailable");
+        selection.removeAllRanges();
+      }
+      toast("邀请码已复制");
+    } catch {
+      const range = document.createRange(); range.selectNodeContents(code);
+      const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range);
+      toast("已选中邀请码，请手动复制。",true);
+    }
+    return;
+  }
+  const invite = event.target.closest("[data-revoke-invite]");
+  const member = event.target.closest("[data-revoke-player]");
+  if (!invite && !member) return;
+  if (member && !confirm("停用此成员？他的历史订单保留，未继续派发的任务将按权限变化暂停。")) return;
+  try {
+    await api.request(invite ? `/api/v1/player-invitations/${encodeURIComponent(invite.dataset.revokeInvite)}` : `/api/v1/members/${encodeURIComponent(member.dataset.revokePlayer)}`,{method:"DELETE"});
+    await refreshPlayerTeam(); toast(invite ? "邀请码已撤销" : "成员已停用");
+  } catch (error) { toast(errorText(error),true); }
+});
+
 async function acceptSession(member, csrf, expiresAt = "", persist = true) {
   await switchNetwork("");
   const context = state.context;
   state.member = member;
+  api.setMember(member.id);
   api.setCSRF(csrf);
   state.session = { member: member.id, csrf, expiresAt };
   if (persist) {
     try { saveSession(localStorage, sessionStorage, state.session, state.settings.rememberSession); }
     catch { toast("会话无法保存，请检查浏览器存储。", true); }
   }
-  $("#token").value = "";
+  for (const id of ["#token","#login-password","#login-confirm-password","#login-invitation"]) $(id).value = "";
+  state.teamMembers=[]; state.teamInvitations=[];
+  if (!member.game_id) toast("可在设置 → 玩家与团队绑定游戏 ID；管理员可生成团队邀请码。");
   $("#network").innerHTML = `<option value="">正在读取网络</option>`;
   $("#network").disabled = true;
   refreshHeader();
@@ -2265,9 +2373,10 @@ $("#login-form").addEventListener("submit", async event => {
   $("#login-button").disabled = true;
   $("#login-error").textContent = "";
   try {
-    const value = await api.request("/api/v1/session", { method: "POST", body: { token: $("#token").value.trim() }, login: true });
+    const request = loginPayload(state.loginMode, {token:$("#token").value,gameID:$("#login-game-id").value,password:$("#login-password").value,confirmPassword:$("#login-confirm-password").value,invitation:$("#login-invitation").value});
+    const value = await api.request(request.path, { method: "POST", body: request.body, login: true });
     await acceptSession(value.member, value.csrf, value.expires_at);
-  } catch (error) { $("#login-error").textContent = errorText(error); }
+  } catch (error) { $("#login-error").textContent = error?.message || "登录未完成，请核对信息。"; }
   finally { $("#login-button").disabled = false; }
 });
 $("#auth-dialog").addEventListener("cancel", event => event.preventDefault());
@@ -2276,7 +2385,7 @@ $("#logout").addEventListener("click", async () => {
   try {
     await api.request("/api/v1/session", { method: "DELETE" });
     state.stream?.close(); clearInterval(streamTimer); clearTimeout(streamRefreshTimer);
-    api.setCSRF(""); state.member = null; state.networks = [];
+    api.setCSRF(""); api.setMember(""); state.member = null; state.networks = [];
     clearSession(localStorage, sessionStorage);
     state.session = null;
     $("#network").innerHTML = `<option value="">未连接</option>`;
@@ -2559,6 +2668,7 @@ $("#settings-sections").addEventListener("click", event => {
   const button = event.target.closest("[data-settings-section]");
   if (!button) return;
   state.settingsSection = button.dataset.settingsSection;
+  if (state.settingsSection === "account") refreshPlayerTeam();
   $("#settings-sections").querySelectorAll("[data-settings-section]").forEach(item => {
     item.setAttribute("aria-selected", String(item === button));
     item.setAttribute("aria-current", String(item === button));

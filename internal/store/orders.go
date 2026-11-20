@@ -12,11 +12,11 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-const orderColumns = `o.id,o.network_id,o.member_id,o.item_id,o.quantity,o.state,o.attempt_id,o.reason,o.created_at,o.updated_at,o.expires_at,o.batch_id,o.cpu_name,o.wait_for_cpu`
+const orderColumns = `o.id,o.network_id,o.member_id,o.item_id,o.quantity,o.state,o.attempt_id,o.reason,o.created_at,o.updated_at,o.expires_at,o.batch_id,o.cpu_name,o.wait_for_cpu,o.owner_name`
 
 func scanOrder(row scanner) (protocol.Order, error) {
 	var o protocol.Order
-	err := row.Scan(&o.ID, &o.NetworkID, &o.UserID, &o.ItemID, &o.Quantity, &o.State, &o.AttemptID, &o.Reason, &o.CreatedAt, &o.UpdatedAt, &o.ExpiresAt, &o.BatchID, &o.CPUName, &o.WaitForCPU)
+	err := row.Scan(&o.ID, &o.NetworkID, &o.UserID, &o.ItemID, &o.Quantity, &o.State, &o.AttemptID, &o.Reason, &o.CreatedAt, &o.UpdatedAt, &o.ExpiresAt, &o.BatchID, &o.CPUName, &o.WaitForCPU, &o.OwnerName)
 	return o, notFound(err)
 }
 
@@ -199,6 +199,11 @@ func (s *Store) finishOrder(ctx context.Context, userID, networkID, id, state, r
 		result, err = scanOrder(tx.QueryRow(ctx, "SELECT "+orderColumns+" FROM orders o WHERE o.network_id=$1 AND o.id=$2 FOR UPDATE", networkID, id))
 		if err != nil {
 			return err
+		}
+		if !review && result.UserID != userID {
+			if err = s.RequireAdmin(ctx, userID); err != nil {
+				return err
+			}
 		}
 		if !review && result.State == "canceled" {
 			return nil

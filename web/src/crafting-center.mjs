@@ -1,4 +1,5 @@
 import { formatQuantity } from "./model.mjs";
+import { submitterName } from "./player-identity.mjs";
 
 export const jobStates = { pending:"待调度", rejected:"未通过", queued:"排队中", assigned:"已派发", computing:"计算中", running:"合成中", needs_review:"结果待确认", done:"已完成", failed:"失败", canceled:"已撤回", expired:"已过期" };
 const esc = value => String(value ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -30,7 +31,7 @@ export function craftingJobModel(model = {}, { filter = "unsettled", search = ""
   const terms = String(search).trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
   const rows = base.filter(row => {
     if (owner === "mine" && row.owner_id !== memberId) return false;
-    const haystack = [row.name, row.id, row.owner_id, row.owner_id === memberId ? "我的任务" : "", jobDisplayState(row).label,
+    const haystack = [row.name, row.id, row.owner_id, row.owner_name, row.owner_id === memberId ? "我的任务" : "", jobDisplayState(row).label,
       ...Object.keys(jobStates).filter(key => count(row.counts?.[key]) > 0n).map(key => jobStates[key])].join(" ").toLocaleLowerCase();
     return terms.every(term => haystack.includes(term));
   });
@@ -88,11 +89,11 @@ export function craftingJobsHTML(model, filter, { dateTime = String, memberId = 
   }
   return `<div class="crafting-list-columns" aria-hidden="true"><span>生产任务</span><span>条目状态</span><span>完成条目</span><span>调度状态</span><span></span></div>${model.rows.map(row => {
     const status = jobDisplayState(row);
-    return `<button class="crafting-job-row" data-job="${esc(row.id)}" aria-label="查看${esc(row.name || `生产任务 ${row.id}`)}详情"><span class="crafting-job-identity">${icon(jobAttention(row) ? "circle-alert" : "list-checks")}<span><strong>${esc(row.name || `生产任务 ${row.id}`)}</strong><small>${row.owner_id === memberId ? "我的任务" : `所有者 ${esc(row.owner_id)}`} · ${esc(dateTime(row.created_at))}</small></span></span>${jobStateCountsHTML(row)}${jobProgressHTML(row)}<span class="crafting-state" data-tone="${status.tone}"><i aria-hidden="true"></i>${status.label}</span><span class="crafting-row-arrow">${icon("chevron-right")}</span></button>`;
+    return `<button class="crafting-job-row" data-job="${esc(row.id)}" aria-label="查看${esc(row.name || `生产任务 ${row.id}`)}详情"><span class="crafting-job-identity">${icon(jobAttention(row) ? "circle-alert" : "list-checks")}<span><strong>${esc(row.name || `生产任务 ${row.id}`)}</strong><small>${row.owner_id === memberId ? `我的任务 · ${esc(submitterName(row))}` : `${esc(submitterName(row))} 下单`} · ${esc(dateTime(row.created_at))}</small></span></span>${jobStateCountsHTML(row)}${jobProgressHTML(row)}<span class="crafting-state" data-tone="${status.tone}"><i aria-hidden="true"></i>${status.label}</span><span class="crafting-row-arrow">${icon("chevron-right")}</span></button>`;
   }).join("")}`;
 }
 
-export function craftingOrdersHTML(orders, { group = "batch", itemFor, itemImage, age, dateTime } = {}) {
+export function craftingOrdersHTML(orders, { group = "batch", itemFor, itemImage, age, dateTime, member } = {}) {
   const groups = new Map();
   for (const order of orders) {
     const key = group === "cpu" ? order.cpu_name || "自动分配" : order.batch_id || `single:${order.id}`;
@@ -103,6 +104,6 @@ export function craftingOrdersHTML(orders, { group = "batch", itemFor, itemImage
     const item = itemFor(order.item_id);
     const state = order.state === "queued" && order.wait_for_cpu ? "等待指定 CPU" : jobStates[order.state] || order.state;
     const tone = ["needs_review", "failed"].includes(order.state) ? "warn" : order.state === "done" ? "ok" : ["assigned", "running", "computing"].includes(order.state) ? "active" : "idle";
-    return `<div class="crafting-order-row"><button class="crafting-order-item" data-order="${esc(order.id)}">${itemImage(item)}<span><strong>${esc(item?.label || `物品 #${order.item_id}`)}</strong><small>${esc(age(order.created_at))} · ${esc(order.id)}</small></span></button><span class="crafting-order-quantity number">× ${formatQuantity(order.quantity)}</span><span class="crafting-order-cpu">${esc(order.cpu_name || "自动分配")}</span><span class="crafting-state" data-tone="${tone}"><i aria-hidden="true"></i>${esc(state)}</span>${order.state === "queued" ? `<button class="icon-button" data-cancel="${esc(order.id)}" title="撤回未派发订单" aria-label="撤回未派发订单">${icon("x")}</button>` : `<span></span>`}</div>`;
+    return `<div class="crafting-order-row"><button class="crafting-order-item" data-order="${esc(order.id)}">${itemImage(item)}<span><strong>${esc(item?.label || `物品 #${order.item_id}`)}</strong><small>${esc(submitterName(order))} 下单 · ${esc(age(order.created_at))}</small></span></button><span class="crafting-order-quantity number">× ${formatQuantity(order.quantity)}</span><span class="crafting-order-cpu">${esc(order.cpu_name || "自动分配")}</span><span class="crafting-state" data-tone="${tone}"><i aria-hidden="true"></i>${esc(state)}</span>${order.state === "queued" && (!member || member.admin || member.id === order.user_id) ? `<button class="icon-button" data-cancel="${esc(order.id)}" title="撤回未派发订单" aria-label="撤回未派发订单">${icon("x")}</button>` : `<span></span>`}</div>`;
   }).join("")}</section>`).join("");
 }

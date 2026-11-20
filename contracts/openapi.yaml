@@ -7,6 +7,9 @@ info:
     Quantities, item IDs, revisions and sequence numbers are exact decimal strings.
     Network/member/order/session/attempt IDs are opaque strings.
     Deployment is one service instance with PostgreSQL.
+    Browser requests may send X-AE-Member with the expected authenticated member ID.
+    A mismatch returns 409 identity_changed before executing the operation, preventing
+    an old browser tab from acting as a player who signed in through another tab.
 servers:
   - url: http://127.0.0.1:8080
 security:
@@ -21,6 +24,170 @@ tags:
   - {name: Jobs}
   - {name: Bridge}
 paths:
+  /api/v1/players/register:
+    post:
+      operationId: registerPlayer
+      tags:
+      - Members
+      responses:
+        '201':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlayerSession'
+        default:
+          $ref: '#/components/responses/Error'
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlayerRegisterInput'
+  /api/v1/me/player:
+    put:
+      operationId: updatePlayerProfile
+      tags:
+      - Members
+      responses:
+        '201':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlayerSession'
+        default:
+          $ref: '#/components/responses/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlayerProfileInput'
+      parameters:
+      - $ref: '#/components/parameters/CSRF'
+      - $ref: '#/components/parameters/Origin'
+  /api/v1/player-invitations:
+    get:
+      operationId: listPlayerInvitations
+      tags:
+      - Members
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PlayerInvitation'
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      operationId: createPlayerInvitation
+      tags:
+      - Members
+      responses:
+        '201':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                - code
+                - invitation
+                properties:
+                  code:
+                    $ref: '#/components/schemas/Token'
+                  invitation:
+                    $ref: '#/components/schemas/PlayerInvitation'
+        default:
+          $ref: '#/components/responses/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+              - network_id
+              - can_craft
+              - max_uses
+              properties:
+                network_id:
+                  $ref: '#/components/schemas/ID'
+                can_craft:
+                  type: boolean
+                max_uses:
+                  type: integer
+                  minimum: 1
+                  maximum: 100
+      parameters:
+      - $ref: '#/components/parameters/CSRF'
+      - $ref: '#/components/parameters/Origin'
+  /api/v1/player-invitations/{invitation}:
+    parameters:
+    - name: invitation
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/ID'
+    delete:
+      operationId: revokePlayerInvitation
+      tags:
+      - Members
+      responses:
+        '204':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+  /api/v1/members/{member}/player:
+    parameters:
+    - name: member
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/ID'
+    put:
+      operationId: resetPlayerProfile
+      tags:
+      - Members
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Member'
+        default:
+          $ref: '#/components/responses/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+              - game_id
+              - password
+              properties:
+                game_id:
+                  type: string
+                  pattern: ^[A-Za-z0-9_]{3,16}$
+                  minLength: 3
+                  maxLength: 16
+                password:
+                  type: string
+                  minLength: 10
+                  maxLength: 256
+      parameters:
+      - $ref: '#/components/parameters/CSRF'
+      - $ref: '#/components/parameters/Origin'
   /api/v1/networks/{network}/jobs:
     parameters: [{$ref: '#/components/parameters/NetworkID'}]
     post:
@@ -171,17 +338,20 @@ paths:
       tags: [Members]
       security: []
       description: |
-        Exchange a member/admin token for an HttpOnly SameSite=Strict cookie and a CSRF token.
+        Exchange a member/admin token or player game ID and password for an HttpOnly
+        SameSite=Strict cookie and a CSRF token. Authentication modes are mutually exclusive.
         An Origin header, when supplied, must equal AE_PUBLIC_URL. Session lifetime is 24 hours.
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: false
-              required: [token]
-              properties: {token: {$ref: '#/components/schemas/Token'}}
+              oneOf:
+                - type: object
+                  additionalProperties: false
+                  required: [token]
+                  properties: {token: {$ref: '#/components/schemas/Token'}}
+                - {$ref: '#/components/schemas/PlayerLoginInput'}
       responses:
         '201':
           description: Browser session created; the ac_session cookie is scoped to /api/.
@@ -1177,6 +1347,7 @@ components:
         id: {$ref: '#/components/schemas/ID'}
         network_id: {$ref: '#/components/schemas/ID'}
         owner_id: {$ref: '#/components/schemas/ID'}
+        owner_name: {type: string}
         name: {type: string}
         manifest_digest: {type: string, pattern: '^[a-f0-9]{64}$'}
         control: {type: string, enum: [active, paused, stopped]}
@@ -1214,6 +1385,7 @@ components:
       properties:
         summary: {$ref: '#/components/schemas/ProductionJobSummary'}
         entries: {type: array, maxItems: 500, items: {$ref: '#/components/schemas/ProductionJobEntry'}}
+        activity: {type: array, maxItems: 1024, items: {$ref: '#/components/schemas/ProductionJobActivity'}}
     ProductionJobAcceptance:
       type: object
       additionalProperties: false
@@ -1336,10 +1508,129 @@ components:
       type: object
       required: [status]
       properties: {status: {type: string, enum: [ok, ready, unavailable]}}
+    PlayerLoginInput:
+      type: object
+      additionalProperties: false
+      required:
+      - game_id
+      - password
+      properties:
+        game_id:
+          type: string
+          pattern: ^[A-Za-z0-9_]{3,16}$
+          minLength: 3
+          maxLength: 16
+        password:
+          type: string
+          minLength: 1
+          maxLength: 256
+    PlayerRegisterInput:
+      type: object
+      additionalProperties: false
+      required:
+      - game_id
+      - password
+      - invitation
+      properties:
+        game_id:
+          type: string
+          pattern: ^[A-Za-z0-9_]{3,16}$
+          minLength: 3
+          maxLength: 16
+        password:
+          type: string
+          minLength: 10
+          maxLength: 256
+        invitation:
+          $ref: '#/components/schemas/Token'
+    PlayerProfileInput:
+      type: object
+      additionalProperties: false
+      required:
+      - game_id
+      properties:
+        game_id:
+          type: string
+          pattern: ^[A-Za-z0-9_]{3,16}$
+          minLength: 3
+          maxLength: 16
+        current_password:
+          type: string
+          maxLength: 256
+        password:
+          type: string
+          maxLength: 256
+    PlayerInvitation:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - network_id
+      - can_craft
+      - max_uses
+      - uses
+      - expires_at
+      - revoked
+      properties:
+        id:
+          $ref: '#/components/schemas/ID'
+        network_id:
+          $ref: '#/components/schemas/ID'
+        can_craft:
+          type: boolean
+        max_uses:
+          type: integer
+          minimum: 1
+          maximum: 100
+        uses:
+          type: integer
+          minimum: 0
+        expires_at:
+          type: string
+          format: date-time
+        revoked:
+          type: boolean
+    ProductionJobActivity:
+      type: object
+      additionalProperties: false
+      required:
+      - actor_id
+      - actor_name
+      - action
+      - created_at
+      properties:
+        actor_id:
+          $ref: '#/components/schemas/ID'
+        actor_name:
+          type: string
+        action:
+          type: string
+          enum:
+          - pause
+          - resume
+          - stop
+        created_at:
+          type: string
+          format: date-time
+    PlayerSession:
+      type: object
+      additionalProperties: false
+      required:
+      - member
+      - csrf
+      - expires_at
+      properties:
+        member:
+          $ref: '#/components/schemas/Member'
+        csrf:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
     Member:
       type: object
       required: [id, name, admin]
-      properties: {id: {$ref: '#/components/schemas/ID'}, name: {type: string}, admin: {type: boolean}}
+      properties: {id: {$ref: '#/components/schemas/ID'}, name: {type: string}, admin: {type: boolean}, game_id: {type: string}, password_login: {type: boolean}}
     Grant:
       type: object
       additionalProperties: false
@@ -1545,6 +1836,7 @@ components:
         id: {$ref: '#/components/schemas/ID'}
         network_id: {$ref: '#/components/schemas/ID'}
         user_id: {$ref: '#/components/schemas/ID'}
+        owner_name: {type: string}
         item_id: {$ref: '#/components/schemas/PositiveQuantity'}
         quantity: {$ref: '#/components/schemas/PositiveQuantity'}
         state: {$ref: '#/components/schemas/OrderState'}

@@ -11,6 +11,7 @@ export class APIError extends Error {
 
 const messages = {
   unauthorized: "会话已失效，请重新登录。",
+  identity_changed: "当前登录玩家已变化，请重新登录后使用自己的清单。",
   forbidden: "当前账号没有此操作权限。",
   capability_unavailable: "当前网络或 OC 不支持此操作。",
   capacity_exceeded: "队列已满，请稍后再提交。",
@@ -28,12 +29,15 @@ const messages = {
 
 export function createAPI(fetcher = globalThis.fetch.bind(globalThis)) {
   let csrf = "";
+  let member = "";
   return {
     setCSRF(value) { csrf = typeof value === "string" ? value : ""; },
+    setMember(value) { member = typeof value === "string" ? value : ""; },
     async request(path, { method = "GET", body, signal, login = false } = {}) {
       const mutation = method !== "GET" && method !== "HEAD";
       if (mutation && !login && !csrf) throw new APIError("会话需要重新验证。", { status: 401 });
       const headers = { Accept: "application/json" };
+      if (!login && member) headers["X-AE-Member"] = member;
       if (body !== undefined) headers["Content-Type"] = "application/json";
       if (mutation && !login) headers["X-CSRF-Token"] = csrf;
       let response;

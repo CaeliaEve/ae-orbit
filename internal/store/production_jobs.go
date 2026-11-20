@@ -27,14 +27,14 @@ type ProductionJobEntryConflictError struct {
 func (e *ProductionJobEntryConflictError) Error() string { return ErrEntryAlreadyAccepted.Error() }
 func (e *ProductionJobEntryConflictError) Unwrap() error { return ErrEntryAlreadyAccepted }
 
-const productionJobColumns = `j.id,j.network_id,j.member_id,j.name,j.manifest_digest,j.control,j.reason,j.result,j.version,j.control_version,j.total,j.counts,j.created_at,j.updated_at,j.settled_at`
+const productionJobColumns = `j.id,j.network_id,j.member_id,j.name,j.manifest_digest,j.control,j.reason,j.result,j.version,j.control_version,j.total,j.counts,j.created_at,j.updated_at,j.settled_at,j.owner_name`
 
 func scanProductionJob(row scanner) (protocol.ProductionJobSummary, error) {
 	var result protocol.ProductionJobSummary
 	var counts []byte
 	err := row.Scan(&result.ID, &result.NetworkID, &result.OwnerID, &result.Name, &result.ManifestDigest, &result.Control,
 		&result.Reason, &result.Result, &result.Version, &result.ControlVersion, &result.Total, &counts,
-		&result.CreatedAt, &result.UpdatedAt, &result.SettledAt)
+		&result.CreatedAt, &result.UpdatedAt, &result.SettledAt, &result.OwnerName)
 	if err != nil {
 		return result, notFound(err)
 	}
@@ -85,7 +85,23 @@ func productionJobDetail(ctx context.Context, tx pgx.Tx, networkID, jobID string
 		}
 		result.Entries = append(result.Entries, entry)
 	}
-	return result, rows.Err()
+	if err = rows.Err(); err != nil {
+		return result, err
+	}
+	rows.Close()
+	activity, err := tx.Query(ctx, `SELECT member_id,actor_name,action,created_at FROM production_job_actions WHERE job_id=$1 ORDER BY created_at,operation_key LIMIT 1024`, jobID)
+	if err != nil {
+		return result, err
+	}
+	defer activity.Close()
+	for activity.Next() {
+		var entry protocol.ProductionJobActivity
+		if err = activity.Scan(&entry.ActorID, &entry.ActorName, &entry.Action, &entry.CreatedAt); err != nil {
+			return result, err
+		}
+		result.Activity = append(result.Activity, entry)
+	}
+	return result, activity.Err()
 }
 
 func productionJobAcceptance(ctx context.Context, tx pgx.Tx, memberID, networkID, key string) (protocol.ProductionJobAcceptance, error) {
