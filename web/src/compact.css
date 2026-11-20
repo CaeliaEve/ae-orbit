@@ -2249,3 +2249,174 @@ body { padding: 0; background: #0a0a0b; }
   .network-service-list small { font-size: 9px; }
 }
 @media (prefers-reduced-motion: reduce) { .network-node-chevron svg { transition: none; } }
+
+/* Crafting center: open task rows, clear entry counts, and readable detail. */
+#view-orders { overflow-y: auto; scrollbar-width: thin; }
+#view-orders #jobs-panel, #view-orders #legacy-panel { display: block; flex: 0 0 auto; min-height: auto; margin: 0; padding: 0; overflow: visible; }
+#view-orders #jobs-panel[hidden], #view-orders #legacy-panel[hidden] { display: none; }
+.crafting-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex: 0 0 auto; margin-bottom: 24px; }
+.crafting-mode-tabs { display: flex; align-items: center; gap: 20px; }
+.crafting-mode-tabs button { min-height: 34px; padding: 6px 0; border: 0; border-radius: 0; background: transparent; color: #7f8997; font-size: 13px; }
+.crafting-mode-tabs button[aria-pressed="true"] { color: #edf0f5; box-shadow: inset 0 -2px #a9b5c5; }
+.crafting-heading .crafting-new { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 10px; border: 0; border-radius: 5px; background: #171a1f; font-size: 11px; }
+.crafting-new svg { width: 14px; height: 14px; }
+#crafting-overview { flex: 0 0 auto; }
+.crafting-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 20px; }
+.crafting-metric { display: grid; align-content: start; gap: 8px; min-width: 0; }
+.crafting-metric > span { color: #929ba7; font-size: 11px; }
+.crafting-metric > strong { color: #edf0f5; font-size: 28px; font-weight: 500; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.crafting-metric > strong small { margin-left: 7px; color: #7f8997; font-size: 11px; font-weight: 400; }
+.crafting-metric > p { color: #7f8997; font-size: 10px; line-height: 1.7; }
+.crafting-metric[data-tone="active"] > strong { color: #adc2df; }
+.crafting-metric[data-tone="warn"] > strong { color: #e7bf72; }
+.crafting-status { min-height: 18px; margin: 14px 0 24px; flex: 0 0 auto; color: #7f8997; font-size: 10px; line-height: 1.7; }
+.crafting-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 14px; }
+.crafting-search { display: flex; align-items: center; gap: 8px; flex: 1 1 200px; min-width: 0; min-height: 36px; padding: 0 10px; border: 1px solid transparent; border-radius: 5px; background: #14171b; }
+.crafting-search:focus-within { border-color: #7f8997; }
+.crafting-search svg { width: 14px; height: 14px; flex: 0 0 auto; color: #7f8997; }
+.crafting-search input { width: 100%; min-width: 0; min-height: 34px; padding: 6px 0; color: #dce2ea; border: 0; background: transparent; font-size: 11px; }
+.crafting-select select { min-height: 36px; padding: 0 24px 0 10px; border: 1px solid transparent; border-radius: 5px; background: #14171b; color: #a9b3bf; font-size: 11px; }
+.crafting-filter-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+.crafting-filters { display: flex; align-items: center; gap: 3px; }
+.crafting-filters button { display: flex; align-items: center; gap: 6px; min-height: 30px; padding: 0 10px; border: 0; border-radius: 4px; background: transparent; color: #929ba7; font-size: 11px; white-space: nowrap; }
+.crafting-filters button[aria-pressed="true"] { background: #252a31; color: #edf0f5; }
+.crafting-filters button span { color: #7f8997; font-size: 10px; font-variant-numeric: tabular-nums; }
+.crafting-filter-row > span { color: #7f8997; font-size: 10px; }
+.crafting-list-columns, .crafting-job-row { display: grid; grid-template-columns: minmax(220px, 1.6fr) minmax(170px, 1.25fr) minmax(130px, .9fr) 100px 14px; gap: 20px; align-items: center; }
+.crafting-list-columns { padding: 10px; font-size: 10px; color: #6f7b89; }
+.crafting-job-row { width: 100%; min-height: 84px; padding: 16px 10px; border: 0; border-bottom: 1px solid #1c2127; border-radius: 0; background: transparent; text-align: left; }
+.crafting-job-row:hover, .crafting-order-row:hover { background: #13161a; }
+.crafting-job-row:focus-visible, .crafting-order-item:focus-visible, .crafting-mode-tabs button:focus-visible { outline: 2px solid #b5c0ce; outline-offset: -2px; border-radius: 4px; }
+.crafting-job-identity { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.crafting-job-identity > svg { width: 18px; height: 18px; flex: 0 0 auto; color: #8d9bac; }
+.crafting-job-identity > span { display: grid; gap: 7px; min-width: 0; }
+.crafting-job-identity strong { color: #dce2ea; font-size: 12px; font-weight: 500; overflow-wrap: anywhere; }
+.crafting-job-identity small { color: #7f8997; font-size: 10px; line-height: 1.7; overflow-wrap: anywhere; }
+.crafting-job-row .job-counts { gap: 6px 10px; margin: 0; color: #929ba7; font-size: 10px; }
+.crafting-job-row .job-counts b, #job-dialog .job-counts b { margin-left: 3px; color: inherit; font-weight: 500; }
+.crafting-job-row .job-counts [data-state="needs_review"], .crafting-job-row .job-counts [data-state="failed"], .crafting-job-row .job-counts [data-state="rejected"], #job-dialog .job-counts :is([data-state="needs_review"],[data-state="failed"],[data-state="rejected"]) { color: #e7bf72; }
+.crafting-progress { display: grid; gap: 8px; min-width: 0; }
+.crafting-progress > span { color: #929ba7; font-size: 10px; font-variant-numeric: tabular-nums; line-height: 1.7; }
+.crafting-progress b { color: #dce2ea; font-weight: 500; }
+.crafting-progress svg { display: block; width: 100%; height: 4px; overflow: hidden; border-radius: 2px; }
+.crafting-progress-track { fill: #242a32; }
+.crafting-progress-done { fill: #70c48c; }
+.crafting-progress-active { fill: #96b3d8; }
+.crafting-progress-attention { fill: #dbb579; }
+.crafting-progress-waiting { fill: #485463; }
+.crafting-progress-ended { fill: #313942; }
+.crafting-state { display: inline-flex; align-items: center; gap: 6px; color: #929ba7; font-size: 11px; white-space: nowrap; }
+.crafting-state > i { flex: 0 0 auto; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+.crafting-state[data-tone="ok"] { color: #70c48c; }
+.crafting-state[data-tone="active"] { color: #adc2df; }
+.crafting-state[data-tone="warn"] { color: #e7bf72; }
+.crafting-row-arrow svg { display: block; width: 13px; height: 13px; color: #6f7b89; }
+.crafting-empty { display: grid; justify-items: center; align-content: center; gap: 10px; min-height: 230px; text-align: center; }
+.crafting-empty > svg { width: 26px; height: 26px; margin-bottom: 4px; color: #667486; }
+.crafting-empty strong { color: #b7c1ce; font-size: 13px; font-weight: 500; }
+.crafting-empty > span { max-width: 100%; color: #7f8997; font-size: 11px; line-height: 1.7; }
+.crafting-empty button { margin-top: 6px; min-height: 32px; padding: 0 10px; border: 0; background: #171a1f; font-size: 11px; }
+#view-orders .job-history-footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 0 6px; }
+.job-history-footer > span { color: #7f8997; font-size: 10px; }
+.job-history-footer button { min-height: 32px; font-size: 11px; }
+.crafting-recoveries { margin-bottom: 18px; padding: 12px; border-radius: 5px; background: #1c1a15; }
+.crafting-recoveries > summary { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: #d5b47c; font-size: 11px; list-style: none; cursor: pointer; }
+.crafting-recoveries > summary::-webkit-details-marker { display: none; }
+.crafting-recoveries > summary > span { display: flex; align-items: center; gap: 6px; }
+.crafting-recoveries > summary svg { width: 13px; height: 13px; flex: 0 0 auto; }
+.crafting-recoveries[open] > summary > svg { transform: rotate(180deg); }
+.crafting-recoveries .job-recovery { padding: 12px 0; border: 0; font-size: 11px; }
+.crafting-recoveries .job-recovery p { font-size: 10px; line-height: 1.7; }
+.crafting-recoveries button { min-height: 32px; font-size: 10px; }
+.crafting-order-group { margin: 0 0 22px; }
+.crafting-group-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 16px 0 6px; }
+.crafting-group-heading h3 { color: #a9b3bf; font-size: 11px; font-weight: 400; overflow-wrap: anywhere; }
+.crafting-group-heading > span { color: #7f8997; font-size: 10px; white-space: nowrap; }
+.crafting-order-columns, .crafting-order-row { display: grid; grid-template-columns: minmax(220px, 1.7fr) minmax(85px, .6fr) minmax(130px, 1fr) 120px 28px; gap: 16px; align-items: center; padding: 10px; }
+.crafting-order-columns { color: #6f7b89; font-size: 10px; }
+.crafting-order-row { min-height: 72px; border-bottom: 1px solid #1c2127; }
+.crafting-order-item { display: flex; align-items: center; gap: 12px; min-width: 0; border: 0; padding: 0; background: transparent; text-align: left; }
+.crafting-order-item > :is(.item-image, .missing-image) { width: 28px; height: 28px; min-width: 28px; border: 0; background: transparent; }
+.crafting-order-item > span:last-child { display: grid; gap: 6px; min-width: 0; }
+.crafting-order-item strong { color: #dce2ea; font-size: 12px; font-weight: 500; overflow-wrap: anywhere; }
+.crafting-order-item small { color: #7f8997; font-size: 10px; line-height: 1.7; overflow-wrap: anywhere; }
+.crafting-order-quantity { color: #c9d3df; font-size: 11px; overflow-wrap: anywhere; }
+.crafting-order-cpu { color: #929ba7; font-size: 11px; overflow-wrap: anywhere; }
+.crafting-order-row .icon-button { width: 28px; height: 28px; min-height: 28px; padding: 5px; border: 0; background: transparent; color: #7f8997; }
+.crafting-order-row .icon-button svg { width: 14px; height: 14px; }
+#job-dialog { width: min(880px, calc(100% - 32px)); max-height: calc(100dvh - 48px); overflow-y: auto; scrollbar-width: thin; }
+#job-dialog .dialog-heading { margin-bottom: 22px; }
+.crafting-detail-heading { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 14px; }
+.crafting-detail-heading h2 { font-size: 20px; color: #edf0f5; font-weight: 500; overflow-wrap: anywhere; }
+.crafting-detail-heading p { margin-top: 8px; color: #7f8997; font-size: 10px; line-height: 1.7; }
+.crafting-detail-progress { margin: 22px 0 18px; }
+.crafting-detail-progress .crafting-progress { max-width: 420px; }
+.crafting-detail-progress .job-counts { margin: 14px 0 8px; font-size: 11px; }
+.crafting-detail-progress > p { color: #7f8997; font-size: 10px; line-height: 1.7; }
+.crafting-detail-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 16px 0 26px; }
+.crafting-detail-actions button { min-height: 32px; padding: 0 10px; font-size: 11px; border: 0; border-radius: 5px; background: #22272e; }
+.crafting-detail-actions .crafting-stop { color: #d8b67e; background: #282319; }
+.crafting-detail-actions svg { width: 13px; height: 13px; }
+.crafting-entry-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.crafting-entry-heading h3 { color: #b7c1ce; font-size: 13px; font-weight: 500; }
+.crafting-entry-heading > span { color: #7f8997; font-size: 10px; }
+.crafting-detail-entry { display: grid; grid-template-columns: 32px minmax(0, 1fr) minmax(85px, .35fr) 100px; gap: 12px; align-items: center; min-height: 76px; padding: 14px 0; border-bottom: 1px solid #242a32; }
+.crafting-entry-media { display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; overflow: hidden; }
+.crafting-entry-media > :is(.item-image, .missing-image) { width: 28px; height: 28px; min-width: 28px; border: 0; background: transparent; }
+.crafting-entry-copy { display: grid; gap: 6px; min-width: 0; }
+.crafting-entry-copy > strong { color: #dce2ea; font-size: 12px; font-weight: 500; overflow-wrap: anywhere; }
+.crafting-entry-copy > small { color: #7f8997; font-size: 10px; line-height: 1.7; overflow-wrap: anywhere; }
+.crafting-entry-quantity { font-size: 12px; color: #dce2ea; overflow-wrap: anywhere; }
+.crafting-entry-copy .job-order-link { font-size: 10px; padding: 0; color: #adc2df; }
+.crafting-entry-copy .job-order-link svg { width: 12px; height: 12px; }
+.crafting-detail-identifiers { margin-top: 22px; }
+.crafting-detail-identifiers summary { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; color: #929ba7; font-size: 11px; list-style: none; cursor: pointer; }
+.crafting-detail-identifiers summary::-webkit-details-marker { display: none; }
+.crafting-detail-identifiers summary svg { width: 13px; height: 13px; }
+.crafting-detail-identifiers[open] summary svg { transform: rotate(180deg); }
+.crafting-detail-identifiers dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 20px; margin-top: 12px; }
+.crafting-detail-identifiers dt { color: #7f8997; font-size: 10px; }
+.crafting-detail-identifiers dd { margin: 5px 0 0; color: #b7c1ce; font-size: 10px; overflow-wrap: anywhere; line-height: 1.7; }
+@media (max-width: 1180px) {
+  .crafting-list-columns, .crafting-job-row { grid-template-columns: minmax(160px, 1.5fr) minmax(110px, 1fr) minmax(100px, .85fr) 95px 12px; gap: 12px; }
+  .crafting-order-columns, .crafting-order-row { grid-template-columns: minmax(160px, 1.5fr) 85px minmax(100px, 1fr) 115px 28px; gap: 12px; }
+}
+@media (max-width: 760px) {
+  .crafting-list-columns, .crafting-order-columns { display: none; }
+  .crafting-job-row { grid-template-columns: minmax(0, 1fr) auto 12px; gap: 12px; }
+  .crafting-job-identity { grid-column: 1; }
+  .crafting-job-row > .crafting-state { grid-column: 2; grid-row: 1; font-size: 10px; }
+  .crafting-row-arrow { grid-column: 3; grid-row: 1; }
+  .crafting-job-row > .job-counts { grid-column: 1 / -1; padding-left: 30px; }
+  .crafting-job-row > .crafting-progress { grid-column: 1 / -1; padding-left: 30px; }
+  .crafting-order-row { grid-template-columns: minmax(0, 1fr) auto 28px; gap: 10px; }
+  .crafting-order-item { grid-column: 1; }
+  .crafting-order-row > .crafting-state { grid-column: 2; grid-row: 1; font-size: 10px; }
+  .crafting-order-row > .icon-button { grid-column: 3; grid-row: 1; }
+  .crafting-order-quantity { grid-column: 2 / -1; grid-row: 2; }
+  .crafting-order-cpu { grid-column: 1; grid-row: 2; padding-left: 40px; font-size: 10px; }
+}
+@media (max-width: 520px) {
+  .crafting-heading { margin-bottom: 22px; }
+  .crafting-mode-tabs { gap: 16px; }
+  .crafting-mode-tabs button { font-size: 12px; }
+  .crafting-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px 14px; }
+  .crafting-metric > strong { font-size: 26px; }
+  .crafting-toolbar .crafting-search { flex-basis: 100%; }
+  .crafting-toolbar .crafting-select { flex: 1; }
+  .crafting-select select { width: 100%; min-height: 38px; }
+  .crafting-filter-row > span { margin-left: auto; }
+  .crafting-filters button { padding: 0 8px; min-height: 34px; }
+  .crafting-job-identity { gap: 8px; }
+  .crafting-job-identity > svg { width: 16px; height: 16px; }
+  .crafting-job-identity small { font-size: 9px; }
+  .crafting-job-row > .job-counts, .crafting-job-row > .crafting-progress { padding-left: 24px; }
+  #job-dialog { width: calc(100% - 20px); max-height: calc(100dvh - 24px); padding: 18px 14px; }
+  .crafting-detail-heading h2 { font-size: 18px; }
+  .crafting-detail-entry { grid-template-columns: 28px minmax(0, 1fr); gap: 8px; }
+  .crafting-entry-media { grid-column: 1; grid-row: 1; align-self: start; margin-top: 2px; }
+  .crafting-entry-copy { grid-column: 2; grid-row: 1; }
+  .crafting-detail-entry > .crafting-state { grid-column: 2; font-size: 10px; }
+  .crafting-entry-quantity { grid-column: 2; font-size: 11px; }
+  .crafting-detail-identifiers dl { grid-template-columns: 1fr; }
+}

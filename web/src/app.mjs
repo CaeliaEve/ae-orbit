@@ -15,6 +15,7 @@ import { loadOrderSnapshot } from "./orders.mjs";
 import { createJobController } from "./job-controller.mjs";
 import { isJobClaim } from "./jobs.mjs";
 import { jobListHTML, jobDetailHTML, recoveryHTML } from "./job-view.mjs";
+import { craftingJobModel, craftingOverviewHTML, craftingOrdersHTML } from "./crafting-center.mjs";
 import {
   normalizeQuantity, formatQuantity, formatCompactQuantity, storageKey, loadDraft, saveDraft, addDraft,
   updateDraft, removeDraft, completeSubmission, networkQualityLabel,
@@ -91,6 +92,7 @@ const state = {
   networkNodes: { search: "", filter: "all", role: "all", expanded: new Set() },
   activeOrderCount: 0, activeOrdersTruncated: false, detailId: "", detailGeneration: 0,
   taskMode: "jobs", jobFilter: "unsettled", jobStorageError: false,
+  crafting: { search: "", sort: "newest", owner: "all", orderSearch: "" },
   settings: loadSettings(), settingsSection: "display", session: null,
   texturePackStatus: texturePack.status(), texturePackLoading: false, texturePackError: "",
   connectionTest: { status: "idle", checkedAt: "", message: "" },
@@ -877,22 +879,42 @@ function renderJobs() {
   const model = jobs.state;
   $("#jobs-panel").hidden = state.taskMode !== "jobs";
   $("#legacy-panel").hidden = state.taskMode !== "orders";
-  $("#job-list").innerHTML = jobListHTML(model, state.jobFilter, dateTime);
-  $("#job-list").setAttribute("aria-busy", String(model.loading));
-  if (model.sync) {
-    const jobsRows = [...model.sync.jobs.values()];
-    const open = jobsRows.filter(row => !row.settled_at);
-    const attention = open.filter(row => row.control === "paused" || row.counts.needs_review !== "0" || row.counts.rejected !== "0" || row.counts.failed !== "0").length;
-    $("#jobs-summary").textContent = `${open.length} 项未完成${attention ? ` · ${attention} 项待处理` : ""}${model.loading ? " · 刷新中" : ""}`;
-  } else {
-    $("#jobs-summary").textContent = model.loading ? "正在读取任务…" : "";
+  const view = $("#view-orders"), scroll = view.scrollTop;
+  const options = { ...state.crafting, filter: state.jobFilter, memberId: state.member?.id || "" };
+  const roster = craftingJobModel(model, options);
+  patchDashboardHTML("#job-list", jobListHTML(model, state.jobFilter, dateTime, options));
+  $("#job-list").setAttribute("aria-busy", String(model.loading || model.historyLoading));
+  for (const key of ["unsettled", "attention", "history"]) $("#crafting-count-" + key).textContent = roster.known ? roster.counts[key] : "—";
+  $$("[data-job-filter]").forEach(button => button.setAttribute("aria-pressed", String(button.dataset.jobFilter === state.jobFilter)));
+  $$("[data-task-mode]").forEach(button => button.setAttribute("aria-pressed", String(button.dataset.taskMode === state.taskMode)));
+  if (state.taskMode === "jobs") {
+    patchDashboardHTML("#crafting-overview", craftingOverviewHTML(roster));
+    $("#crafting-overview").hidden = false;
+    $("#crafting-status").textContent = model.support === "unsupported" ? "后端尚不支持生产任务，新提交已禁用。"
+      : model.error ? "读取失败，保留已有任务记录。" : !roster.known ? "等待任务观测"
+      : !state.network?.online ? "OC 离线 · 已保存的生产任务等待设备恢复" : "来自后端任务记录 · 自动更新";
   }
+  $("#jobs-summary").textContent = roster.known
+    ? (state.jobFilter === "history" ? "已加载 " + roster.counts.history + " 组 · 显示 " + roster.rows.length + " 组" : "显示 " + roster.rows.length + " 组")
+    : model.loading ? "正在读取…" : "";
   const error = state.jobStorageError ? submissionStatus() : model.error ? `任务读取未完成${model.sync ? "，保留上次记录" : ""}。${model.error.status === 403 ? "当前账号无权限。" : errorText(model.error)}` : "";
   message("#jobs-message", error);
   let local;
-  try { local = jobs.local(); $("#job-recoveries").innerHTML = recoveryHTML(local, icon); }
-  catch { $("#job-recoveries").innerHTML = `<p class="error">本机生产任务记录损坏。请保留浏览器数据，勿重复提交。</p>`; }
+  try {
+    local = jobs.local();
+    const recoveries = recoveryHTML(local, icon);
+    patchDashboardHTML("#job-recoveries", recoveries);
+    const section = $("#crafting-recoveries");
+    if (section.hidden && recoveries) section.open = true;
+    section.hidden = !recoveries;
+  }
+  catch {
+    $("#crafting-recoveries").hidden = false;
+    $("#crafting-recoveries").open = true;
+    patchDashboardHTML("#job-recoveries", '<p class="error">本机生产任务记录损坏。请保留浏览器数据，勿重复提交。</p>');
+  }
   const more = $("#job-history-more");
+  $("#crafting-history-note").textContent = state.jobFilter === "history" ? "历史按批次加载，搜索仅匹配已加载记录。" : "";
   more.hidden = state.jobFilter !== "history" || model.support !== "supported" || !model.historyMore;
   more.disabled = model.historyLoading;
   more.innerHTML = `${icon("chevron-down")}${model.historyLoading ? "正在读取…" : model.historyLoaded ? "加载更多历史" : "加载历史记录"}`;
@@ -903,15 +925,22 @@ function renderJobs() {
   }
   if ($("#job-dialog").open) {
     $("#refresh-job-detail").disabled = model.detailLoading;
-    message("#job-detail-status", model.detailError ? `详情不可用。${model.detailError.status === 404 ? "记录已归档或不存在；本机意图不会解锁。" : errorText(model.detailError)}` : model.detailLoading ? "正在读取详情…" : "");
+    message("#job-detail-status", model.detailError ? `详情不可用。${model.detailError.status === 404 ? "记录已归档或不存在；本机意图不会解锁。" : errorText(model.detailError)}` : model.detailLoading && !model.detail ? "正在读取详情…" : "");
     $("#job-detail-status").dataset.error = String(!!model.detailError);
     $("#job-detail").setAttribute("aria-busy", String(model.detailLoading));
-    if (model.detail && local) $("#job-detail").innerHTML = jobDetailHTML(model.detail, local, model.detailError ? null : state.member,
-      {itemFor,itemImage,quantity:quantityHTML,dateTime,icon,controlsAvailable:!model.detailLoading && !model.detailError});
-    else $("#job-detail").innerHTML = "";
+    if (model.detail && local) {
+      const detailScroll = $("#job-dialog").scrollTop;
+      const identifiersOpen = $(".crafting-detail-identifiers", $("#job-detail"))?.open || false;
+      patchDashboardHTML("#job-detail", jobDetailHTML(model.detail, local, model.detailError ? null : state.member,
+      {itemFor,itemImage,quantity:quantityHTML,dateTime,icon,controlsAvailable:!model.detailLoading && !model.detailError}));
+      const identifiers = $(".crafting-detail-identifiers", $("#job-detail"));
+      if (identifiers) identifiers.open = identifiersOpen;
+      $("#job-dialog").scrollTop = detailScroll;
+    } else patchDashboardHTML("#job-detail", "");
   }
   renderDashboard();
   paint();
+  view.scrollTop = scroll;
 }
 
 async function refreshJobs() {
@@ -1235,12 +1264,6 @@ function renderOrders() {
     (state.orderFilter === "active" && activeStates.has(order.state)) ||
     (state.orderFilter === "attention" && attentionStates.has(order.state)) ||
     (state.orderFilter === "done" && endedStates.has(order.state)));
-  const groups = new Map();
-  for (const order of orders) {
-    const key = state.orderGroup === "cpu" ? order.cpu_name || "自动分配" : order.batch_id || `single:${order.id}`;
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(order);
-  }
   const snapshot = state.orderSnapshot;
   const limit = snapshot?.limited_states.length ? snapshot.recent_only ? " · 仅最近 200 项" : ` · ${snapshot.limited_states.map(value => stateNames[value]).join("、")}各仅最近 200 项` : "";
   $("#orders-summary").textContent = !state.network ? "尚未连接网络" : snapshot
@@ -1252,18 +1275,18 @@ function renderOrders() {
   }
   $("#order-list").setAttribute("aria-busy", String(state.ordersLoading));
   if (state.taskMode === "orders") $("#refresh-orders").disabled = state.ordersLoading;
-  const counts = orders.reduce((result, order) => {
-    result[order.state] = (result[order.state] || 0) + 1;
-    return result;
-  }, {});
-  const summary = groups.size ? `<div class="network-toolbar" aria-label="任务摘要"><span>共 ${formatQuantity(orders.length)} 项 · ${formatQuantity(groups.size)} 个${state.orderGroup === "cpu" ? " CPU 分组" : "提交批次"}</span><span class="muted">${formatQuantity(counts.queued || 0)} 排队 · ${formatQuantity((counts.running || 0) + (counts.computing || 0))} 执行中 · ${formatQuantity(counts.needs_review || 0)} 待核对</span></div>` : "";
-  const groupsHTML = groups.size ? [...groups].map(([key, rows]) => `<section class="order-group"><div class="group-heading"><h2>${state.orderGroup === "cpu" ? esc(key) : `${key.startsWith("single:") ? "单项任务" : "提交批次"} · ${esc(dateTime(rows[0].created_at))}`}</h2><span class="muted">${rows.length} 项</span></div><div class="network-table order-table"><div class="network-table-head"><span>物品</span><span>数量</span><span>CPU 策略</span><span>提交时间</span><span>状态</span><span></span></div>${rows.map(order => {
-    const item = itemFor(order.item_id);
-    const itemName = item?.label || `物品 #${order.item_id}`;
-    const status = order.state === "queued" && order.wait_for_cpu ? "等待指定 CPU" : stateNames[order.state] || order.state;
-    return `<div class="network-table-row order-table-row"><span class="network-item-cell">${itemImage(item)}<button class="task-main" data-order="${esc(order.id)}"><span class="task-title">${esc(itemName)}</span><span class="task-sub">${esc(order.id)}</span></button></span><span class="number">× ${formatQuantity(order.quantity)}</span><span>${esc(order.cpu_name || "自动分配")}</span><span class="muted">${esc(age(order.created_at))}</span><span class="task-state" data-state="${esc(order.state)}">${esc(status)}${order.state === "needs_review" ? " · 需人工核对" : ""}</span>${order.state === "queued" ? `<button class="icon-button" data-cancel="${esc(order.id)}" title="撤回未派发任务" aria-label="撤回未派发任务">${icon("x")}</button>` : `<span></span>`}</div>`;
-  }).join("")}</div></section>`).join("") : `<div class="empty">${!snapshot ? state.ordersLoading ? "正在读取任务…" : state.ordersError ? "任务读取失败" : "尚未读取任务" : `暂无${state.orderFilter === "active" ? "未完成" : state.orderFilter === "attention" ? "待处理" : ""}任务`}</div>`;
-  $("#order-list").innerHTML = summary + groupsHTML;
+  const terms = state.crafting.orderSearch.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
+  const visible = orders.filter(order => terms.every(term => [itemFor(order.item_id)?.label, itemFor(order.item_id)?.name, order.id, order.cpu_name, stateNames[order.state]].join(" ").toLocaleLowerCase().includes(term)));
+  const view = $("#view-orders"), scroll = view.scrollTop;
+  const groupsHTML = visible.length ? craftingOrdersHTML(visible, { group: state.orderGroup, itemFor, itemImage, age, dateTime })
+    : '<div class="crafting-empty">' + icon("list-checks") + '<strong>' + (!snapshot ? state.ordersLoading ? "正在读取订单…" : state.ordersError ? "订单读取失败" : "等待订单观测" : orders.length ? "没有匹配的订单" : "当前筛选没有订单") + '</strong><span>搜索仅匹配已读取的订单；可调整条件或从左侧刷新。</span></div>';
+  patchDashboardHTML("#order-list", groupsHTML);
+  if (snapshot && state.crafting.orderSearch) $("#orders-summary").textContent += " · 匹配 " + visible.length + " 项";
+  if (state.taskMode === "orders") {
+    $("#crafting-overview").hidden = true;
+    $("#crafting-status").textContent = "单项订单按提交批次或 CPU 分组 · 搜索仅匹配已读取记录";
+  }
+  view.scrollTop = scroll;
   renderDashboard();
   paint();
 }
@@ -2128,6 +2151,11 @@ async function switchNetwork(id) {
   state.inventoryLoading = false;
   state.orders = [];
   state.orderSnapshot = null;
+  state.crafting = { search: "", sort: "newest", owner: "all", orderSearch: "" };
+  $("#crafting-search").value = "";
+  $("#crafting-order-search").value = "";
+  $("#crafting-sort").value = "newest";
+  $("#crafting-owner").value = "all";
   state.ordersLoading = false;
   state.ordersError = false;
   state.activeOrderCount = 0;
@@ -2296,6 +2324,25 @@ $("#refresh-orders").addEventListener("click", () => state.taskMode === "jobs" ?
 $("#task-mode").addEventListener("change", event => {
   state.taskMode = event.target.value; renderJobs(); renderOrders();
   if (state.taskMode === "jobs") refreshJobs(); else refreshOrders();
+});
+$("#crafting-search").addEventListener("input", event => { state.crafting.search = event.target.value; renderJobs(); });
+$("#crafting-order-search").addEventListener("input", event => { state.crafting.orderSearch = event.target.value; renderOrders(); });
+$("#crafting-sort").addEventListener("change", event => { state.crafting.sort = event.target.value; renderJobs(); });
+$("#crafting-owner").addEventListener("change", event => { state.crafting.owner = event.target.value; renderJobs(); });
+$("#view-orders").addEventListener("click", event => {
+  const button = event.target.closest("button");
+  if (!button) return;
+  if (button.dataset.taskMode) {
+    $("#task-mode").value = button.dataset.taskMode;
+    $("#task-mode").dispatchEvent(new Event("change"));
+  } else if ("craftingNew" in button.dataset) {
+    showView("inventory");
+    $("#search").focus();
+  } else if ("craftingSearchReset" in button.dataset) {
+    state.crafting.search = ""; state.crafting.owner = "all";
+    $("#crafting-search").value = ""; $("#crafting-owner").value = "all";
+    renderJobs();
+  }
 });
 $("#job-history-more").addEventListener("click", () => jobs.history());
 $("#refresh-job-detail").addEventListener("click", () => refreshJobDetail());
@@ -2560,6 +2607,7 @@ document.addEventListener("click", async event => {
     state.jobFilter = data.jobFilter;
     $$("[data-job-filter]").forEach(b=>b.setAttribute("aria-pressed",String(b===button)));
     renderJobs();
+    if (state.jobFilter === "history" && !jobs.state.historyLoaded) void jobs.history();
   }
   if (data.job) showJob(data.job);
   if (data.jobReconcile || data.jobRetry) {
