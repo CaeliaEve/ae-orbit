@@ -25,9 +25,9 @@ value={name='water',amount=2,hasTag=true}
 assert(not pcall(a.read,a,fluid),'tagged fluid collapsed')
 value=nil
 assert(a:count(a:read(fluid))=='0')
-assert(not pcall(a.recipe_status,a,fluid),'resource entered recipe lookup')
+assert(not pcall(a.recipe_status,a,aspect),'essentia entered recipe lookup')
 local handle,reason,submitted=a:craft({item=a:definition(fluid),quantity='1'})
-assert(handle==nil and not submitted and reason=='resources are inventory-only')
+assert(handle==nil and not submitted and reason=='recipe lookup failed')
 assert(calls==6)
 local old=adapter.new({getItemInNetwork=function()end},{inventory_mode='exact_only',role='quantity_worker'})
 assert(not old:capabilities().fluids and not old:capabilities().essentia)

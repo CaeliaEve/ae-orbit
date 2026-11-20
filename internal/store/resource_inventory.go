@@ -66,7 +66,8 @@ func (s *Store) EnableResourceCatalog(ctx context.Context, admin, network string
 			return err
 		}
 		if _, err = tx.Exec(ctx, `INSERT INTO inventory_schedule(network_id,item_id,next_quantity_at,next_verify_at)
-		 SELECT $1,id,now(),'infinity' FROM resource_resolved ON CONFLICT(network_id,item_id) DO NOTHING`, network); err != nil {
+		 SELECT $1,x.id,now(),CASE WHEN d.kind='fluid' THEN now() ELSE 'infinity'::timestamptz END
+		 FROM resource_resolved x JOIN item_definitions d ON d.id=x.id ON CONFLICT(network_id,item_id) DO NOTHING`, network); err != nil {
 			return err
 		}
 		if tag.RowsAffected() == 0 {
@@ -150,7 +151,7 @@ func (s *Store) resourceCandidates(ctx context.Context, tx pgx.Tx, d Device, cap
 	defer rows.Close()
 	result := []cooperativeCandidate{}
 	for rows.Next() {
-		c := cooperativeCandidate{NextQuantityTurn: -1, NextResourceTurn: -1}
+		c := cooperativeCandidate{NextQuantityTurn: -1, NextResourceTurn: -1, NextFluidRecipeTurn: -1}
 		c.Kind, c.Purpose, c.ExpiresAt = "quantity", "background", time.Now().Add(30*time.Second)
 		if err = rows.Scan(&c.ID, &c.Item.Kind, &c.Item.Name, &c.Item.Damage, &c.Item.NBT, &c.Item.Label, &c.Item.Exact); err != nil {
 			return nil, err
@@ -160,10 +161,40 @@ func (s *Store) resourceCandidates(ctx context.Context, tx pgx.Tx, d Device, cap
 	return result, rows.Err()
 }
 
-func (s *Store) mergeResourceCandidates(ctx context.Context, tx pgx.Tx, d Device, caps protocol.Capabilities, items []cooperativeCandidate, turn int) ([]cooperativeCandidate, error) {
+func (s *Store) mergeResourceCandidates(ctx context.Context, tx pgx.Tx, d Device, caps protocol.Capabilities, items []cooperativeCandidate, turn, fluidTurn int) ([]cooperativeCandidate, error) {
 	resources, err := s.resourceCandidates(ctx, tx, d, caps)
 	if err != nil {
 		return nil, fmt.Errorf("resource quantity candidates: %w", err)
+	}
+	fluidRecipes, err := s.fluidRecipeCandidate(ctx, tx, d, caps)
+	if err != nil {
+		return nil, err
+	}
+	// At most one background joint read per primary packet. Alternate item and
+	// fluid recipe opportunities using the turn actually reached by dispatch.
+	itemRecipe := -1
+	for i, c := range items {
+		if c.Kind == "quantity_recipe" {
+			itemRecipe = i
+			break
+		}
+	}
+	if len(fluidRecipes) > 0 && (fluidTurn == 0 || itemRecipe < 0) {
+		if itemRecipe >= 0 {
+			items = append(items[:itemRecipe], items[itemRecipe+1:]...)
+		}
+		fluidRecipes[0].NextFluidRecipeTurn = 1
+		// Put the single recipe first; its existing four-credit cost remains intact.
+		items = append(fluidRecipes, items...)
+		filtered := resources[:0]
+		for _, c := range resources {
+			if c.ID != fluidRecipes[0].ID {
+				filtered = append(filtered, c)
+			}
+		}
+		resources = filtered
+	} else if itemRecipe >= 0 {
+		items[itemRecipe].NextFluidRecipeTurn = 0
 	}
 	if len(resources) == 0 {
 		return items, nil

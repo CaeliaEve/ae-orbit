@@ -1,4 +1,5 @@
 import { formatQuantity } from "./model.mjs";
+import { resourceUnit } from "./plain-inventory.mjs";
 import { submitterName } from "./player-identity.mjs";
 
 export const jobStates = { pending:"待调度", rejected:"未通过", queued:"排队中", assigned:"已派发", computing:"计算中", running:"合成中", needs_review:"结果待确认", done:"已完成", failed:"失败", canceled:"已撤回", expired:"已过期" };
@@ -104,6 +105,6 @@ export function craftingOrdersHTML(orders, { group = "batch", itemFor, itemImage
     const item = itemFor(order.item_id);
     const state = order.state === "queued" && order.wait_for_cpu ? "等待指定 CPU" : jobStates[order.state] || order.state;
     const tone = ["needs_review", "failed"].includes(order.state) ? "warn" : order.state === "done" ? "ok" : ["assigned", "running", "computing"].includes(order.state) ? "active" : "idle";
-    return `<div class="crafting-order-row"><button class="crafting-order-item" data-order="${esc(order.id)}">${itemImage(item)}<span><strong>${esc(item?.label || `物品 #${order.item_id}`)}</strong><small>${esc(submitterName(order))} 下单 · ${esc(age(order.created_at))}</small></span></button><span class="crafting-order-quantity number">× ${formatQuantity(order.quantity)}</span><span class="crafting-order-cpu">${esc(order.cpu_name || "自动分配")}</span><span class="crafting-state" data-tone="${tone}"><i aria-hidden="true"></i>${esc(state)}</span>${order.state === "queued" && (!member || member.admin || member.id === order.user_id) ? `<button class="icon-button" data-cancel="${esc(order.id)}" title="撤回未派发订单" aria-label="撤回未派发订单">${icon("x")}</button>` : `<span></span>`}</div>`;
+    return `<div class="crafting-order-row"><button class="crafting-order-item" data-order="${esc(order.id)}">${itemImage(item)}<span><strong>${esc(item?.label || `物品 #${order.item_id}`)}</strong><small>${esc(submitterName(order))} 下单 · ${esc(age(order.created_at))}</small></span></button><span class="crafting-order-quantity number">× ${formatQuantity(order.quantity)}${resourceUnit(item) ? ` <small>${resourceUnit(item)}</small>` : ""}</span><span class="crafting-order-cpu">${esc(order.cpu_name || "自动分配")}</span><span class="crafting-state" data-tone="${tone}"><i aria-hidden="true"></i>${esc(state)}</span>${order.state === "queued" && (!member || member.admin || member.id === order.user_id) ? `<button class="icon-button" data-cancel="${esc(order.id)}" title="撤回未派发订单" aria-label="撤回未派发订单">${icon("x")}</button>` : `<span></span>`}</div>`;
   }).join("")}</section>`).join("");
 }

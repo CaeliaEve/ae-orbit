@@ -790,7 +790,7 @@ paths:
     post:
       operationId: enableResourceInventoryProfile
       tags: [Inventory]
-      description: 'Administrator only. Idempotently add NESQL no-NBT fluid registry names and aspect tags to an existing cooperative plain profile. Counts remain unknown until authenticated quantity-only receipts. Does not reset item schedules, profile epoch or history. Dispatch requires matching fluid/essentia capabilities and disabled native enumeration/events. Resources are inventory-only.'
+      description: 'Administrator only. Idempotently add NESQL no-NBT fluid registry names and aspect tags to an existing cooperative plain profile. Counts remain unknown until authenticated receipts. Does not reset item schedules, profile epoch or history. Dispatch requires matching fluid/essentia capabilities and disabled native enumeration/events. Fluid recipes and crafting require separate primary craft_fluids support; essentia remains inventory-only.'
       parameters: [{$ref: '#/components/parameters/CSRF'}, {$ref: '#/components/parameters/Origin'}]
       responses:
         '204': {description: Resource candidates enabled}
@@ -1683,6 +1683,7 @@ components:
         events_disabled: {type: boolean, description: Native inventory event subscription was disabled before handshake.}
         quantity_refresh: {type: boolean, description: Supports the independent quantity-only refresh lane. A new boot is required to change negotiated capabilities.}
         fluids: {type: boolean, description: Supports exact getFluidInNetwork with a registry-name descriptor.}
+        craft_fluids: {type: boolean, description: 'Primary supports exact getCraftable(detail, fluid), output identity verification and mB crafting requests. Inventory-only fluid support does not authorize recipes or commands.'}
         essentia: {type: boolean, description: Supports getEssentiaInNetwork with an explicit aspect-name descriptor.}
         craft: {type: boolean}
         cpu_output: {type: boolean}

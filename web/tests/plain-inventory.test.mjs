@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { stockText, stockFreshness, inventorySummary, resourceUnit } from "../src/plain-inventory.mjs";
+import { stockText, stockFreshness, inventorySummary, resourceUnit, craftingKindSupported, craftingQuantityLabel } from "../src/plain-inventory.mjs";
 
 test("unqueried candidates are distinct from confirmed zero and stale stock", () => {
   assert.equal(stockText({ quantity: "0", quantity_known: false }), "未查询");
@@ -18,6 +18,13 @@ test("resource quantities keep units and remain unknown until observed",()=>{
   assert.match(inventorySummary(stats,()=>"","fluid"),/2,500 mB/);
   assert.match(inventorySummary(stats,()=>"","fluid"),/等待支持此类型的 OC/);
   assert.match(inventorySummary(stats,()=>"","essentia"),/目录尚未启用/);
+});
+test("fluid ordering requires separately negotiated primary crafting support",()=>{
+ const fluid={kind:"fluid"};
+ assert.equal(craftingKindSupported(fluid,{craft:true,fluids:true}),false);
+ assert.equal(craftingKindSupported(fluid,{craft:true,fluids:true,craft_fluids:true}),true);
+ assert.equal(craftingKindSupported({kind:"essentia"},{craft:true,fluids:true,craft_fluids:true}),false);
+ assert.match(craftingQuantityLabel(fluid),/1000 mB = 1 桶/);
 });
 test("summary describes export scope, partial progress and observation freshness", () => {
   assert.equal(inventorySummary(null, () => ""), "");

@@ -3,6 +3,9 @@ import { formatQuantity } from "./model.mjs";
 export const quantityKnown = item => item?.quantity_known !== false;
 export const resourceUnit = item => item?.kind === "fluid" ? "mB" : item?.kind === "essentia" ? "源质" : "";
 export const resourceLabel = kind => ({ item:"物品",fluid:"流体",essentia:"源质" }[kind] || "物品");
+export const craftingKindSupported = (item, capabilities = {}) => (item?.kind || "item") === "item"
+  || item?.kind === "fluid" && capabilities.craft_fluids === true && capabilities.fluids === true && capabilities.craft === true;
+export const craftingQuantityLabel = item => item?.kind === "fluid" ? "合成数量（mB，1000 mB = 1 桶）" : "合成数量";
 export const stockText = item => quantityKnown(item) ? `${formatQuantity(item.quantity)}${resourceUnit(item) ? " "+resourceUnit(item) : ""}` : "未查询";
 export function stockFreshness(item, age) {
   if (!quantityKnown(item)) return "等待精确查询";

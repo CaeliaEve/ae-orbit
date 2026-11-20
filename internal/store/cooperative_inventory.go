@@ -98,7 +98,7 @@ func (s *Store) IngestV2(ctx context.Context, d Device, b protocol.InventoryBatc
 			for index, id := range ids {
 				var allowed bool
 				if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM item_definitions d WHERE d.network_id=$1 AND d.id=$2 AND `+catalogScopeSQL+`
-				 AND (d.kind='item' OR (`+resourceSupportedSQL(caps)+` AND NOT $3)))`, d.NetworkID, int64(id), b.Updates[index].Craftable != nil || b.Updates[index].RecipeInconclusive).Scan(&allowed); err != nil {
+				 AND (d.kind='item' OR (`+resourceSupportedSQL(caps)+` AND (NOT $3 OR `+craftSupportedSQL(caps)+`))))`, d.NetworkID, int64(id), b.Updates[index].Craftable != nil || b.Updates[index].RecipeInconclusive).Scan(&allowed); err != nil {
 					return err
 				}
 				if !allowed {

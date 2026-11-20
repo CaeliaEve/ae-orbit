@@ -8,7 +8,7 @@ import {
 import { createAPI } from "./api.mjs";
 import { createInventoryWheel, inventoryKeyboardDirection } from "./inventory-paging.mjs";
 import { inventoryTooltipModel, paginateTooltipLines, splitTooltipLine, tooltipLineHTML, tooltipPosition } from "./inventory-tooltip.mjs";
-import { quantityKnown, stockText, stockFreshness, inventorySummary,resourceUnit,resourceLabel } from "./plain-inventory.mjs";
+import { quantityKnown, craftingKindSupported, craftingQuantityLabel, stockText, stockFreshness, inventorySummary,resourceUnit,resourceLabel } from "./plain-inventory.mjs";
 import { inventoryTrendHTML, inventoryTrendModel, loadTrendHistory, recordTrendSample, saveTrendHistory, trendStorageKey } from "./inventory-trend.mjs";
 import { dashboardTasks, dashboardInventory, dashboardTasksHTML } from "./dashboard.mjs";
 import { createHistoryController, historyChartHTML, historyChartModel, historyRecordsHTML, historyTime } from "./inventory-history.mjs";
@@ -712,7 +712,7 @@ function refreshHeader() {
   $("#inventory-resource-status").textContent = state.resourceKind === "item" ? "" : inventorySummary(state.inventoryStats,age,state.resourceKind);
   $("#inventory-resource-status").hidden = state.resourceKind === "item";
   $$("[data-resource-kind]").forEach(button=>button.setAttribute("aria-pressed",String(button.dataset.resourceKind===state.resourceKind)));
-  $("#inventory-craft-filters").hidden = state.resourceKind !== "item";
+  $("#inventory-craft-filters").hidden = state.resourceKind === "essentia";
   $("#draft-count").textContent = state.draft.entries.length;
   renderDashboard();
   renderConnectionDiagnostics();
@@ -780,7 +780,7 @@ function renderInventory() {
   tbody.innerHTML = state.items.map(item => `<tr data-resource-kind="${esc(item.kind || 'item')}" data-selected="${state.selected?.id === item.id}" data-id="${esc(item.id)}">
     <td><button class="item-button ${itemHasTexture(item) ? "" : "missing-texture"}" data-item="${esc(item.id)}" aria-label="${esc(`${catalogDisplayName(item)}，库存 ${stockText(item)}`)}">${itemImage(item)}<span class="item-copy"><span class="item-name">${esc(catalogDisplayName(item))}</span><span class="item-meta">${esc(item.name.split(":")[0])}${item.craftable ? " · 可合成" : ""}${!item.exact ? " · 身份待确认" : ""}</span></span></button></td>
     <td><span class="stock-value ${String(item.quantity).length > 12 ? "long-number" : ""} ${item.current_session ? "" : "stale"}" title="${esc(stockText(item))}">${resourceQuantityHTML(item,true)}</span><span class="freshness ${item.current_session ? "" : "stale"}">${stockFreshness(item, age)}</span></td>
-    <td><button class="icon-button" data-quick-add="${esc(item.id)}" title="加入清单" aria-label="将${esc(catalogDisplayName(item))}加入清单" ${(item.kind || "item") === "item" && item.craftable && item.exact && !state.draftBlocked && !state.busy && !state.preparing ? "" : "disabled"}>${inventoryIcon("plus")}</button></td>
+    <td><button class="icon-button" data-quick-add="${esc(item.id)}" title="加入清单" aria-label="将${esc(catalogDisplayName(item))}加入清单" ${craftingKindSupported(item, state.network?.capabilities) && item.craftable && item.exact && !state.draftBlocked && !state.busy && !state.preparing ? "" : "disabled"}>${inventoryIcon("plus")}</button></td>
   </tr>`).join("");
   $("#inventory-empty").hidden = state.items.length > 0;
   $("#inventory-empty").textContent = state.inventoryLoading ? "正在读取库存…" : !state.member ? "登录后查看库存" : !state.network ? "没有可访问的网络" : "没有匹配的物品";
@@ -840,7 +840,7 @@ function patchInventoryRows() {
     }
     const quickAdd = $("[data-quick-add]", row);
     if (quickAdd) {
-      quickAdd.disabled = !((item.kind || "item") === "item" && item.craftable && item.exact && !state.draftBlocked && !state.busy && !state.preparing);
+      quickAdd.disabled = !(craftingKindSupported(item, state.network?.capabilities) && item.craftable && item.exact && !state.draftBlocked && !state.busy && !state.preparing);
     }
   });
   $("#inventory-empty").hidden = state.items.length > 0;
@@ -897,16 +897,16 @@ function renderDetail() {
     $("#detail-panel").innerHTML = `<div class="detail-empty">${icon("boxes")}<strong>选择一个物品</strong><span>从库存网格中选择物品后，这里会显示数量、状态与合成操作。</span></div>`;
     return;
   }
-  if (item.kind === "fluid" || item.kind === "essentia") {
+  if (item.kind === "essentia") {
     $("#detail-panel").innerHTML = `<div class="detail-heading">${itemImage(item)}<div><h2>${esc(catalogDisplayName(item))}</h2><span class="muted">${resourceLabel(item.kind)}</span></div></div><span class="muted">库存数量</span><div class="detail-stock number">${resourceQuantityHTML(item)}</div><span class="item-meta">${esc(item.name)}</span><div class="detail-facts"><div class="fact"><span>库存观测</span><span>${stockFreshness(item,age)}</span></div><div class="fact"><span>查询方式</span><span>按名称精确查询</span></div></div><p class="muted resource-note">此类资源当前仅查看库存。物品、流体与源质分别统计。</p>`;
     paint();scheduleSpriteAnimation();return;
   }
-  const canAdd = (item.kind || "item") === "item" && item.craftable && item.exact && !state.draftBlocked && !state.busy && !state.preparing;
-  const reason = !item.exact ? "物品身份待确认" : !item.craftable ? "合成样板尚未确认" : "";
-  $("#detail-panel").innerHTML = `<div class="detail-heading">${itemImage(item)}<div><h2>${esc(catalogDisplayName(item))}</h2><span class="muted">${esc(item.name.split(":")[0])}</span></div></div>
-    <span class="muted">库存数量</span><div class="detail-stock number ${String(item.quantity ?? "0").length > 12 ? "long-number" : ""}">${(quantityKnown(item) ? quantityHTML(item.quantity ?? "0") : "未查询")}</div><span class="item-meta">${esc(item.name)} · ${esc(item.damage)}</span>
+  const canAdd = craftingKindSupported(item, state.network?.capabilities) && item.craftable && item.exact && !state.draftBlocked && !state.busy && !state.preparing;
+  const reason = !craftingKindSupported(item, state.network?.capabilities) ? "请更新主 OC，以启用流体配方核验和下单。" : !item.exact ? "资源身份待确认" : !item.craftable ? "合成样板尚未确认；仅核验精确配方。" : "";
+  $("#detail-panel").innerHTML = `<div class="detail-heading">${itemImage(item)}<div><h2>${esc(catalogDisplayName(item))}</h2><span class="muted">${esc(item.kind === "fluid" ? "流体 · mB" : item.name.split(":")[0])}</span></div></div>
+    <span class="muted">库存数量</span><div class="detail-stock number ${String(item.quantity ?? "0").length > 12 ? "long-number" : ""}">${resourceQuantityHTML(item)}</div><span class="item-meta">${esc(item.name)} · ${esc(item.damage)}</span>
     <div class="detail-facts"><div class="fact"><span>库存观测</span><span>${stockFreshness(item, age)}</span></div><div class="fact"><span>合成样板</span><span>${!item.craftable_observed_at ? "未确认" : item.craftable ? item.craftable_current_session ? "已确认" : "待重新核验" : "不可合成"}</span></div><div class="fact"><span>身份</span><span>${item.exact ? "精确" : "待确认"}</span></div></div>
-    <label class="field-label" for="craft-quantity">合成数量</label><div class="stepper"><button data-step="-1" title="减少数量" aria-label="减少数量">${icon("minus")}</button><input id="craft-quantity" type="text" inputmode="numeric" maxlength="19" value="${esc(state.amount)}" autocomplete="off"><button data-step="1" title="增加数量" aria-label="增加数量">${icon("plus")}</button></div>
+    <label class="field-label" for="craft-quantity">${craftingQuantityLabel(item)}</label><div class="stepper"><button data-step="-1" title="减少数量" aria-label="减少数量">${icon("minus")}</button><input id="craft-quantity" type="text" inputmode="numeric" maxlength="19" value="${esc(state.amount)}" autocomplete="off"><button data-step="1" title="增加数量" aria-label="增加数量">${icon("plus")}</button></div>
     <span class="field-label">合成 CPU</span><button class="cpu-select" id="detail-cpu" ${state.busy || state.preparing || !state.network ? "disabled" : ""} title="${cpuSelectionTitle()}"><span>${esc(state.cpuName || "自动分配")}${state.waitForCPU ? " · 等待" : ""}${!cpuSelectionSupported() ? " · 当前 OC 未启用" : ""}</span>${icon("cpu")}</button>
     <div class="detail-actions"><button class="primary wide" id="add-to-draft" ${canAdd ? "" : "disabled"}>${icon("list-plus")}加入清单</button><button class="secondary wide" id="submit-immediately" ${canAdd && jobs.state.support === "supported" && !state.busy ? "" : "disabled"}>${icon("send")}立即提交</button></div>
     <p class="draft-submitter">下单人：${esc(playerName(state.member))}</p><p id="detail-feedback" class="detail-feedback" role="status">${esc(reason || submissionStatus())}</p>`;
@@ -982,7 +982,7 @@ function renderJobs() {
       const detailScroll = $("#job-dialog").scrollTop;
       const identifiersOpen = $(".crafting-detail-identifiers", $("#job-detail"))?.open || false;
       patchDashboardHTML("#job-detail", jobDetailHTML(model.detail, local, model.detailError ? null : state.member,
-      {itemFor,itemImage,quantity:quantityHTML,dateTime,icon,controlsAvailable:!model.detailLoading && !model.detailError}));
+      {itemFor,itemImage,quantity:(amount,item)=>`${quantityHTML(amount)}${resourceUnit(item) ? ` <small>${resourceUnit(item)}</small>` : ""}`,dateTime,icon,controlsAvailable:!model.detailLoading && !model.detailError}));
       const identifiers = $(".crafting-detail-identifiers", $("#job-detail"));
       if (identifiers) identifiers.open = identifiersOpen;
       $("#job-dialog").scrollTop = detailScroll;
@@ -1040,13 +1040,13 @@ function renderDraft() {
       const editable = entry.status === "draft" && !state.busy;
       return `<div class="draft-entry" role="listitem" data-draft-id="${esc(entry.id)}" data-selected="${entry.status === "draft" && !state.unchecked.has(entry.id)}" data-status="${entry.status}">
         <div class="draft-entry-top"><input id="draft-check-${esc(entry.id)}" class="draft-check" type="checkbox" aria-label="选择${esc(label)}" data-check="${esc(entry.id)}" ${entry.status === "draft" && !state.unchecked.has(entry.id) ? "checked" : ""} ${editable ? "" : "disabled"}><span class="draft-entry-media" data-texture-key="${esc(draftTextureKey(item))}">${itemImage(item)}</span><div class="draft-entry-name"><label for="draft-check-${esc(entry.id)}" title="${esc(label)}">${esc(label)}</label><span class="draft-entry-stock" title="${esc(stockText(item))}">${esc(draftStockLabel(item))}</span></div><button class="icon-button" data-remove="${esc(entry.id)}" title="移除草稿" aria-label="移除${esc(label)}草稿" ${editable ? "" : "disabled"}>${icon("trash-2")}</button></div>
-        <div class="draft-entry-fields"><label class="draft-quantity-field"><span>合成数量</span><input class="draft-quantity" data-quantity="${esc(entry.id)}" type="text" inputmode="numeric" maxlength="19" aria-label="${esc(label)}合成数量" value="${esc(entry.quantity)}" ${editable ? "" : "disabled"}></label><div class="draft-cpu-field"><span>合成 CPU</span><button class="cpu-select" data-draft-cpu="${esc(entry.id)}" ${!editable || !cpuSelectionSupported() ? "disabled" : ""} title="${cpuSelectionTitle()}"><span>${esc(entry.cpu_name || "自动分配")}${entry.wait_for_cpu ? " · 等待" : ""}${!cpuSelectionSupported() ? " · 未启用" : ""}</span>${icon("cpu")}</button></div></div>
+        <div class="draft-entry-fields"><label class="draft-quantity-field"><span>${craftingQuantityLabel(item)}</span><input class="draft-quantity" data-quantity="${esc(entry.id)}" type="text" inputmode="numeric" maxlength="19" aria-label="${esc(label)}合成数量" value="${esc(entry.quantity)}" ${editable ? "" : "disabled"}></label><div class="draft-cpu-field"><span>合成 CPU</span><button class="cpu-select" data-draft-cpu="${esc(entry.id)}" ${!editable || !cpuSelectionSupported() ? "disabled" : ""} title="${cpuSelectionTitle()}"><span>${esc(entry.cpu_name || "自动分配")}${entry.wait_for_cpu ? " · 等待" : ""}${!cpuSelectionSupported() ? " · 未启用" : ""}</span>${icon("cpu")}</button></div></div>
         ${entry.status === "draft" && (entry.cpu_name || entry.wait_for_cpu) ? `<button class="text-button draft-reset-cpu" data-reset-cpu="${esc(entry.id)}" ${state.busy ? "disabled" : ""}>恢复自动分配</button>` : ""}
         ${entry.status !== "draft" || entry.error ? `<p class="draft-note" data-status="${entry.status}">${entry.status === "submitting" ? "正在提交" : entry.status === "uncertain" ? "受理结果待核对 · 此条目已锁定" : esc(entry.error)}</p>` : ""}
         ${entry.status === "uncertain" ? isJobClaim(entry) ? `<button class="secondary wide" data-job-reconcile="${esc(entry.batch_id.slice(4))}">${icon("refresh-cw")}核对原生产任务</button>` : `<button class="secondary wide" data-reconcile="${esc(entry.id)}">${icon("refresh-cw")}核对原单项订单</button>` : ""}
       </div>`;
     }).join("")}</div>
-    <div class="draft-submit"><p class="draft-submitter">以 <strong>${esc(playerName(state.member))}</strong> 的身份提交</p><div class="draft-total"><span>已选 <strong>${summary.selected}</strong> 项</span><span title="所选条目的合成数量合计">共 <strong class="number">${quantityHTML(summary.quantity)}</strong> 件</span></div><button class="primary" id="submit-draft" ${chosen.length && !state.busy && jobs.state.support === "supported" ? "" : "disabled"}>${icon("send")}${state.busy ? "正在提交生产任务" : `提交 ${chosen.length} 项`}</button><p class="draft-note">${esc(submissionStatus() || "提交后可在合成中心查看进度")}</p></div>`
+    <div class="draft-submit"><p class="draft-submitter">以 <strong>${esc(playerName(state.member))}</strong> 的身份提交</p><div class="draft-total"><span>已选 <strong>${summary.selected}</strong> 项</span><span title="所选条目的合成数量合计">${summary.quantityByKind ? Object.entries(summary.quantityByKind).map(([kind,amount])=>`<strong class="number">${quantityHTML(amount)}</strong> ${kind === "fluid" ? "mB" : "件"}`).join(" · ") : `共 <strong class="number">${quantityHTML(summary.quantity)}</strong> 件`}</span></div><button class="primary" id="submit-draft" ${chosen.length && !state.busy && jobs.state.support === "supported" ? "" : "disabled"}>${icon("send")}${state.busy ? "正在提交生产任务" : `提交 ${chosen.length} 项`}</button><p class="draft-note">${esc(submissionStatus() || "提交后可在合成中心查看进度")}</p></div>`
     : `<div class="draft-empty">${icon("list-plus")}<strong>清单还是空的</strong><span>点击物品右上角的 +，或在物品详情中加入清单</span></div>`;
   const checkAll = $("#draft-check-all", panel);
   if (checkAll) checkAll.indeterminate = summary.selected > 0 && summary.selected < summary.editable;
@@ -1065,7 +1065,7 @@ function draftTextureKey(item) {
 
 function draftStockLabel(item) {
   if (!quantityKnown(item)) return "库存待查询";
-  return `库存 ${formatCompactQuantity(item.quantity)}${item.current_session ? "" : " · 待同步"}`;
+    return `库存 ${formatCompactQuantity(item.quantity)}${resourceUnit(item) ? ` ${resourceUnit(item)}` : ""}${item.current_session ? "" : " · 待同步"}`;
 }
 
 function patchDraftAppearance() {
@@ -1146,7 +1146,7 @@ async function changeDraft(transform, key = state.draftKey) {
 
 async function addItem(item, value, immediately = false) {
   if (!item || state.busy || state.preparing) return;
-  if (item.kind && item.kind!=="item") {toast("此类资源当前仅支持查看库存。",true);return;}
+  if (!craftingKindSupported(item,state.network?.capabilities)) {toast(item.kind === "fluid" ? "请先更新主 OC，启用流体下单。" : "此类资源当前仅支持查看库存。",true);return;}
   let quantity;
   try { quantity = normalizeQuantity(value, maximum()); }
   catch { message("#detail-feedback", `请输入 1 至 ${formatQuantity(maximum())} 的整数。`); return; }
@@ -1425,7 +1425,7 @@ function showOrder(id) {
 
 function renderOrderDetail(order, history) {
   const item = itemFor(order.item_id);
-  $("#order-facts").innerHTML = `<div class="detail-heading">${itemImage(item)}<h2>${esc(item?.label || `物品 #${order.item_id}`)}</h2></div><div class="order-detail-facts"><div class="fact"><span>数量</span><span class="number">${formatQuantity(order.quantity)}</span></div><div class="fact"><span>状态</span><span>${esc(stateNames[order.state] || order.state)}</span></div><div class="fact"><span>CPU 策略</span><span>${esc(order.cpu_name || "自动分配")}</span></div><div class="fact"><span>下单人</span><span>${esc(submitterName(order))}</span></div><div class="fact"><span>提交时间</span><span>${esc(dateTime(order.created_at))}</span></div><div class="fact"><span>过期时间</span><span>${esc(dateTime(order.expires_at))}</span></div></div>${order.reason ? `<p class="error">${esc(order.reason)}</p>` : ""}`;
+  $("#order-facts").innerHTML = `<div class="detail-heading">${itemImage(item)}<h2>${esc(item?.label || `物品 #${order.item_id}`)}</h2></div><div class="order-detail-facts"><div class="fact"><span>数量</span><span class="number">${formatQuantity(order.quantity)} ${resourceUnit(item)}</span></div><div class="fact"><span>状态</span><span>${esc(stateNames[order.state] || order.state)}</span></div><div class="fact"><span>CPU 策略</span><span>${esc(order.cpu_name || "自动分配")}</span></div><div class="fact"><span>下单人</span><span>${esc(submitterName(order))}</span></div><div class="fact"><span>提交时间</span><span>${esc(dateTime(order.created_at))}</span></div><div class="fact"><span>过期时间</span><span>${esc(dateTime(order.expires_at))}</span></div></div>${order.reason ? `<p class="error">${esc(order.reason)}</p>` : ""}`;
   $("#order-actions").innerHTML = order.state === "queued" && (state.member?.admin || state.member?.id === order.user_id) ? `<div class="order-actions"><button class="secondary" data-cancel-detail="${esc(order.id)}">${icon("x")}撤回未派发任务</button></div>` : "";
   const review = $("#order-review");
   if (order.state === "needs_review" && state.member?.admin) {
@@ -2770,12 +2770,12 @@ document.addEventListener("click", async event => {
   }
   if (data.item) {
     hideInventoryHover();
-    state.selected = state.itemCache.get(data.item); state.amount = "1";
+    state.selected = state.itemCache.get(data.item); state.amount = state.selected?.kind === "fluid" ? "1000" : "1";
     renderDetail();
     $$("tr[data-id]").forEach(row => row.dataset.selected = String(row.dataset.id === data.item));
     openInspector("detail");
   }
-  if (data.quickAdd) { const item = state.itemCache.get(data.quickAdd); if (item) await addItem(item, "1"); }
+  if (data.quickAdd) { const item = state.itemCache.get(data.quickAdd); if (item) await addItem(item, item.kind === "fluid" ? "1000" : "1"); }
   if (data.step) {
     try { state.amount = (BigInt($("#craft-quantity").value || 1) + BigInt(data.step)).toString(); state.amount = normalizeQuantity(state.amount, maximum()); }
     catch { state.amount = data.step === "-1" ? "1" : String(maximum()); }

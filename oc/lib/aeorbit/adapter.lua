@@ -53,7 +53,7 @@ function M.new(me,config)
     end
     return {inventory=true,craft=M.has_method(me,"getCraftable"),cpu_output=M.has_method(me,"getCpus"),
       cpu_selection=M.has_method(me,"getCraftable") and M.has_method(me,"getCpus"),
-      exact_quantities=true,quantity_refresh=true,fluids=fluids,essentia=essentia,max_craft_quantity=quantity.maximum(),
+      exact_quantities=true,quantity_refresh=true,fluids=fluids,essentia=essentia,craft_fluids=fluids and M.has_method(me,"getCraftable"),max_craft_quantity=quantity.maximum(),
       enumeration=exact_only and "exact_only" or "volatile_iterator"}
   end
   function adapter:key(raw)
@@ -141,13 +141,16 @@ function M.new(me,config)
     return quantity.from_number(raw.size)
   end
   function adapter:_recipe(detail)
-    local available,craftable=pcall(me.getCraftable,detail,"item")
+    local kind=detail.kind or "item"
+    if kind~="item" and kind~="fluid" then return nil,"resource recipe type is unsupported" end
+    local request=kind=="fluid" and {name=detail.name,amount=0,size=1} or detail
+    local available,craftable=pcall(me.getCraftable,request,kind)
     if not available then cancel.rethrow(craftable) end
     if not available then return nil,"recipe lookup failed" end
     if craftable==nil then
       -- An empty exact lookup does not establish that a recipe is absent.
       -- Both filtered fallbacks can rebuild the full native storage list.
-      if exact_only then return nil,"recipe could not be confirmed in exact-only mode" end
+      if exact_only or kind=="fluid" then return nil,"recipe could not be confirmed in exact-only mode" end
       if not M.has_method(me,"getCraftables") then return nil,"recipe lookup unavailable" end
       -- Filter inside OC before results enter Lua; never request the full
       -- recipe array. The native method may still walk the AE storage list.
@@ -168,13 +171,17 @@ function M.new(me,config)
     local matches,stack=pcall(function() return craftable.getStack() end)
     if not matches then cancel.rethrow(stack) end
     if not matches then return nil,"recipe identity could not be verified" end
+    if kind=="fluid" then
+      if type(stack)~="table" or stack.amount==nil or (stack.kind~=nil and stack.kind~="fluid") then return nil,"recipe output identity differs" end
+      stack={kind="fluid",name=stack.name,damage=stack.damage,hasTag=stack.hasTag,tag=stack.tag}
+    end
     local identity_ok,key=pcall(self.key,self,stack)
     if not identity_ok then cancel.rethrow(key) end
     if not identity_ok or key~=self:key(detail) then return nil,"recipe output identity differs" end
     return craftable
   end
   function adapter:recipe_status(raw)
-    assert(raw.kind==nil or raw.kind=="item","adapter: resources are inventory-only")
+    assert(raw.kind==nil or raw.kind=="item" or raw.kind=="fluid","adapter: resource recipe type is unsupported")
     local detail=self:descriptor(raw)
     local recipe,reason=self:_recipe(detail)
     if reason=="recipe NBT encoding could not be verified" and M.has_method(me,"getItemsInNetwork") then
@@ -194,7 +201,7 @@ function M.new(me,config)
     return recipe~=nil
   end
   function adapter:craft(command)
-    if command.item.kind~="item" then return nil,"resources are inventory-only",false end
+    if command.item.kind~="item" and command.item.kind~="fluid" then return nil,"resources are inventory-only",false end
     if command.cpu_name~=nil and type(command.cpu_name)~="string" then
       return nil,"invalid CPU target",false
     end

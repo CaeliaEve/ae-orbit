@@ -50,6 +50,7 @@ type Definition struct {
 }
 
 type Capabilities struct {
+	CraftFluids        bool     `json:"craft_fluids,omitempty"`
 	Fluids             bool     `json:"fluids,omitempty"`
 	Essentia           bool     `json:"essentia,omitempty"`
 	NativeScanDisabled bool     `json:"native_scan_disabled,omitempty"`
