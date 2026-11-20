@@ -8,10 +8,14 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"sort"
 	"strconv"
+	"sync"
 	"unicode/utf16"
 )
+
+var typedEncoders = sync.Pool{New: func() any { writer, _ := gzip.NewWriterLevel(io.Discard, gzip.BestSpeed); return writer }}
 
 // EncodeTypedJSON preserves NESQL's tag types and float bit patterns. Browser
 // JSON numbers are never used for integers or 64-bit values.
@@ -222,7 +226,9 @@ func EncodeTypedJSON(data []byte) ([]byte, error) {
 		return nil, fmt.Errorf("NBT: root must be a bounded compound")
 	}
 	var compressed bytes.Buffer
-	zip := gzip.NewWriter(&compressed)
+	zip := typedEncoders.Get().(*gzip.Writer)
+	zip.Reset(&compressed)
+	defer func() { zip.Reset(io.Discard); typedEncoders.Put(zip) }()
 	if _, err = zip.Write(out.Bytes()); err != nil {
 		return nil, err
 	}
