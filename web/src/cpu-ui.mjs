@@ -22,8 +22,8 @@ export function cpuSelectionState(cpu, cpus = [], supported = false) {
 
 export function cpuOutputText(cpu) {
   if (cpu?.output) {
-    const label = cpu.output.label || cpu.output.name || "未知产物";
-    return `最终产物：${label} × ${formatQuantity(cpu.output.quantity)}`;
+    const label = cpu.output.catalog?.localized_name || cpu.output.label || cpu.output.name || "未知产物";
+    return `最终产物：${label} × ${formatQuantity(cpu.output.quantity)}${cpu.output.kind === "fluid" ? " mB" : cpu.output.kind === "essentia" ? " 源质" : ""}`;
   }
   const reason = typeof cpu?.output_unavailable === "string" ? cpu.output_unavailable.trim() : "";
   const normalized = reason.toLowerCase();
@@ -78,7 +78,7 @@ export function cpuMonitorModel(cpus = [], { search = "", filter = "all", sort =
   const tokens = String(search).normalize("NFKC").toLocaleLowerCase().trim().split(/\s+/).filter(Boolean);
   const visible = rows.filter(row => {
     if (filter === "busy" && !row.cpu.busy || filter === "idle" && row.cpu.busy || filter === "output" && !row.cpu.output) return false;
-    const text = [row.name, row.cpu.id, row.cpu.output?.label, row.cpu.output?.name].join(" ").normalize("NFKC").toLocaleLowerCase();
+    const text = [row.name, row.cpu.id, row.cpu.output?.catalog?.localized_name, row.cpu.output?.label, row.cpu.output?.name].join(" ").normalize("NFKC").toLocaleLowerCase();
     return tokens.every(token => text.includes(token));
   });
   visible.sort((a, b) => {

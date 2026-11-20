@@ -227,6 +227,7 @@ function refreshTexturePackState() {
   renderInventory();
   renderDetail();
   patchDraftAppearance();
+  renderCPUList();
   hideInventoryHover();
 }
 
@@ -497,7 +498,9 @@ function animateSpriteImages(timestamp) {
   const elements = $$(".item-image-sprite");
   if (!elements.length) return;
   for (const element of elements) {
-    const item = itemFor(element.dataset.spriteItem);
+    const spriteID = element.dataset.spriteItem;
+    const cpu = spriteID?.startsWith("cpu:") ? state.cpus.cpus?.find(cpu => `cpu:${cpu.id}` === spriteID) : null;
+    const item = cpu ? cpu.output : itemFor(spriteID);
     const animation = catalogAnimation(item);
     if (!animation) continue;
     const selected = animationFrameAt(animation, timestamp);
@@ -1257,7 +1260,8 @@ function renderCPUList(model = cpuMonitorModel(state.cpus.cpus || [], state.cpuM
   const list = $("#cpu-list"), scroll = list.scrollTop;
   const active = document.activeElement?.closest(".cpu-monitor-row");
   const activeKey = active && list.contains(active) ? active.dataset.cpuKey : null;
-  list.innerHTML = cpuMonitorListHTML(model, { connected: !!state.network, supported: state.network?.capabilities?.cpu_selection === true, truncated: state.cpus.truncated, expanded: state.cpuMonitor.expanded });
+  list.innerHTML = cpuMonitorListHTML(model, { connected: !!state.network, supported: state.network?.capabilities?.cpu_selection === true, truncated: state.cpus.truncated, expanded: state.cpuMonitor.expanded,
+    outputImage: (output,cpu) => itemImage({...output,id:`cpu:${cpu.id}`,kind:output.has_tag === false && Number.isInteger(output.damage) ? output.kind : "unknown"}) });
   list.scrollTop = scroll;
   if (activeKey) $$(".cpu-monitor-row", list).find(row => row.dataset.cpuKey === activeKey)?.querySelector("summary")?.focus({ preventScroll: true });
   $("#cpu-monitor-count").textContent = model.total ? `${model.visible.length} / ${model.total} 台` : "";

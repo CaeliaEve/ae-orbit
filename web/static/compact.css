@@ -1841,6 +1841,9 @@ body { padding: 0; background: #0a0a0b; }
 .cpu-monitor-output { display: flex; align-items: center; gap: 8px; min-width: 0; color: #7f8995; font-size: 11px; }
 .cpu-monitor-output > svg { width: 16px; height: 16px; flex: 0 0 auto; }
 .cpu-monitor-output > span { display: grid; min-width: 0; gap: 3px; }
+.cpu-monitor-output > .cpu-output-media { display: flex; align-items: center; justify-content: center; flex: 0 0 28px; width: 28px; height: 28px; overflow: hidden; }
+#cpu-list .cpu-output-media > :is(.item-image, .missing-image) { width: 28px; height: 28px; min-width: 28px; border: 0; background: transparent; image-rendering: pixelated; }
+.cpu-output-media svg { width: 18px; height: 18px; }
 .cpu-monitor-output strong { color: #dce1e7; font-weight: 500; font-size: 12px; overflow-wrap: anywhere; }
 .cpu-monitor-output small { color: #a0aab5; font-size: 11px; font-variant-numeric: tabular-nums; }
 .cpu-monitor-expand { display: grid; place-items: center; color: #7f8995; }

@@ -187,6 +187,12 @@ func (p Poll) validate(maxCPUs, maxReports int) error {
 			if c.Output != nil && (!textOK(c.Output.Name, 0, 256) || !textOK(c.Output.Label, 0, 512) || c.Output.Quantity < 0) {
 				return fmt.Errorf("invalid CPU output")
 			}
+			if o := c.Output; o != nil {
+				if o.Kind != "" && o.Kind != "item" && o.Kind != "fluid" && o.Kind != "essentia" ||
+					o.Damage != nil && (*o.Damage < 0 || *o.Damage > 2147483647 || o.Kind != "" && o.Kind != "item" && *o.Damage != 0) || o.Catalog != nil {
+					return fmt.Errorf("invalid CPU output identity")
+				}
+			}
 		}
 	}
 	if p.Health != nil {

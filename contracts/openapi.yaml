@@ -708,6 +708,25 @@ paths:
             image/png: {schema: {type: string, format: binary}}
         '304': {description: ETag matched; response has no body.}
         default: {$ref: '#/components/responses/Error'}
+  /api/v1/networks/{network}/catalog/cpus/{cpu}/image:
+    parameters:
+      - {$ref: '#/components/parameters/NetworkID'}
+      - {name: cpu, in: path, required: true, schema: {type: string}, description: Catalog record key supplied by the CPU output response.}
+      - {name: v, in: query, required: true, schema: {type: string}, description: Current catalog image content key.}
+    get:
+      operationId: getCPUOutputImage
+      tags: [Inventory]
+      description: Returns a verified catalog image for a resource present in the authorized network's current CPU output snapshot; does not read the game or create inventory identities.
+      responses:
+        '200':
+          description: CPU output texture.
+          headers:
+            ETag: {schema: {type: string}}
+            Cache-Control: {schema: {type: string}}
+          content:
+            image/png: {schema: {type: string, format: binary}}
+        '304': {description: ETag matched.}
+        default: {$ref: '#/components/responses/Error'}
   /api/v1/networks/{network}/items/refresh:
     parameters: [{$ref: '#/components/parameters/NetworkID'}]
     post:
@@ -1823,7 +1842,17 @@ components:
       type: object
       additionalProperties: false
       required: [name, label, quantity]
-      properties: {name: {type: string, maxLength: 256}, label: {type: string, maxLength: 512}, quantity: {$ref: '#/components/schemas/Quantity'}}
+      properties:
+        name: {type: string, maxLength: 256}
+        label: {type: string, maxLength: 512}
+        quantity: {$ref: '#/components/schemas/Quantity'}
+        kind: {type: string, enum: [item, fluid, essentia], description: Optional observed resource type; missing in older OC snapshots.}
+        damage: {type: integer, minimum: 0, maximum: 2147483647, description: Optional observed item metadata; omission does not imply zero.}
+        has_tag: {type: boolean, description: Optional observed NBT presence; the tag payload is never uploaded with CPU output.}
+        catalog:
+          allOf: [{$ref: '#/components/schemas/CatalogItem'}]
+          readOnly: true
+          description: Server resolved visual metadata; bridge uploads must not provide it.
     CPU:
       type: object
       additionalProperties: false

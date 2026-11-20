@@ -272,9 +272,13 @@ type ItemRefresh struct {
 }
 
 type Stack struct {
-	Name     string   `json:"name"`
-	Label    string   `json:"label"`
-	Quantity Quantity `json:"quantity"`
+	Name     string       `json:"name"`
+	Label    string       `json:"label"`
+	Quantity Quantity     `json:"quantity"`
+	Kind     string       `json:"kind,omitempty"`
+	Damage   *int         `json:"damage,omitempty"`
+	HasTag   *bool        `json:"has_tag,omitempty"`
+	Catalog  *CatalogItem `json:"catalog,omitempty"`
 }
 
 type CPU struct {

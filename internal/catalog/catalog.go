@@ -101,6 +101,7 @@ type Catalog struct {
 	sourceAssetPaths map[string]string
 	sourceAssetMeta  map[string]assetMeta
 	sourceTexts      map[string]map[string]string
+	cpuOutputs       map[string][]cpuOutputMatch
 }
 
 // Open loads a normalized catalog directory. An empty root disables catalog
@@ -158,6 +159,7 @@ func Open(root string) (*Catalog, error) {
 			catalog.byImage[item.ImagePath] = struct{}{}
 		}
 	}
+	catalog.indexCPUOutputs()
 	imageFile, err := os.Open(filepath.Join(root, "image.zip"))
 	if err != nil {
 		// Metadata-only catalogs are useful during an import. Keep the catalog
@@ -456,6 +458,7 @@ func openElysiumSource(root string, manifestBytes []byte) (*Catalog, error) {
 	if err := source.readResources(aspectFiles, "essentia"); err != nil {
 		return nil, err
 	}
+	source.indexCPUOutputs()
 	return source, nil
 }
 

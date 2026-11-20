@@ -39,3 +39,18 @@ test("monitor empty states distinguish missing observations from empty filters",
   assert.match(cpuMonitorListHTML(model), /没有匹配的 CPU/);
   assert.match(cpuMonitorListHTML(model), /data-cpu-monitor-reset/);
 });
+
+test("CPU output textures use catalog names, preserve fluid units and escape text", () => {
+  const cpus = [{id:"1",name:"流体 CPU",busy:true,storage:"4096",coprocessors:1,
+    output:{kind:"fluid",name:"water",label:"Water",quantity:"1000",catalog:{localized_name:'水 <script>',image_url:"/verified.png"}}},
+    {id:"2",name:"空闲 CPU",busy:false,storage:"4096",coprocessors:1}];
+  const calls=[];
+  const html=cpuMonitorListHTML(cpuMonitorModel(cpus),{outputImage:(output,cpu)=>{calls.push(cpu.id);return '<img class="item-image" src="/verified.png" alt="">';}});
+  assert.deepEqual(calls,["1"]);
+  assert.match(html,/cpu-output-media/);
+  assert.match(html,/src="\/verified.png"/);
+  assert.match(html,/水 &lt;script&gt;/);
+  assert.match(html,/1,000 mB/);
+  assert.doesNotMatch(html,/<script>/);
+  assert.equal(cpuMonitorModel(cpus,{search:"水"}).visible.length,1);
+});

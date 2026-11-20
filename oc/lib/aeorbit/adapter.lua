@@ -275,9 +275,24 @@ function M.new(me,config)
         local ok,output,reason=pcall(function() return raw.cpu.finalOutput() end)
         if not ok then cancel.rethrow(output) end
         if ok and type(output)=="table" then
-          local precise,count=pcall(self.count,self,output)
+          local precise,count=pcall(self.count,self,{size=output.size or output.amount})
           if not precise then cancel.rethrow(count) end
-          if precise then cpu.output={name=tostring(output.name or ""):sub(1,256),label=tostring(output.label or ""):sub(1,512),quantity=count}
+          if precise then
+            cpu.output={name=tostring(output.name or ""):sub(1,256),label=tostring(output.label or ""):sub(1,512),quantity=count}
+            -- finalOutput already supplies this descriptor; retain only small
+            -- visual identity fields, never NBT payloads or another ME query.
+            local kind=output.kind
+            if kind==nil then
+              if output.damage~=nil then kind="item"
+              elseif output.amount~=nil and type(output.hasTag)=="boolean" then kind="fluid" end
+            end
+            if kind=="item" or kind=="fluid" or kind=="essentia" then
+              cpu.output.kind=kind
+              if kind=="item" and type(output.damage)=="number" and output.damage%1==0 and output.damage>=0 and output.damage<=2147483647 then cpu.output.damage=output.damage end
+              local tag=output.hasTag
+              if tag==true or tag==1 or output.tag~=nil then cpu.output.has_tag=true
+              elseif tag==false or tag==0 then cpu.output.has_tag=false end
+            end
           else cpu.output_unavailable="quantity precision unavailable" end
         else cpu.output_unavailable=ok and tostring(reason or "output unavailable"):sub(1,256) or "monitor unavailable" end
       elseif cpu.busy then cpu.output_unavailable="monitor unavailable" end

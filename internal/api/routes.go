@@ -154,6 +154,7 @@ func (s *Server) routes() {
 		respondInventory(w, r, value)
 	}))
 	s.mux.HandleFunc("GET /api/v1/networks/{network}/catalog/items/{item}/image", s.user(s.catalogImage))
+	s.mux.HandleFunc("GET /api/v1/networks/{network}/catalog/cpus/{cpu}/image", s.user(s.cpuOutputImage))
 	s.mux.HandleFunc("GET /api/v1/networks/{network}/items/lookup", s.user(s.lookupItems))
 	s.mux.HandleFunc("GET /api/v1/networks/{network}/inventory-history", s.user(s.inventoryHistorySeries))
 	s.mux.HandleFunc("GET /api/v1/networks/{network}/inventory-history/records", s.user(s.inventoryHistoryRecords))
@@ -182,6 +183,7 @@ func (s *Server) routes() {
 			fail(w, err)
 			return
 		}
+		s.enrichCPUOutputs(r.PathValue("network"), value.CPUs)
 		respond(w, 200, value)
 	}))
 	s.mux.HandleFunc("POST /api/v1/networks/{network}/orders", s.user(func(w http.ResponseWriter, r *http.Request, m protocol.Member) {
