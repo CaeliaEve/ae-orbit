@@ -12,6 +12,15 @@ import (
 )
 
 func (s *Server) enableVariants(w http.ResponseWriter, r *http.Request, member protocol.Member) {
+	if !member.Admin {
+		fail(w, store.ErrForbidden)
+		return
+	}
+	if !s.variantImport.TryLock() {
+		fail(w, store.ErrCapacity)
+		return
+	}
+	defer s.variantImport.Unlock()
 	var input struct{}
 	if err := readJSON(w, r, &input, 1024); err != nil {
 		fail(w, err)

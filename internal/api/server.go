@@ -48,6 +48,7 @@ type Server struct {
 	performance    httpMetrics
 	eventMetrics   streamMetrics
 	playerLogin    loginLimiter
+	variantImport  sync.Mutex
 }
 
 func New(db *store.Store, options Options) *Server {
@@ -101,8 +102,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// Registering an entire immutable export is a bounded administrator
 		// operation. Ordinary inventory and bridge requests retain their budget.
 		_, pattern := s.mux.Handler(r)
-		if (pattern == "POST /api/v1/networks/{network}/inventory-profile/nesql-plain" || pattern == "POST /api/v1/networks/{network}/inventory-profile/variants") && budget < time.Minute {
+		if pattern == "POST /api/v1/networks/{network}/inventory-profile/nesql-plain" && budget < time.Minute {
 			budget = time.Minute
+		}
+		if pattern == "POST /api/v1/networks/{network}/inventory-profile/variants" && budget < 3*time.Minute {
+			budget = 3 * time.Minute
 		}
 		if pattern == "GET /api/v1/networks/{network}/inventory-history/export" && budget < 5*time.Minute {
 			budget = 5 * time.Minute
