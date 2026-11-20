@@ -26,6 +26,13 @@ test("fluid ordering requires separately negotiated primary crafting support",()
  assert.equal(craftingKindSupported({kind:"essentia"},{craft:true,fluids:true,craft_fluids:true}),false);
  assert.match(craftingQuantityLabel(fluid),/1000 mB = 1 桶/);
 });
+test("group totals retain exact quantities and only concrete NBT identities can craft",()=>{
+ const item={kind:'item',has_tag:true};
+ assert.equal(craftingKindSupported(item,{craft:true}),false);
+ assert.equal(craftingKindSupported(item,{exact_nbt:true}),true);
+ assert.equal(craftingKindSupported({...item,group:{quantity:'12'}},{exact_nbt:true}),false);
+ assert.equal(stockText({quantity:'0',group:{quantity:'18446744073709551614'}}),'18,446,744,073,709,551,614');
+});
 test("summary describes export scope, partial progress and observation freshness", () => {
   assert.equal(inventorySummary(null, () => ""), "");
   const summary = inventorySummary({ scope: "nesql_plain", candidates: "53689", checked: "12", entries: "3", total_quantity: "9007199254740993", last_observation: "recent", pending: "1" }, () => "20分钟前");

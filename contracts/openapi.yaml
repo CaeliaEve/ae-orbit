@@ -235,6 +235,7 @@ paths:
       tags: [Jobs]
       description: Settled summaries ordered by settlement descending then ID descending. Each page is individually consistent, not a frozen multi-page snapshot.
       parameters:
+        - {name: grouped, in: query, schema: {type: boolean}, description: Group item variants by registry and metadata; concrete variants must be selected before ordering.}
         - {name: cursor, in: query, description: Opaque network-bound keyset cursor returned by this endpoint, schema: {type: string}}
         - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 100, default: 100}}
       responses:
@@ -631,6 +632,61 @@ paths:
             Server-Timing: {description: Server time to headers and database phase timings in milliseconds; phases can overlap., schema: {type: string}}
           content: {application/json: {schema: {$ref: '#/components/schemas/ItemPage'}}}
         '406': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/networks/{network}/items/{item}/variants:
+    parameters:
+      - {$ref: '#/components/parameters/NetworkID'}
+      - {name: item, in: path, required: true, schema: {type: string}}
+    get:
+      operationId: listItemVariants
+      tags: [Inventory]
+      description: Read up to 100 concrete variants of one registry and metadata group; counts come from cached AE observations.
+      parameters:
+        - {name: after, in: query, schema: {type: string}}
+        - {name: view, in: query, schema: {type: string, enum: [stock, all]}}
+      responses:
+        '200': {description: Concrete variant page, content: {application/json: {schema: {$ref: '#/components/schemas/ItemPage'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/networks/{network}/items/{item}/variant-data:
+    parameters:
+      - {$ref: '#/components/parameters/NetworkID'}
+      - {name: item, in: path, required: true, schema: {type: string}}
+    get:
+      operationId: getVariantData
+      tags: [Inventory]
+      description: Authorized, on-demand lossless typed NBT detail for one registered item; list endpoints omit raw NBT.
+      responses:
+        '200': {description: Typed NBT detail, content: {application/json: {schema: {type: object}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/networks/{network}/inventory-profile/variants:
+    parameters: [{$ref: '#/components/parameters/NetworkID'}]
+    post:
+      operationId: enableVariantCatalog
+      tags: [Inventory]
+      description: Admin-only incremental import of exact NESQL NBT candidates, preserving all existing observations and item schedules.
+      parameters: [{$ref: '#/components/parameters/CSRF'}, {$ref: '#/components/parameters/Origin'}]
+      responses:
+        '200': {description: Inventory coverage statistics, content: {application/json: {schema: {type: object}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /bridge/v2/register-sample:
+    post:
+      operationId: registerVariantSample
+      tags: [Bridge]
+      security: [{DeviceBearer: []}]
+      description: Registers one exact item identity from a physical sample; never records sample count as AE stock. Requires an active v2 safe NBT-capable device session.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [session_id, item]
+              properties:
+                session_id: {type: string}
+                item: {$ref: '#/components/schemas/Definition'}
+      responses:
+        '200': {description: Registered canonical item ID, content: {application/json: {schema: {type: object}}}}
         default: {$ref: '#/components/responses/Error'}
   /api/v1/networks/{network}/items/lookup:
     parameters: [{$ref: '#/components/parameters/NetworkID'}]
@@ -1708,6 +1764,8 @@ components:
         cpu_output: {type: boolean}
         cpu_selection: {type: boolean, description: 'The primary OC supports strict named CPU selection when true. Targets must be unique; duplicate, missing, or busy targets never fall back to automatic assignment.'}
         exact_quantities: {type: boolean}
+        exact_nbt: {type: boolean}
+        max_nbt_bytes: {type: integer, minimum: 0, maximum: 12288}
         max_craft_quantity: {$ref: '#/components/schemas/Quantity'}
         enumeration: {type: string, maxLength: 64}
     Network:
@@ -1774,6 +1832,21 @@ components:
         craftable_observed_at: {type: string, format: date-time, description: Server acceptance time of the latest recipe observation. Omitted when unknown; quantity-only readings do not refresh this time.}
         current_session: {type: boolean, description: Quantity source is still its owning device's current valid session; independent of primary availability and age.}
         craftable_current_session: {type: boolean, description: Recipe source is still its owning device's current valid session.}
+        has_tag: {type: boolean}
+        group:
+          type: object
+          required: [candidates, checked, stock, quantity]
+          properties:
+            candidates: {type: integer}
+            checked: {type: integer}
+            stock: {type: integer}
+            quantity: {type: string}
+        variant:
+          type: object
+          properties:
+            hash: {type: string}
+            custom_name: {type: string}
+            summary: {type: array, items: {type: string}}
         catalog: {$ref: '#/components/schemas/CatalogItem'}
     CatalogItem:
       type: object
@@ -1788,6 +1861,7 @@ components:
         max_stack_size: {type: integer, minimum: 0}
         image_url: {type: string, format: uri-reference}
         image_key: {type: string, description: Stable texture-pack asset path.}
+        base_fallback: {type: boolean}
         image_state: {type: string, enum: [available, missing]}
         width: {type: integer, minimum: 1}
         height: {type: integer, minimum: 1}

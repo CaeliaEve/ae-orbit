@@ -42,15 +42,25 @@ func (s *Server) texturePack(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) enrichCatalog(network string, items []protocol.Item) {
-	if s.catalog == nil {
-		return
-	}
 	for index := range items {
+		items[index].HasTag = items[index].NBT != ""
+		items[index].Variant = variantInfo(items[index])
+		if s.catalog == nil {
+			continue
+		}
 		match, state, ok := s.catalog.LookupResource(items[index].Kind, items[index].Name, items[index].Damage, items[index].NBT)
+		fallback := !ok && items[index].NBT != ""
+		if fallback {
+			match, state, ok = s.catalog.LookupResource(items[index].Kind, items[index].Name, items[index].Damage, "")
+		}
 		if !ok {
 			continue
 		}
 		public := match.Public(state)
+		public.BaseFallback = fallback
+		if items[index].Variant != nil && items[index].Variant.CustomName != "" {
+			public.LocalizedName = items[index].Variant.CustomName
+		}
 		if state == "available" {
 			public.ImageURL = catalog.ImageURLPath(network, items[index].ID) + "?v=" + url.QueryEscape(public.ImageKey)
 		}
@@ -79,6 +89,9 @@ func (s *Server) catalogImage(w http.ResponseWriter, r *http.Request, member pro
 	}
 	item := result.Items[0]
 	match, state, ok := s.catalog.LookupResource(item.Kind, item.Name, item.Damage, item.NBT)
+	if !ok && item.NBT != "" {
+		match, state, ok = s.catalog.LookupResource(item.Kind, item.Name, item.Damage, "")
+	}
 	if !ok || state != "available" {
 		fail(w, store.ErrNotFound)
 		return

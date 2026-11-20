@@ -49,11 +49,11 @@ function M.new(me,config)
     local fluids=M.has_method(me,"getFluidInNetwork")
     local essentia=M.has_method(me,"getEssentiaInNetwork")
     if worker then
-      return {inventory=true,craft=false,cpu_output=false,cpu_selection=false,exact_quantities=true,quantity_refresh=true,fluids=fluids,essentia=essentia}
+      return {inventory=true,craft=false,cpu_output=false,cpu_selection=false,exact_quantities=true,quantity_refresh=true,fluids=fluids,essentia=essentia,exact_nbt=true,max_nbt_bytes=self.identity_bytes}
     end
     return {inventory=true,craft=M.has_method(me,"getCraftable"),cpu_output=M.has_method(me,"getCpus"),
       cpu_selection=M.has_method(me,"getCraftable") and M.has_method(me,"getCpus"),
-      exact_quantities=true,quantity_refresh=true,fluids=fluids,essentia=essentia,craft_fluids=fluids and M.has_method(me,"getCraftable"),max_craft_quantity=quantity.maximum(),
+      exact_quantities=true,quantity_refresh=true,fluids=fluids,essentia=essentia,craft_fluids=fluids and M.has_method(me,"getCraftable"),max_craft_quantity=quantity.maximum(),exact_nbt=true,max_nbt_bytes=self.identity_bytes,
       enumeration=exact_only and "exact_only" or "volatile_iterator"}
   end
   function adapter:key(raw)

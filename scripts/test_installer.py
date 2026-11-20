@@ -23,6 +23,7 @@ DESTINATIONS = {
         "journal", "client", "adapter", "tracker", "runner", "cooperative", "read_diagnostics", "latency",
         "cancel", "cpu_packet", "runtime", "service")},
     "bin/ae-orbit.lua": "/bin/ae-orbit.lua",
+    "bin/ae-orbit-register.lua": "/bin/ae-orbit-register.lua",
     "rc.d/ae-orbit.lua": "/etc/rc.d/ae-orbit.lua",
     "config.example.lua": "/etc/ae-orbit.cfg.example",
     "install.lua": "/bin/ae-orbit-install.lua",

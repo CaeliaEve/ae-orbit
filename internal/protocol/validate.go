@@ -126,6 +126,9 @@ func (h Hello) validate(version int) error {
 	if !textOK(h.Capabilities.Enumeration, 0, 64) {
 		return fmt.Errorf("invalid enumeration capability")
 	}
+	if h.Capabilities.MaxNBTBytes < 0 || h.Capabilities.MaxNBTBytes > 12288 || h.Capabilities.ExactNBT && h.Capabilities.MaxNBTBytes < 1 {
+		return fmt.Errorf("invalid NBT capability budget")
+	}
 	return nil
 }
 

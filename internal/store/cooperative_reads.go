@@ -293,7 +293,7 @@ func (s *Store) cooperativeCandidates(ctx context.Context, tx pgx.Tx, d Device, 
 		}
 		query = `SELECT ` + columns + `r.token,least(r.expires_at,now()+interval '30 seconds')
 			FROM inventory_refreshes r JOIN item_definitions d ON d.network_id=r.network_id AND d.id=r.item_id
-			WHERE r.network_id=$1 AND ` + catalogScopeSQL + ` AND (d.kind='item' OR ` + resourceSupportedSQL(caps) + `) AND d.exact AND r.confirmed_at IS NULL AND r.expires_at>now()+interval '1 millisecond'
+			WHERE r.network_id=$1 AND ` + catalogScopeSQL + ` AND (` + exactItemSQL(caps) + ` OR ` + resourceSupportedSQL(caps) + `) AND d.exact AND r.confirmed_at IS NULL AND r.expires_at>now()+interval '1 millisecond'
 			AND r.next_attempt_at<=now() AND ` + noActiveCooperativeQuantity + `
 			ORDER BY r.next_attempt_at,r.item_id LIMIT 32`
 	default:

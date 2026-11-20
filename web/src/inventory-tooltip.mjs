@@ -54,7 +54,9 @@ export function inventoryTooltipModel(item, advanced = false) {
     lines.push({ text: tooltipText(value), kind: "description", gap: /§h$/.test(value) });
   }
   const footers = [{ text: `库存：${stockText(item)}${item?.quantity_known !== false && item?.current_session === false ? " · 待同步" : ""}`, kind: "stock" }];
-  if (item?.craftable_observed_at || item?.craftable_current_session === true) {
+  if(item.group)footers.push({text:`${item.group.stock} 个有库存变种 · 已查 ${item.group.checked}/${item.group.candidates}`,kind:'muted'});
+  if(item.has_tag)footers.push({text:`NBT 变种 ${item.variant?.hash?.slice(0,10) || ''}`,kind:'muted'});
+  if (!item?.group && (item?.craftable_observed_at || item?.craftable_current_session === true)) {
     footers.push({ text: item.craftable_current_session === false ? "合成能力待核验" : item.craftable ? "可合成" : "不可合成", kind: item.craftable && item.craftable_current_session !== false ? "craftable" : "muted" });
   }
   if (advanced) {

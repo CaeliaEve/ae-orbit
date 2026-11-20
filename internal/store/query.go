@@ -75,6 +75,9 @@ func (s *Store) decodeCursor(value string) (pageCursor, error) {
 }
 
 func (s *Store) Items(ctx context.Context, userID, networkID string, q protocol.ItemQuery) (protocol.ItemPage, error) {
+	if q.Grouped {
+		return s.GroupedItems(ctx, userID, networkID, q)
+	}
 	page := protocol.ItemPage{Items: []protocol.Item{}}
 	if err := s.RequireAccess(ctx, userID, networkID, false); err != nil {
 		return page, err
@@ -180,14 +183,17 @@ func (s *Store) Items(ctx context.Context, userID, networkID string, q protocol.
 	if plain {
 		label = "c.label"
 		indexed = "c.search_text"
-		candidates := "plain_catalog_candidates"
+		candidates := "item_catalog_candidates"
 		if resource {
 			candidates = "resource_catalog_candidates"
 		}
 		join = "JOIN " + candidates + " c ON c.network_id=d.network_id AND c.item_id=d.id LEFT JOIN inventory i ON i.network_id=d.network_id AND i.item_id=d.id AND i.observed_at>="
 		args = append(args, enabledAt)
 		join += fmt.Sprintf("$%d", len(args))
-		conditions = append(conditions, "d.exact AND d.nbt=''")
+		conditions = append(conditions, "d.exact")
+		if resource {
+			conditions = append(conditions, "d.nbt=''")
+		}
 		if q.View != "all" {
 			conditions = append(conditions, "i.item_id IS NOT NULL")
 		}
@@ -329,6 +335,7 @@ func (s *Store) Items(ctx context.Context, userID, networkID string, q protocol.
 }
 
 type InventoryStatistics struct {
+	Variants          *VariantStatistics   `json:"variants,omitempty"`
 	Resources         []ResourceStatistics `json:"resources,omitempty"`
 	Scope             string               `json:"scope,omitempty"`
 	Candidates        string               `json:"candidates,omitempty"`
@@ -363,6 +370,9 @@ func (s *Store) InventoryStats(ctx context.Context, userID, networkID string) (I
 			&result.Candidates, &result.Checked, &result.Zero, &result.Pending, &result.OldestObservation, &result.LastObservation)
 		if err == nil {
 			result.Resources, err = s.resourceStats(ctx, networkID)
+		}
+		if err == nil {
+			result.Variants, err = s.variantStats(ctx, networkID)
 		}
 		return result, err
 	}

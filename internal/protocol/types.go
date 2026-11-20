@@ -50,6 +50,8 @@ type Definition struct {
 }
 
 type Capabilities struct {
+	ExactNBT           bool     `json:"exact_nbt,omitempty"`
+	MaxNBTBytes        int      `json:"max_nbt_bytes,omitempty"`
 	CraftFluids        bool     `json:"craft_fluids,omitempty"`
 	Fluids             bool     `json:"fluids,omitempty"`
 	Essentia           bool     `json:"essentia,omitempty"`
@@ -187,6 +189,9 @@ type Item struct {
 	// NBT is an internal identity input for catalog matching. It is never
 	// serialized into browser responses.
 	NBT                     string       `json:"-"`
+	HasTag                  bool         `json:"has_tag,omitempty"`
+	Group                   *ItemGroup   `json:"group,omitempty"`
+	Variant                 *VariantInfo `json:"variant,omitempty"`
 	Catalog                 *CatalogItem `json:"catalog,omitempty"`
 	Quantity                Quantity     `json:"quantity"`
 	QuantityKnown           *bool        `json:"quantity_known,omitempty"`
@@ -207,6 +212,7 @@ type CatalogItem struct {
 	ImageURL        string         `json:"image_url,omitempty"`
 	ImageKey        string         `json:"image_key,omitempty"`
 	ImageState      string         `json:"image_state"`
+	BaseFallback    bool           `json:"base_fallback,omitempty"`
 	Width           int            `json:"width,omitempty"`
 	Height          int            `json:"height,omitempty"`
 	Frames          []CatalogFrame `json:"frames,omitempty"`
@@ -236,6 +242,7 @@ type ItemPage struct {
 }
 
 type ItemQuery struct {
+	Grouped     bool
 	Kind        string
 	View        string
 	Search      string
@@ -249,6 +256,18 @@ type ItemQuery struct {
 	Page        int
 	LastPage    bool
 	PageSize    int
+}
+
+type ItemGroup struct {
+	Candidates int    `json:"candidates"`
+	Checked    int    `json:"checked"`
+	Stock      int    `json:"stock"`
+	Quantity   string `json:"quantity"`
+}
+type VariantInfo struct {
+	Hash       string   `json:"hash"`
+	CustomName string   `json:"custom_name,omitempty"`
+	Summary    []string `json:"summary,omitempty"`
 }
 
 type ItemLookup struct {

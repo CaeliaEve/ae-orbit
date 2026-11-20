@@ -44,6 +44,7 @@ local files = {
   {"lib/aeorbit/runtime.lua", "/lib/aeorbit/runtime.lua"},
   {"lib/aeorbit/service.lua", "/lib/aeorbit/service.lua"},
   {"bin/ae-orbit.lua", "/bin/ae-orbit.lua"},
+  {"bin/ae-orbit-register.lua", "/bin/ae-orbit-register.lua"},
   {"rc.d/ae-orbit.lua", "/etc/rc.d/ae-orbit.lua"},
   {"config.example.lua", "/etc/ae-orbit.cfg.example"},
   {"install.lua", "/bin/ae-orbit-install.lua"},

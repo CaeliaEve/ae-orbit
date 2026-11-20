@@ -1844,6 +1844,18 @@ body { padding: 0; background: #0a0a0b; }
 .cpu-monitor-output > .cpu-output-media { display: flex; align-items: center; justify-content: center; flex: 0 0 28px; width: 28px; height: 28px; overflow: hidden; }
 #cpu-list .cpu-output-media > :is(.item-image, .missing-image) { width: 28px; height: 28px; min-width: 28px; border: 0; background: transparent; image-rendering: pixelated; }
 .cpu-output-media svg { width: 18px; height: 18px; }
+.variant-list { display:grid; gap:2px; margin-top:16px; }
+.variant-row { display:flex; align-items:center; gap:10px; padding:12px 0; min-width:0; text-align:left; border:0; border-bottom:1px solid #ffffff0b; background:transparent; }
+#detail-panel .variant-row > :is(.item-image,.missing-image) { width:28px; height:28px; min-width:28px; background:transparent; border:0; }
+.variant-row > span { display:grid; gap:4px; min-width:0; flex:1; }
+.variant-row strong { font-size:12px; font-weight:500; overflow-wrap:anywhere; }
+.variant-row small,.variant-identity { font-size:10px; color:var(--muted); overflow-wrap:anywhere; }
+.variant-row b { font-size:11px; font-weight:500; }
+.variant-more { margin-top:16px; }
+.variant-data { max-height:300px; overflow:auto; font-size:10px; white-space:pre-wrap; overflow-wrap:anywhere; margin:12px 0; }
+.variant-identity { margin:18px 0; }
+.variant-count { display:inline-flex; color:#adc2df; font-size:10px; font-variant-numeric:tabular-nums; }
+.inventory-table td:last-child:has(.variant-count) { pointer-events:none; }
 .cpu-monitor-output strong { color: #dce1e7; font-weight: 500; font-size: 12px; overflow-wrap: anywhere; }
 .cpu-monitor-output small { color: #a0aab5; font-size: 11px; font-variant-numeric: tabular-nums; }
 .cpu-monitor-expand { display: grid; place-items: center; color: #7f8995; }

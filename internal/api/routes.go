@@ -42,6 +42,10 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /bridge/v2/hello", s.device(s.helloV2))
 	s.mux.HandleFunc("POST /bridge/v2/poll", s.device(s.pollV2))
 	s.mux.HandleFunc("POST /bridge/v2/inventory", s.device(s.inventoryV2))
+	s.mux.HandleFunc("POST /bridge/v2/register-sample", s.device(s.registerSample))
+	s.mux.HandleFunc("POST /api/v1/networks/{network}/inventory-profile/variants", s.user(s.enableVariants))
+	s.mux.HandleFunc("GET /api/v1/networks/{network}/items/{item}/variants", s.user(s.itemVariants))
+	s.mux.HandleFunc("GET /api/v1/networks/{network}/items/{item}/variant-data", s.user(s.variantData))
 	s.mux.HandleFunc("GET /oc/{path...}", s.ocFile)
 	s.mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { respond(w, 200, map[string]string{"status": "ok"}) })
 	s.mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
@@ -108,6 +112,7 @@ func (s *Server) routes() {
 			return
 		}
 		q := protocol.ItemQuery{Kind: r.URL.Query().Get("kind"), Search: r.URL.Query().Get("q"), Sort: r.URL.Query().Get("sort"), Cursor: r.URL.Query().Get("cursor"), Limit: limit, Consistency: r.URL.Query().Get("consistency")}
+		q.Grouped = r.URL.Query().Get("grouped") == "true"
 		q.View = r.URL.Query().Get("view")
 		if len(r.URL.Query()["anchor"]) > 1 || len(r.URL.Query()["cursor"]) > 1 || len(r.URL.Query()["page"]) > 1 || len(r.URL.Query()["pagination"]) > 1 {
 			fail(w, store.ErrInvalid)

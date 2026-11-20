@@ -10,10 +10,10 @@ import (
 // Fluid crafting is negotiated by the primary for each boot.
 func craftSupportedSQL(caps protocol.Capabilities) string {
 	if caps.Craft && caps.Fluids && caps.CraftFluids {
-		return `(d.kind='item' OR (d.kind='fluid' AND d.exact AND d.damage=0 AND d.nbt=''
+		return `(` + exactItemSQL(caps) + ` OR (d.kind='fluid' AND d.exact AND d.damage=0 AND d.nbt=''
 		 AND EXISTS(SELECT 1 FROM resource_catalog_candidates fluid WHERE fluid.network_id=d.network_id AND fluid.item_id=d.id)))`
 	}
-	return `d.kind='item'`
+	return exactItemSQL(caps)
 }
 
 func (s *Store) fluidRecipeCandidate(ctx context.Context, tx pgx.Tx, d Device, caps protocol.Capabilities) ([]cooperativeCandidate, error) {

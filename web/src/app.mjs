@@ -57,7 +57,7 @@ const esc = value => String(value ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;
 const quantityHTML = value => formatQuantity(value).replaceAll(",", ",<wbr>");
 const compactQuantityHTML = value => esc(formatCompactQuantity(value));
 const resourceQuantityHTML = (item, compact = false) => quantityKnown(item)
-  ? `${compact ? compactQuantityHTML(item.quantity) : quantityHTML(item.quantity)}${resourceUnit(item) ? `<small class="resource-unit">${resourceUnit(item)}</small>` : ""}` : "未查询";
+  ? `${compact ? compactQuantityHTML(item.group?.quantity ?? item.quantity) : quantityHTML(item.group?.quantity ?? item.quantity)}${resourceUnit(item) ? `<small class="resource-unit">${resourceUnit(item)}</small>` : ""}` : "未查询";
 const icon = name => `<i data-lucide="${name}" aria-hidden="true"></i>`;
 const inventoryIconCache = new Map();
 function inventoryIcon(name) {
@@ -564,7 +564,7 @@ function renderInventoryHoverPage() {
 
 function refreshInventoryHover() {
   const button = inventoryHover.button;
-  const item = itemFor(button?.dataset.item);
+  const item = state.items.find(item=>String(item.id)===button?.dataset.item) || itemFor(button?.dataset.item);
   if (!item || !button?.isConnected) { hideInventoryHover(); return; }
   const card = $("#inventory-hover-card");
   const model = inventoryTooltipModel(item, inventoryHover.advanced);
@@ -593,7 +593,7 @@ function refreshInventoryHover() {
 }
 
 function showInventoryHover(button, event) {
-  if (!itemFor(button?.dataset.item) || matchMedia("(max-width: 800px)").matches || !matchMedia("(any-hover: hover)").matches) return;
+  if (!(state.items.find(item=>String(item.id)===button?.dataset.item) || itemFor(button?.dataset.item)) || matchMedia("(max-width: 800px)").matches || !matchMedia("(any-hover: hover)").matches) return;
   if (inventoryHover.button !== button) { hideInventoryHover(); inventoryHover.model = null; inventoryHover.page = 0; }
   inventoryHover.button = button;
   inventoryHover.pointer = { x: event.clientX, y: event.clientY };
@@ -783,7 +783,7 @@ function renderInventory() {
   tbody.innerHTML = state.items.map(item => `<tr data-resource-kind="${esc(item.kind || 'item')}" data-selected="${state.selected?.id === item.id}" data-id="${esc(item.id)}">
     <td><button class="item-button ${itemHasTexture(item) ? "" : "missing-texture"}" data-item="${esc(item.id)}" aria-label="${esc(`${catalogDisplayName(item)}，库存 ${stockText(item)}`)}">${itemImage(item)}<span class="item-copy"><span class="item-name">${esc(catalogDisplayName(item))}</span><span class="item-meta">${esc(item.name.split(":")[0])}${item.craftable ? " · 可合成" : ""}${!item.exact ? " · 身份待确认" : ""}</span></span></button></td>
     <td><span class="stock-value ${String(item.quantity).length > 12 ? "long-number" : ""} ${item.current_session ? "" : "stale"}" title="${esc(stockText(item))}">${resourceQuantityHTML(item,true)}</span><span class="freshness ${item.current_session ? "" : "stale"}">${stockFreshness(item, age)}</span></td>
-    <td><button class="icon-button" data-quick-add="${esc(item.id)}" title="加入清单" aria-label="将${esc(catalogDisplayName(item))}加入清单" ${craftingKindSupported(item, state.network?.capabilities) && item.craftable && item.exact && !state.draftBlocked && !state.busy && !state.preparing ? "" : "disabled"}>${inventoryIcon("plus")}</button></td>
+    <td>${item.group ? `<span class="variant-count" title="${item.group.candidates} 个已登记变种；点击展开">${item.group.stock || item.group.candidates}</span>` : `<button class="icon-button" data-quick-add="${esc(item.id)}" title="加入清单" aria-label="将${esc(catalogDisplayName(item))}加入清单" ${craftingKindSupported(item, state.network?.capabilities) && item.craftable && item.exact && !state.draftBlocked && !state.busy && !state.preparing ? "" : "disabled"}>${inventoryIcon("plus")}</button>`}</td>
   </tr>`).join("");
   $("#inventory-empty").hidden = state.items.length > 0;
   $("#inventory-empty").textContent = state.inventoryLoading ? "正在读取库存…" : !state.member ? "登录后查看库存" : !state.network ? "没有可访问的网络" : "没有匹配的物品";
@@ -842,6 +842,8 @@ function patchInventoryRows() {
       freshness.textContent = stockFreshness(item, age);
     }
     const quickAdd = $("[data-quick-add]", row);
+    const variantCount=$('.variant-count',row);
+    if(variantCount && item.group){variantCount.textContent=item.group.stock || item.group.candidates;variantCount.title=`${item.group.candidates} 个已登记变种；点击展开`;}
     if (quickAdd) {
       quickAdd.disabled = !(craftingKindSupported(item, state.network?.capabilities) && item.craftable && item.exact && !state.draftBlocked && !state.busy && !state.preparing);
     }
@@ -871,6 +873,7 @@ function renderInventoryPager() {
 
 function patchSelectedDetail(item) {
   if (!item) return;
+  if(item.group)return;
   const stock = $(".detail-stock", $("#detail-panel"));
   if (stock) {
     stock.classList.toggle("long-number", String(item.quantity ?? "0").length > 12);
@@ -882,6 +885,7 @@ function patchSelectedDetail(item) {
 
 function detailNeedsRender(before, after) {
   if (!before || !after) return true;
+  if(before.group || after.group)return JSON.stringify(before.group)!==JSON.stringify(after.group) || before.id!==after.id;
   return before.id !== after.id
     || before.label !== after.label
     || before.name !== after.name
@@ -896,6 +900,7 @@ function detailNeedsRender(before, after) {
 
 function renderDetail() {
   const item = state.selected;
+  if(item?.group){renderVariantGroup(item);return;}
   if (!item) {
     $("#detail-panel").innerHTML = `<div class="detail-empty">${icon("boxes")}<strong>选择一个物品</strong><span>从库存网格中选择物品后，这里会显示数量、状态与合成操作。</span></div>`;
     return;
@@ -913,12 +918,33 @@ function renderDetail() {
     <span class="field-label">合成 CPU</span><button class="cpu-select" id="detail-cpu" ${state.busy || state.preparing || !state.network ? "disabled" : ""} title="${cpuSelectionTitle()}"><span>${esc(state.cpuName || "自动分配")}${state.waitForCPU ? " · 等待" : ""}${!cpuSelectionSupported() ? " · 当前 OC 未启用" : ""}</span>${icon("cpu")}</button>
     <div class="detail-actions"><button class="primary wide" id="add-to-draft" ${canAdd ? "" : "disabled"}>${icon("list-plus")}加入清单</button><button class="secondary wide" id="submit-immediately" ${canAdd && jobs.state.support === "supported" && !state.busy ? "" : "disabled"}>${icon("send")}立即提交</button></div>
     <p class="draft-submitter">下单人：${esc(playerName(state.member))}</p><p id="detail-feedback" class="detail-feedback" role="status">${esc(reason || submissionStatus())}</p>`;
+  if(item.has_tag){
+    const info=item.variant;
+    $('#detail-panel').insertAdjacentHTML('beforeend',`<div class="variant-identity"><span>NBT 变种 · ${esc(info?.hash?.slice(0,12) || '完整身份')}</span><p>${esc(info?.summary?.join(' · ') || '')}</p><button class="text-button" data-variant-data="${esc(item.id)}">查看完整 NBT 数据</button><pre class="variant-data" hidden></pre></div>`);
+  }
   paint();
   scheduleSpriteAnimation();
 }
 
 function selectedDraftIds() {
   return state.draft.entries.filter(e => e.status === "draft" && !state.unchecked.has(e.id)).map(e => e.id);
+}
+
+let variantGroupContext=0;
+async function renderVariantGroup(item,after='',append=false){
+  const token=++variantGroupContext,context=state.context;
+  if(!append)$('#detail-panel').innerHTML=`<div class="detail-heading">${itemImage(item)}<div><h2>${esc(catalogDisplayName(item))}</h2><span class="muted">${item.group.stock} 个有库存变种 · 已查 ${item.group.checked}/${item.group.candidates}</span></div></div><div class="detail-stock number">${quantityHTML(item.group.quantity)} <small>件</small></div><p class="muted">选择具体变种后查看库存与合成。</p><div class="variant-list" role="list"><p>正在读取变种…</p></div><p class="variant-feedback" role="status"></p>`;
+  try{
+    const page=await api.request(networkPath(`/items/${item.id}/variants?view=${state.stockView}${after?`&after=${after}`:''}`));
+    if(token!==variantGroupContext || context!==state.context || state.selected?.id!==item.id || !state.selected.group)return;
+    const html=page.items.map(value=>{
+      state.itemCache.set(value.id,value);
+      return `<button type="button" class="variant-row" data-select-variant="${esc(value.id)}" role="listitem">${itemImage(value)}<span><strong>${esc(value.variant?.custom_name || catalogDisplayName(value))}</strong><small>${value.has_tag?`NBT · ${esc(value.variant?.hash?.slice(0,10)||'变种')}`:'无 NBT'}${value.variant?.summary?.length?' · '+esc(value.variant.summary.join(' · ')):''}</small><small>${stockFreshness(value,age)}${value.craftable?' · 可合成':''}</small></span><b>${esc(stockText(value))}</b></button>`;
+    }).join('');
+    const list=$('.variant-list');if(append)list.insertAdjacentHTML('beforeend',html);else list.innerHTML=html||'<p class="muted">此范围没有已确认的变种，可切换“全部名单候选”。</p>';
+    $('.variant-more')?.remove();if(page.next_cursor)list.insertAdjacentHTML('afterend',`<button class="secondary variant-more" data-variant-more="${esc(page.next_cursor)}" data-base-id="${esc(item.id)}">继续读取变种</button>`);
+    paint();scheduleSpriteAnimation();
+  }catch(error){if(token===variantGroupContext && context===state.context)message('.variant-feedback',errorText(error));}
 }
 
 function submissionStatus() {
@@ -1704,7 +1730,7 @@ function inventoryWindowAnchor() {
 }
 
 function inventoryQuerySpec(limit) {
-  return { search: state.search, sort: state.sort, filter: state.filter, limit, view: state.stockView, scope: state.inventoryScope,kind:state.resourceKind };
+  return { search: state.search, sort: state.sort, filter: state.filter, limit, view: state.stockView, scope: state.inventoryScope,kind:state.resourceKind,grouped:state.resourceKind==='item' };
 }
 
 function inventoryPageKey(cursor, spec) {
@@ -1764,6 +1790,7 @@ function requestInventoryPage(cursor, limit, signal, spec = inventoryQuerySpec(l
   const query = new URLSearchParams({ q: spec.search, sort: spec.sort, limit: String(spec.limit), consistency: "window", pagination: "pages" });
   if (spec.filter) query.set("craftable", spec.filter);
   query.set("kind",spec.kind || "item");
+  if(spec.grouped)query.set('grouped','true');
   if (spec.scope === "nesql_plain") query.set("view", spec.view);
   if (cursor) query.set("cursor", cursor);
   if (spec.anchor) query.set("anchor", spec.anchor);
@@ -1822,6 +1849,7 @@ async function requestInventoryBlock(start, pages, spec, signal, epoch) {
   const query = new URLSearchParams({ q: spec.search, sort: spec.sort, limit: String(Math.min(200, pages * spec.limit)), page_size: String(spec.limit), consistency: "window", pagination: "pages", page: String(start + 1) });
   if (spec.filter) query.set("craftable", spec.filter);
   query.set("kind",spec.kind || "item");
+  if(spec.grouped)query.set('grouped','true');
   if (spec.scope === "nesql_plain") query.set("view", spec.view);
   const value = await api.request(networkPath(`/items?${query}`), { signal });
   if (epoch !== inventoryCacheEpoch || signal.aborted) return value;
@@ -1916,10 +1944,10 @@ function applyInventoryPage(destination, page) {
   state.inventoryScope = page.scope;
   state.cursors[state.page] = { cursor: state.cursor, anchor: inventoryWindowAnchor() };
   state.cursors.length = state.page + 1;
-  state.items.forEach(item => state.itemCache.set(String(item.id), item));
+  state.items.forEach(item => {if(!item.group)state.itemCache.set(String(item.id), item);});
   patchDraftAppearance();
-  const selected = state.itemCache.get(String(state.selected?.id));
-  if (selected) state.selected = selected;
+  const selected = state.selected?.group ? state.items.find(item=>item.id===state.selected.id) : state.itemCache.get(String(state.selected?.id));
+  if (selected && (!selected.group || state.selected?.group)) state.selected = selected;
   cacheInventoryPage(state.cursor, { ...inventoryQuerySpec(state.inventoryLimit), anchor: destination.anchor || "", page: destination.absolute ? state.page + 1 : "" }, page);
   cacheInventoryPage("", { ...inventoryQuerySpec(state.inventoryLimit), anchor: inventoryWindowAnchor() }, page);
   if (destination.absolute || !destination.anchor) cacheInventoryPage("", { ...inventoryQuerySpec(state.inventoryLimit), page: state.page + 1 }, page);
@@ -2073,10 +2101,10 @@ async function refreshInventoryWindow(force = false) {
     state.anchorCursor = value.anchorCursor || state.anchorCursor;
     state.cursors[state.page] = { cursor: state.cursor, anchor: inventoryWindowAnchor() };
     cacheInventoryPage("", { ...inventoryQuerySpec(state.inventoryLimit), anchor: inventoryWindowAnchor() }, value);
-    state.items.forEach(item => state.itemCache.set(String(item.id), item));
+    state.items.forEach(item => {if(!item.group)state.itemCache.set(String(item.id), item);});
     patchDraftAppearance();
     const selected = state.items.find(item => String(item.id) === String(state.selected?.id)) || state.itemCache.get(String(state.selected?.id));
-    if (selected) state.selected = selected;
+    if (selected && (!selected.group || state.selected?.group)) state.selected = selected;
     if (!patchInventoryRows()) renderInventory();
     if (scroll) scroll.scrollTop = scrollTop;
     if (window.scrollY!==windowY) window.scrollTo(windowX,windowY);
@@ -2774,12 +2802,21 @@ document.addEventListener("click", async event => {
   }
   if (data.item) {
     hideInventoryHover();
+    const item=state.items.find(item=>item.id===data.item) || state.itemCache.get(data.item);
+    if(item?.group){state.selected=item;renderVariantGroup(item);openInspector('detail');return;}
     state.selected = state.itemCache.get(data.item); state.amount = state.selected?.kind === "fluid" ? "1000" : "1";
     renderDetail();
     $$("tr[data-id]").forEach(row => row.dataset.selected = String(row.dataset.id === data.item));
     openInspector("detail");
   }
   if (data.quickAdd) { const item = state.itemCache.get(data.quickAdd); if (item) await addItem(item, item.kind === "fluid" ? "1000" : "1"); }
+  if(data.selectVariant){variantGroupContext++;state.selected=state.itemCache.get(data.selectVariant);state.amount='1';renderDetail();return;}
+  if(data.variantMore){await renderVariantGroup(state.selected,data.variantMore,true);return;}
+  if(data.variantData){
+    const itemID=data.variantData;button.disabled=true;
+    try{const value=await api.request(networkPath(`/items/${itemID}/variant-data`));if(state.selected?.id===itemID){const pre=$('.variant-data');pre.textContent=JSON.stringify(value.typed_data,null,2);pre.hidden=false;}}
+    catch(error){toast(errorText(error),true);}finally{if(button.isConnected)button.disabled=false;}return;
+  }
   if (data.step) {
     try { state.amount = (BigInt($("#craft-quantity").value || 1) + BigInt(data.step)).toString(); state.amount = normalizeQuantity(state.amount, maximum()); }
     catch { state.amount = data.step === "-1" ? "1" : String(maximum()); }
