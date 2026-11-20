@@ -294,6 +294,10 @@ func TestOCInstallationDownloadsExposeOnlyBundledFiles(t *testing.T) {
 	if err != nil || response.StatusCode != 200 || !strings.Contains(string(data), "/bridge/v1/hello") {
 		t.Fatal("OC module unavailable", response.StatusCode, err)
 	}
+	response = send(t, f, "GET", "/oc/bin/ae-orbit-register.lua", "", "")
+	if response.StatusCode != 200 {
+		t.Fatal("sample registration script is unavailable", response.StatusCode)
+	}
 	for _, path := range []string{"/oc/tests/test_runner.lua", "/oc/lib/aeorbit", "/oc/config.live.lua", "/oc/.env"} {
 		if response := send(t, f, "GET", path, "", ""); response.StatusCode != 404 {
 			t.Fatal("unbundled path was exposed", path, response.StatusCode)
