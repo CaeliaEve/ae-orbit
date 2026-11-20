@@ -70,6 +70,8 @@ docker compose --env-file .env -f deploy/compose.yaml -f deploy/compose.catalog.
 
 启用目录后，后续更新或重建 API 也要保留 `-f deploy/compose.catalog.yaml`；只使用基础 Compose 文件重新创建容器会移除目录挂载。
 
+新版导出可作为中文名称、说明和纹理的主数据。需要保留旧版无 NBT 身份时，使用 [目录升级说明](docs/nesql-catalog-upgrade.md) 中的合并脚本生成独立目录，再重新创建 API 并调用无 NBT 清单接口增量导入。原有物品 ID、库存观察、查询进度与订单历史保留，新增候选等待 OC 精确查询确认数量。
+
 ### 浏览器纹理包（可选）
 
 如果希望用户只下载一次纹理并在浏览器本地复用，可以从 NESQL++ 源目录生成 ZIP。原始导出目录不会被改写：

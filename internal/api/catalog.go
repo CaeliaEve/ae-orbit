@@ -3,6 +3,7 @@ package api
 import (
 	"errors"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 
@@ -51,7 +52,7 @@ func (s *Server) enrichCatalog(network string, items []protocol.Item) {
 		}
 		public := match.Public(state)
 		if state == "available" {
-			public.ImageURL = catalog.ImageURLPath(network, items[index].ID)
+			public.ImageURL = catalog.ImageURLPath(network, items[index].ID) + "?v=" + url.QueryEscape(public.ImageKey)
 		}
 		items[index].Catalog = &public
 	}

@@ -22,8 +22,8 @@ func plainProfile(ctx context.Context, tx pgx.Tx, network string) (bool, error) 
 	return enabled, err
 }
 
-// EnablePlainCatalog is idempotent. It registers only definitions and schedules;
-// in particular it does not insert zero quantities into inventory.
+// EnablePlainCatalog activates or refreshes the immutable source's candidates.
+// Refreshes retain existing identities, observations, schedules and saved intent.
 func (s *Store) EnablePlainCatalog(ctx context.Context, adminID, network string) (InventoryStatistics, error) {
 	if err := s.RequireAdmin(ctx, adminID); err != nil {
 		return InventoryStatistics{}, err
@@ -41,7 +41,7 @@ func (s *Store) EnablePlainCatalog(ctx context.Context, adminID, network string)
 			return ErrClientUpgradeRequired
 		}
 		enabled, err := plainProfile(ctx, tx, network)
-		if err != nil || enabled {
+		if err != nil {
 			return err
 		}
 		// Index and foreign-key maintenance for a complete export can exceed
@@ -49,8 +49,10 @@ func (s *Store) EnablePlainCatalog(ctx context.Context, adminID, network string)
 		if _, err = tx.Exec(ctx, "SET LOCAL statement_timeout='30000'"); err != nil {
 			return err
 		}
-		if _, err = tx.Exec(ctx, "INSERT INTO network_inventory_profiles(network_id,mode) VALUES($1,'nesql_plain')", network); err != nil {
-			return err
+		if !enabled {
+			if _, err = tx.Exec(ctx, "INSERT INTO network_inventory_profiles(network_id,mode) VALUES($1,'nesql_plain')", network); err != nil {
+				return err
+			}
 		}
 		// COPY avoids repeated identity resolution and round trips for large
 		// exports. The temporary relation and activation remain one transaction.
@@ -83,29 +85,49 @@ func (s *Store) EnablePlainCatalog(ctx context.Context, adminID, network string)
 		if _, err = tx.Exec(ctx, "ANALYZE item_definitions"); err != nil {
 			return fmt.Errorf("analyze plain catalog definitions: %w", err)
 		}
-		inserted, err := tx.Exec(ctx, `INSERT INTO plain_catalog_candidates(network_id,item_id,label,search_text)
-			SELECT $1,d.id,x.label,x.search_text FROM plain_catalog_import x
+		if _, err = tx.Exec(ctx, `CREATE TEMP TABLE plain_catalog_resolved ON COMMIT DROP AS
+			SELECT d.id,x.label,x.search_text FROM plain_catalog_import x
 			JOIN item_definitions requested ON requested.network_id=$1 AND requested.identity_key=x.identity_key
 			LEFT JOIN item_aliases a ON a.network_id=requested.network_id AND a.alias_id=requested.id
 			JOIN item_definitions d ON d.network_id=requested.network_id AND d.id=coalesce(a.canonical_id,requested.id)
-			WHERE d.kind='item' AND d.exact AND d.nbt=''`, network)
-		if err != nil {
+			WHERE d.kind='item' AND d.exact AND d.nbt=''`, network); err != nil {
 			return fmt.Errorf("resolve plain catalog candidates: %w", err)
 		}
-		if inserted.RowsAffected() != int64(len(candidates)) {
+		var resolved, unique int
+		if err = tx.QueryRow(ctx, "SELECT count(*),count(DISTINCT id) FROM plain_catalog_resolved").Scan(&resolved, &unique); err != nil {
+			return err
+		}
+		if resolved != len(candidates) || unique != len(candidates) {
 			return ErrConflict
+		}
+		inserted, err := tx.Exec(ctx, `INSERT INTO plain_catalog_candidates(network_id,item_id,label,search_text)
+			SELECT $1,id,label,search_text FROM plain_catalog_resolved
+			ON CONFLICT(network_id,item_id) DO UPDATE SET label=excluded.label,search_text=excluded.search_text
+			WHERE plain_catalog_candidates.label IS DISTINCT FROM excluded.label
+			OR plain_catalog_candidates.search_text IS DISTINCT FROM excluded.search_text`, network)
+		if err != nil {
+			return fmt.Errorf("update plain catalog candidates: %w", err)
 		}
 		if _, err = tx.Exec(ctx, "ANALYZE plain_catalog_candidates"); err != nil {
 			return fmt.Errorf("analyze plain catalog candidates: %w", err)
 		}
+		scheduleConflict := "DO NOTHING"
+		if !enabled {
+			scheduleConflict = "DO UPDATE SET next_quantity_at=now(),next_verify_at=now()"
+		}
 		if _, err = tx.Exec(ctx, `INSERT INTO inventory_schedule(network_id,item_id,next_quantity_at,next_verify_at)
-			SELECT network_id,item_id,now(),now() FROM plain_catalog_candidates WHERE network_id=$1
-			ON CONFLICT(network_id,item_id) DO UPDATE SET next_quantity_at=now(),next_verify_at=now()`, network); err != nil {
+			SELECT $1,id,now(),now() FROM plain_catalog_resolved
+			ON CONFLICT(network_id,item_id) `+scheduleConflict, network); err != nil {
 			return fmt.Errorf("schedule plain catalog queries: %w", err)
 		}
 		// Cancel only outstanding read receipts. Existing order/job history stays.
-		if _, err = tx.Exec(ctx, "UPDATE cooperative_read_fields SET completed_at=now() WHERE network_id=$1 AND completed_at IS NULL", network); err != nil {
-			return err
+		if !enabled {
+			if _, err = tx.Exec(ctx, "UPDATE cooperative_read_fields SET completed_at=now() WHERE network_id=$1 AND completed_at IS NULL", network); err != nil {
+				return err
+			}
+		}
+		if enabled && inserted.RowsAffected() == 0 {
+			return nil
 		}
 		if _, err = tx.Exec(ctx, "UPDATE networks SET revision=revision+1,catalog_revision=catalog_revision+1 WHERE id=$1", network); err != nil {
 			return err
