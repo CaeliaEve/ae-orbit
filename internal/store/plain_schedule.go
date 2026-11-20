@@ -66,7 +66,7 @@ func (s *Store) plainBackgroundPool(ctx context.Context, tx pgx.Tx, d Device, st
 	defer rows.Close()
 	result := []cooperativeCandidate{}
 	for rows.Next() {
-		c := cooperativeCandidate{NextQuantityTurn: -1}
+		c := cooperativeCandidate{NextQuantityTurn: -1, NextResourceTurn: -1}
 		c.Kind, c.Purpose = kind, "background"
 		if err := rows.Scan(&c.ID, &c.Item.Kind, &c.Item.Name, &c.Item.Damage, &c.Item.NBT,
 			&c.Item.Label, &c.Item.Exact, &c.RequestID, &c.ExpiresAt); err != nil {

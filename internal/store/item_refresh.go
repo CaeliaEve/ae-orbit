@@ -53,7 +53,7 @@ func (s *Store) RequestItemRefresh(ctx context.Context, userID, networkID string
 		} else if !caps.Inventory || !caps.QuantityRefresh {
 			return ErrCapability
 		}
-		rows, err := tx.Query(ctx, `SELECT DISTINCT d.id,d.kind,d.exact FROM item_definitions requested
+		rows, err := tx.Query(ctx, `SELECT DISTINCT d.id,d.kind,d.exact,EXISTS(SELECT 1 FROM resource_catalog_candidates c WHERE c.network_id=d.network_id AND c.item_id=d.id) FROM item_definitions requested
 			LEFT JOIN item_aliases a ON a.network_id=requested.network_id AND a.alias_id=requested.id
 			JOIN item_definitions d ON d.network_id=requested.network_id AND d.id=coalesce(a.canonical_id,requested.id)
 			LEFT JOIN inventory i ON i.network_id=d.network_id AND i.item_id=d.id
@@ -64,23 +64,45 @@ func (s *Store) RequestItemRefresh(ctx context.Context, userID, networkID string
 			return err
 		}
 		var canonical []int64
+		resourceKinds := map[string]bool{}
 		for rows.Next() {
 			var id int64
 			var kind string
 			var exact bool
-			if err = rows.Scan(&id, &kind, &exact); err != nil {
+			var registered bool
+			if err = rows.Scan(&id, &kind, &exact, &registered); err != nil {
 				rows.Close()
 				return err
 			}
-			if kind != "item" || !exact {
+			resource := kind == "fluid" || kind == "essentia"
+			if !exact || (kind != "item" && (!resource || !registered || mode != "cooperative")) {
 				rows.Close()
 				return ErrInvalid
+			}
+			if resource {
+				resourceKinds[kind] = true
 			}
 			canonical = append(canonical, id)
 		}
 		rows.Close()
 		if err = rows.Err(); err != nil {
 			return err
+		}
+		for kind := range resourceKinds {
+			var supported bool
+			capability := "fluids"
+			if kind == "essentia" {
+				capability = "essentia"
+			}
+			if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM devices worker JOIN bridge_sessions bs ON bs.id=worker.current_session AND NOT bs.retired
+			 WHERE worker.network_id=$1 AND NOT worker.revoked AND bs.protocol=2 AND bs.capabilities->>$2='true'
+			 AND bs.capabilities->>'exact_quantities'='true' AND bs.capabilities->>'native_scan_disabled'='true'
+			 AND bs.capabilities->>'events_disabled'='true')`, networkID, capability).Scan(&supported); err != nil {
+				return err
+			}
+			if !supported {
+				return ErrCapability
+			}
 		}
 		if len(canonical) == 0 {
 			return nil

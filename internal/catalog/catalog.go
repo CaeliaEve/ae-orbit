@@ -96,6 +96,7 @@ type Catalog struct {
 	byImage          map[string]struct{}
 	archiveImages    map[string]struct{}
 	sourceItems      map[string]Item
+	sourceResources  map[string]Item
 	sourceAssets     map[string]struct{}
 	sourceAssetPaths map[string]string
 	sourceAssetMeta  map[string]assetMeta
@@ -278,12 +279,13 @@ func openElysiumSource(root string, manifestBytes []byte) (*Catalog, error) {
 		root:             root,
 		source:           true,
 		sourceItems:      make(map[string]Item),
+		sourceResources:  make(map[string]Item),
 		sourceAssets:     make(map[string]struct{}),
 		sourceAssetPaths: make(map[string]string),
 		sourceAssetMeta:  make(map[string]assetMeta),
 		sourceTexts:      make(map[string]map[string]string),
 	}
-	var itemFiles, assetRecordFiles, stringFiles []string
+	var itemFiles, assetRecordFiles, stringFiles, fluidFiles, aspectFiles []string
 	for _, file := range manifest.Files {
 		path, err := safeSourcePath(file.Path)
 		if err != nil {
@@ -292,6 +294,10 @@ func openElysiumSource(root string, manifestBytes []byte) (*Catalog, error) {
 		switch file.Kind {
 		case "items":
 			itemFiles = append(itemFiles, path)
+		case "fluids":
+			fluidFiles = append(fluidFiles, path)
+		case "aspects":
+			aspectFiles = append(aspectFiles, path)
 		case "assets":
 			if strings.HasPrefix(path, "records/") {
 				assetRecordFiles = append(assetRecordFiles, path)
@@ -443,6 +449,12 @@ func openElysiumSource(root string, manifestBytes []byte) (*Catalog, error) {
 	}
 	if len(source.sourceItems) == 0 {
 		return nil, ErrIncompleteSource
+	}
+	if err := source.readResources(fluidFiles, "fluid"); err != nil {
+		return nil, err
+	}
+	if err := source.readResources(aspectFiles, "essentia"); err != nil {
+		return nil, err
 	}
 	return source, nil
 }

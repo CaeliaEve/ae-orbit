@@ -219,7 +219,7 @@ func (s *Store) CreateProductionJob(ctx context.Context, userID, networkID strin
 			}
 			var eligible bool
 			if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM inventory i JOIN item_definitions d
-				ON d.network_id=i.network_id AND d.id=i.item_id WHERE i.network_id=$1 AND i.item_id=$2 AND i.craftable AND d.exact)`,
+				ON d.network_id=i.network_id AND d.id=i.item_id WHERE i.network_id=$1 AND i.item_id=$2 AND i.craftable AND d.exact AND d.kind='item')`,
 				networkID, int64(canonical)).Scan(&eligible); err != nil {
 				return err
 			}

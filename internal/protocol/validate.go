@@ -36,7 +36,7 @@ func (d Definition) Key() string {
 }
 
 func (d Definition) Validate() error {
-	if d.Kind != "item" && d.Kind != "fluid" {
+	if d.Kind != "item" && d.Kind != "fluid" && d.Kind != "essentia" {
 		return fmt.Errorf("unsupported resource kind")
 	}
 	if !textOK(d.Name, 1, 256) || !textOK(d.Label, 0, 512) || d.Damage < 0 || d.Damage > 2147483647 {
@@ -44,6 +44,9 @@ func (d Definition) Validate() error {
 	}
 	if !d.Exact {
 		return fmt.Errorf("item identity is not exact")
+	}
+	if d.Kind == "essentia" && (d.Damage != 0 || d.NBT != "") {
+		return fmt.Errorf("invalid essentia identity")
 	}
 	if len(d.NBT) > 16384 {
 		return fmt.Errorf("NBT exceeds identity budget")

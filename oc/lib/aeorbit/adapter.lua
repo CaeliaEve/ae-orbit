@@ -46,16 +46,22 @@ function M.new(me,config)
     return true
   end
   function adapter:capabilities()
+    local fluids=M.has_method(me,"getFluidInNetwork")
+    local essentia=M.has_method(me,"getEssentiaInNetwork")
     if worker then
-      return {inventory=true,craft=false,cpu_output=false,cpu_selection=false,exact_quantities=true,quantity_refresh=true}
+      return {inventory=true,craft=false,cpu_output=false,cpu_selection=false,exact_quantities=true,quantity_refresh=true,fluids=fluids,essentia=essentia}
     end
     return {inventory=true,craft=M.has_method(me,"getCraftable"),cpu_output=M.has_method(me,"getCpus"),
       cpu_selection=M.has_method(me,"getCraftable") and M.has_method(me,"getCpus"),
-      exact_quantities=true,quantity_refresh=true,max_craft_quantity=quantity.maximum(),
+      exact_quantities=true,quantity_refresh=true,fluids=fluids,essentia=essentia,max_craft_quantity=quantity.maximum(),
       enumeration=exact_only and "exact_only" or "volatile_iterator"}
   end
   function adapter:key(raw)
     assert(type(raw)=="table" and type(raw.name)=="string" and #raw.name>0 and #raw.name<=256,"adapter: invalid registry name")
+    if raw.kind=="fluid" or raw.kind=="essentia" then
+      assert((raw.damage or 0)==0 and not raw.tag and raw.hasTag~=true and raw.hasTag~=1,"adapter: tagged resources are unsupported")
+      return raw.kind.."\0"..raw.name.."\0"
+    end
     local damage=raw.damage or 0
     assert(type(damage)=="number" and damage>=0 and damage%1==0 and damage<=2147483647,"adapter: invalid metadata")
     -- OC serializes event booleans through NBT, returning numeric 0/1 in Lua.
@@ -79,13 +85,20 @@ function M.new(me,config)
     self:key(raw)
     local label=type(raw.label)=="string" and raw.label or raw.name
     assert(#label<=512,"adapter: label exceeds budget")
-    return {kind="item",name=raw.name,damage=raw.damage or 0,label=label,exact=true,nbt=raw.tag and base64.encode(raw.tag) or nil}
+    return {kind=raw.kind or "item",name=raw.name,damage=raw.damage or 0,label=label,exact=true,nbt=raw.tag and base64.encode(raw.tag) or nil}
   end
   function adapter:descriptor(raw)
     self:key(raw)
-    return {name=raw.name,damage=raw.damage or 0,tag=raw.tag,hasTag=raw.hasTag==true or raw.hasTag==1,label=raw.label}
+    return {kind=raw.kind,name=raw.name,damage=raw.damage or 0,tag=raw.tag,hasTag=raw.hasTag==true or raw.hasTag==1,label=raw.label}
   end
   function adapter:from_definition(definition)
+    if definition.kind=="fluid" or definition.kind=="essentia" then
+      assert(definition.exact==true and (definition.damage or 0)==0 and (definition.nbt==nil or definition.nbt==""),"adapter: unsupported resource identity")
+      local method=definition.kind=="fluid" and "getFluidInNetwork" or "getEssentiaInNetwork"
+      assert(M.has_method(me,method),"adapter: exact resource method unavailable")
+      local raw={kind=definition.kind,name=definition.name,damage=0,label=definition.label,hasTag=false}
+      self:key(raw);return raw
+    end
     assert(definition.kind=="item" and definition.exact==true,"adapter: unsupported or ambiguous resource")
     local tag=definition.nbt and definition.nbt~="" and base64.decode(definition.nbt) or nil
     local raw={name=definition.name,damage=definition.damage or 0,label=definition.label,tag=tag,hasTag=tag~=nil}
@@ -93,6 +106,19 @@ function M.new(me,config)
   end
   function adapter:read(raw)
     local detail=self:descriptor(raw)
+    if detail.kind=="fluid" or detail.kind=="essentia" then
+      local method=detail.kind=="fluid" and me.getFluidInNetwork or me.getEssentiaInNetwork
+      local value,reason=method({name=detail.name,amount=0})
+      assert(reason==nil,"adapter: exact resource lookup failed")
+      if value~=nil then
+        assert(type(value)=="table" and value.name==detail.name,"adapter: resource lookup returned another identity")
+        assert(value.hasTag~=true and value.hasTag~=1 and not value.tag,"adapter: tagged fluid identity unavailable")
+        detail.size=value.size or value.amount
+        assert(detail.size~=nil,"adapter: resource quantity unavailable")
+        detail.label=value.label or detail.label
+      else detail.size=0 end
+      return detail
+    end
     local value,reason=me.getItemInNetwork(detail)
     assert(reason==nil,"adapter: exact lookup failed")
     if value~=nil then
@@ -148,6 +174,7 @@ function M.new(me,config)
     return craftable
   end
   function adapter:recipe_status(raw)
+    assert(raw.kind==nil or raw.kind=="item","adapter: resources are inventory-only")
     local detail=self:descriptor(raw)
     local recipe,reason=self:_recipe(detail)
     if reason=="recipe NBT encoding could not be verified" and M.has_method(me,"getItemsInNetwork") then
@@ -167,6 +194,7 @@ function M.new(me,config)
     return recipe~=nil
   end
   function adapter:craft(command)
+    if command.item.kind~="item" then return nil,"resources are inventory-only",false end
     if command.cpu_name~=nil and type(command.cpu_name)~="string" then
       return nil,"invalid CPU target",false
     end

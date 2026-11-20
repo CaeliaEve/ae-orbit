@@ -112,7 +112,7 @@ function M.new(config,deps)
       self.hello_response_bytes=math.max(2048,math.min(config.max_response_bytes or 16384,math.floor(deps.free_memory()/16)))
       local capabilities=self.adapter:capabilities()
       if not primary then
-        capabilities={inventory=true,exact_quantities=true,quantity_refresh=true,craft=false,cpu_output=false}
+        capabilities={inventory=true,exact_quantities=true,quantity_refresh=true,craft=false,cpu_output=false,fluids=capabilities.fluids,essentia=capabilities.essentia}
       end
       capabilities.native_scan_disabled=config.inventory_mode=="exact_only"
       capabilities.events_disabled=config.inventory_mode=="exact_only"

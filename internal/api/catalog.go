@@ -46,7 +46,7 @@ func (s *Server) enrichCatalog(network string, items []protocol.Item) {
 		return
 	}
 	for index := range items {
-		match, state, ok := s.catalog.Lookup(items[index].Name, items[index].Damage, items[index].NBT)
+		match, state, ok := s.catalog.LookupResource(items[index].Kind, items[index].Name, items[index].Damage, items[index].NBT)
 		if !ok {
 			continue
 		}
@@ -78,7 +78,7 @@ func (s *Server) catalogImage(w http.ResponseWriter, r *http.Request, member pro
 		return
 	}
 	item := result.Items[0]
-	match, state, ok := s.catalog.Lookup(item.Name, item.Damage, item.NBT)
+	match, state, ok := s.catalog.LookupResource(item.Kind, item.Name, item.Damage, item.NBT)
 	if !ok || state != "available" {
 		fail(w, store.ErrNotFound)
 		return

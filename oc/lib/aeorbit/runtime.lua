@@ -55,6 +55,15 @@ function M.run(context,config_path,report,mode)
       if not disabled then cancel.rethrow(result) end
       if not disabled or result==false then error({fatal=true,code="event_failed"},0) end
     end
+    if config.inventory_mode=="exact_only" then
+      for _,method in ipairs({"setFluidEventSubscription","setEssentiaEventSubscription"}) do
+        if adapter.has_method(me,method) then
+          local disabled,result=pcall(me[method],false)
+          if not disabled then cancel.rethrow(result) end
+          if not disabled or result==false then error({fatal=true,code="event_failed"},0) end
+        end
+      end
+    end
     local internet=config.internet_address and component.proxy(config.internet_address) or component.getPrimary("internet")
     assert(internet)
     phase="journal_failed"

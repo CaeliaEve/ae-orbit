@@ -2370,6 +2370,15 @@ body { padding: 0; background: #0a0a0b; }
 }
 /* Player identity follows the open workspace layout. */
 .player-login-modes { display:flex; gap:4px; margin:12px 0 20px; }
+.inventory-resource-tabs { display:flex; gap:20px; margin:0 0 8px; }
+.inventory-resource-tabs button { padding:9px 0; color:#858b94; font-size:13px; }
+.inventory-resource-tabs button[aria-pressed="true"] { color:#edf0f5; box-shadow:inset 0 -2px #a9b5c5; }
+.inventory-resource-status { color:#929aa6; font-size:12px; margin:0 0 8px; line-height:1.6; }
+.inventory-table tr[data-resource-kind="fluid"] [data-quick-add],
+.inventory-table tr[data-resource-kind="essentia"] [data-quick-add] { visibility:hidden; }
+.resource-unit { margin-left:3px; font-size:9px; font-weight:400; opacity:.7; }
+.detail-stock .resource-unit { font-size:13px; margin-left:7px; }
+.resource-note { font-size:12px; line-height:1.7; }
 .player-login-modes button { flex:1; border:0; border-radius:6px; padding:9px 7px; color:var(--muted); background:transparent; font-size:13px; }
 .player-login-modes button[aria-pressed="true"] { color:var(--text); background:var(--surface-2, #20242b); }
 #player-login-fields, #token-login-fields, #player-register-fields { display:grid; gap:9px; }

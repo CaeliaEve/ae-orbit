@@ -95,9 +95,10 @@ func (s *Store) IngestV2(ctx context.Context, d Device, b protocol.InventoryBatc
 		}
 		ack.Bindings = bindings
 		if plain {
-			for _, id := range ids {
+			for index, id := range ids {
 				var allowed bool
-				if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM item_definitions d WHERE d.network_id=$1 AND d.id=$2 AND `+catalogScopeSQL+`)`, d.NetworkID, int64(id)).Scan(&allowed); err != nil {
+				if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM item_definitions d WHERE d.network_id=$1 AND d.id=$2 AND `+catalogScopeSQL+`
+				 AND (d.kind='item' OR (`+resourceSupportedSQL(caps)+` AND NOT $3)))`, d.NetworkID, int64(id), b.Updates[index].Craftable != nil || b.Updates[index].RecipeInconclusive).Scan(&allowed); err != nil {
 					return err
 				}
 				if !allowed {

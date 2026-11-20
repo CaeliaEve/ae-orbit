@@ -8,7 +8,7 @@ import {
 import { createAPI } from "./api.mjs";
 import { createInventoryWheel, inventoryKeyboardDirection } from "./inventory-paging.mjs";
 import { inventoryTooltipModel, paginateTooltipLines, splitTooltipLine, tooltipLineHTML, tooltipPosition } from "./inventory-tooltip.mjs";
-import { quantityKnown, stockText, stockFreshness, inventorySummary } from "./plain-inventory.mjs";
+import { quantityKnown, stockText, stockFreshness, inventorySummary,resourceUnit,resourceLabel } from "./plain-inventory.mjs";
 import { inventoryTrendHTML, inventoryTrendModel, loadTrendHistory, recordTrendSample, saveTrendHistory, trendStorageKey } from "./inventory-trend.mjs";
 import { dashboardTasks, dashboardInventory, dashboardTasksHTML } from "./dashboard.mjs";
 import { createHistoryController, historyChartHTML, historyChartModel, historyRecordsHTML, historyTime } from "./inventory-history.mjs";
@@ -56,6 +56,8 @@ const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const esc = value => String(value ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const quantityHTML = value => formatQuantity(value).replaceAll(",", ",<wbr>");
 const compactQuantityHTML = value => esc(formatCompactQuantity(value));
+const resourceQuantityHTML = (item, compact = false) => quantityKnown(item)
+  ? `${compact ? compactQuantityHTML(item.quantity) : quantityHTML(item.quantity)}${resourceUnit(item) ? `<small class="resource-unit">${resourceUnit(item)}</small>` : ""}` : "未查询";
 const icon = name => `<i data-lucide="${name}" aria-hidden="true"></i>`;
 const inventoryIconCache = new Map();
 function inventoryIcon(name) {
@@ -79,7 +81,7 @@ const api = createAPI();
 const texturePack = createTexturePackStore();
 const state = {
   member: null, network: null, networks: [], view: "dashboard", items: [], itemCache: new Map(),
-  orders: [], devices: [], cpus: { cpus: [] }, icons: {}, filter: "", sort: "name", search: "",
+  orders: [], devices: [], cpus: { cpus: [] }, icons: {}, filter: "", sort: "name", search: "",resourceKind:"item",
   stockView: "stock", inventoryScope: "", inventoryStats: null,
   inventoryTrend: [], inventoryTrendKey: "", dashboardTrendHours: 24,
   cursor: "", anchorCursor: "", inventoryWindowAnchored: false, nextCursor: "", cursors: [{ cursor: "", anchor: "" }], page: 0, inventoryPageCount: 1, inventoryTotal: null, inventoryDesiredPage: null, inventoryLimit: 50, inventoryTarget: null, inventoryQueryPending: false, selected: null, amount: "1",
@@ -704,9 +706,13 @@ function refreshHeader() {
   picker.title = `${network?.name || "选择网络"} · ${connectionLabel}`;
   $("#network").title = picker.title;
   $("#network-quality").textContent = network ? networkQualityLabel(network.quality) : "";
-  const summary = inventorySummary(state.inventoryStats, age);
+  const summary = inventorySummary(state.inventoryStats, age,state.resourceKind);
   $("#inventory-summary").textContent = network ? (summary ? `${summary}${network.online ? "" : " · OC 离线，显示缓存"}` : "") || `${network.name} · ${network.online ? "在线" : "离线"}` : "尚未连接网络";
   $("#stock-view-label").hidden = state.inventoryScope !== "nesql_plain";
+  $("#inventory-resource-status").textContent = state.resourceKind === "item" ? "" : inventorySummary(state.inventoryStats,age,state.resourceKind);
+  $("#inventory-resource-status").hidden = state.resourceKind === "item";
+  $$("[data-resource-kind]").forEach(button=>button.setAttribute("aria-pressed",String(button.dataset.resourceKind===state.resourceKind)));
+  $("#inventory-craft-filters").hidden = state.resourceKind !== "item";
   $("#draft-count").textContent = state.draft.entries.length;
   renderDashboard();
   renderConnectionDiagnostics();
@@ -771,10 +777,10 @@ function renderInventory() {
   const hoveredID = inventoryHover.button?.dataset.item;
   if (hoveredID) hideInventoryHover();
   const tbody = $("#inventory-rows");
-  tbody.innerHTML = state.items.map(item => `<tr data-selected="${state.selected?.id === item.id}" data-id="${esc(item.id)}">
+  tbody.innerHTML = state.items.map(item => `<tr data-resource-kind="${esc(item.kind || 'item')}" data-selected="${state.selected?.id === item.id}" data-id="${esc(item.id)}">
     <td><button class="item-button ${itemHasTexture(item) ? "" : "missing-texture"}" data-item="${esc(item.id)}" aria-label="${esc(`${catalogDisplayName(item)}，库存 ${stockText(item)}`)}">${itemImage(item)}<span class="item-copy"><span class="item-name">${esc(catalogDisplayName(item))}</span><span class="item-meta">${esc(item.name.split(":")[0])}${item.craftable ? " · 可合成" : ""}${!item.exact ? " · 身份待确认" : ""}</span></span></button></td>
-    <td><span class="stock-value ${String(item.quantity).length > 12 ? "long-number" : ""} ${item.current_session ? "" : "stale"}" title="${esc(stockText(item))}">${(quantityKnown(item) ? compactQuantityHTML(item.quantity) : "未查询")}</span><span class="freshness ${item.current_session ? "" : "stale"}">${stockFreshness(item, age)}</span></td>
-    <td><button class="icon-button" data-quick-add="${esc(item.id)}" title="加入清单" aria-label="将${esc(catalogDisplayName(item))}加入清单" ${item.craftable && item.exact && !state.draftBlocked && !state.busy && !state.preparing ? "" : "disabled"}>${inventoryIcon("plus")}</button></td>
+    <td><span class="stock-value ${String(item.quantity).length > 12 ? "long-number" : ""} ${item.current_session ? "" : "stale"}" title="${esc(stockText(item))}">${resourceQuantityHTML(item,true)}</span><span class="freshness ${item.current_session ? "" : "stale"}">${stockFreshness(item, age)}</span></td>
+    <td><button class="icon-button" data-quick-add="${esc(item.id)}" title="加入清单" aria-label="将${esc(catalogDisplayName(item))}加入清单" ${(item.kind || "item") === "item" && item.craftable && item.exact && !state.draftBlocked && !state.busy && !state.preparing ? "" : "disabled"}>${inventoryIcon("plus")}</button></td>
   </tr>`).join("");
   $("#inventory-empty").hidden = state.items.length > 0;
   $("#inventory-empty").textContent = state.inventoryLoading ? "正在读取库存…" : !state.member ? "登录后查看库存" : !state.network ? "没有可访问的网络" : "没有匹配的物品";
@@ -825,7 +831,7 @@ function patchInventoryRows() {
       stock.classList.toggle("long-number", String(item.quantity).length > 12);
       stock.classList.toggle("stale", !item.current_session);
       stock.title = stockText(item);
-      stock.innerHTML = (quantityKnown(item) ? compactQuantityHTML(item.quantity) : "未查询");
+      stock.innerHTML = resourceQuantityHTML(item,true);
     }
     const freshness = $(".freshness", row);
     if (freshness) {
@@ -834,7 +840,7 @@ function patchInventoryRows() {
     }
     const quickAdd = $("[data-quick-add]", row);
     if (quickAdd) {
-      quickAdd.disabled = !(item.craftable && item.exact && !state.draftBlocked && !state.busy && !state.preparing);
+      quickAdd.disabled = !((item.kind || "item") === "item" && item.craftable && item.exact && !state.draftBlocked && !state.busy && !state.preparing);
     }
   });
   $("#inventory-empty").hidden = state.items.length > 0;
@@ -865,7 +871,7 @@ function patchSelectedDetail(item) {
   const stock = $(".detail-stock", $("#detail-panel"));
   if (stock) {
     stock.classList.toggle("long-number", String(item.quantity ?? "0").length > 12);
-    stock.innerHTML = (quantityKnown(item) ? quantityHTML(item.quantity ?? "0") : "未查询");
+    stock.innerHTML = resourceQuantityHTML(item);
   }
   const facts = $$(".detail-facts .fact", $("#detail-panel"));
   if (facts[0]?.lastElementChild) facts[0].lastElementChild.textContent = stockFreshness(item, age);
@@ -891,7 +897,11 @@ function renderDetail() {
     $("#detail-panel").innerHTML = `<div class="detail-empty">${icon("boxes")}<strong>选择一个物品</strong><span>从库存网格中选择物品后，这里会显示数量、状态与合成操作。</span></div>`;
     return;
   }
-  const canAdd = item.craftable && item.exact && !state.draftBlocked && !state.busy && !state.preparing;
+  if (item.kind === "fluid" || item.kind === "essentia") {
+    $("#detail-panel").innerHTML = `<div class="detail-heading">${itemImage(item)}<div><h2>${esc(catalogDisplayName(item))}</h2><span class="muted">${resourceLabel(item.kind)}</span></div></div><span class="muted">库存数量</span><div class="detail-stock number">${resourceQuantityHTML(item)}</div><span class="item-meta">${esc(item.name)}</span><div class="detail-facts"><div class="fact"><span>库存观测</span><span>${stockFreshness(item,age)}</span></div><div class="fact"><span>查询方式</span><span>按名称精确查询</span></div></div><p class="muted resource-note">此类资源当前仅查看库存。物品、流体与源质分别统计。</p>`;
+    paint();scheduleSpriteAnimation();return;
+  }
+  const canAdd = (item.kind || "item") === "item" && item.craftable && item.exact && !state.draftBlocked && !state.busy && !state.preparing;
   const reason = !item.exact ? "物品身份待确认" : !item.craftable ? "合成样板尚未确认" : "";
   $("#detail-panel").innerHTML = `<div class="detail-heading">${itemImage(item)}<div><h2>${esc(catalogDisplayName(item))}</h2><span class="muted">${esc(item.name.split(":")[0])}</span></div></div>
     <span class="muted">库存数量</span><div class="detail-stock number ${String(item.quantity ?? "0").length > 12 ? "long-number" : ""}">${(quantityKnown(item) ? quantityHTML(item.quantity ?? "0") : "未查询")}</div><span class="item-meta">${esc(item.name)} · ${esc(item.damage)}</span>
@@ -1136,6 +1146,7 @@ async function changeDraft(transform, key = state.draftKey) {
 
 async function addItem(item, value, immediately = false) {
   if (!item || state.busy || state.preparing) return;
+  if (item.kind && item.kind!=="item") {toast("此类资源当前仅支持查看库存。",true);return;}
   let quantity;
   try { quantity = normalizeQuantity(value, maximum()); }
   catch { message("#detail-feedback", `请输入 1 至 ${formatQuantity(maximum())} 的整数。`); return; }
@@ -1689,11 +1700,11 @@ function inventoryWindowAnchor() {
 }
 
 function inventoryQuerySpec(limit) {
-  return { search: state.search, sort: state.sort, filter: state.filter, limit, view: state.stockView, scope: state.inventoryScope };
+  return { search: state.search, sort: state.sort, filter: state.filter, limit, view: state.stockView, scope: state.inventoryScope,kind:state.resourceKind };
 }
 
 function inventoryPageKey(cursor, spec) {
-  return JSON.stringify([spec.search, spec.sort, spec.filter, spec.limit, spec.view, spec.scope, cursor, spec.anchor || "", spec.page || ""]);
+  return JSON.stringify([spec.search, spec.sort, spec.filter, spec.limit, spec.view, spec.scope, cursor, spec.anchor || "", spec.page || "",spec.kind]);
 }
 
 function cachedInventoryPage(cursor, spec, fresh = false) {
@@ -1748,6 +1759,7 @@ function requestInventoryPage(cursor, limit, signal, spec = inventoryQuerySpec(l
   const epoch = inventoryCacheEpoch;
   const query = new URLSearchParams({ q: spec.search, sort: spec.sort, limit: String(spec.limit), consistency: "window", pagination: "pages" });
   if (spec.filter) query.set("craftable", spec.filter);
+  query.set("kind",spec.kind || "item");
   if (spec.scope === "nesql_plain") query.set("view", spec.view);
   if (cursor) query.set("cursor", cursor);
   if (spec.anchor) query.set("anchor", spec.anchor);
@@ -1805,6 +1817,7 @@ function prefetchInventoryPages(pageIndex, generation, limit) {
 async function requestInventoryBlock(start, pages, spec, signal, epoch) {
   const query = new URLSearchParams({ q: spec.search, sort: spec.sort, limit: String(Math.min(200, pages * spec.limit)), page_size: String(spec.limit), consistency: "window", pagination: "pages", page: String(start + 1) });
   if (spec.filter) query.set("craftable", spec.filter);
+  query.set("kind",spec.kind || "item");
   if (spec.scope === "nesql_plain") query.set("view", spec.view);
   const value = await api.request(networkPath(`/items?${query}`), { signal });
   if (epoch !== inventoryCacheEpoch || signal.aborted) return value;
@@ -2179,6 +2192,7 @@ async function switchNetwork(id) {
   state.inventoryTrendKey = "";
   state.inventoryScope = "";
   state.stockView = "stock";
+  state.resourceKind="item";
   $("#stock-view").value = "stock";
   state.itemCache.clear();
   state.selected = null;
@@ -2410,6 +2424,13 @@ $("#search").addEventListener("compositionend", event => {
 });
 $("#sort").addEventListener("change", event => { state.sort = event.target.value; loadInventory(true); });
 $("#stock-view").addEventListener("change", event => { state.stockView = event.target.value; loadInventory(true); });
+$("#inventory-resource-tabs").addEventListener("click", event => {
+  const kind=event.target.closest("[data-resource-kind]")?.dataset.resourceKind;
+  if (!kind || kind===state.resourceKind)return;
+  state.resourceKind=kind;state.filter="";state.selected=null;
+  $$("[data-filter]").forEach(button=>button.setAttribute("aria-pressed",String(button.dataset.filter==="")));
+  renderDetail();refreshHeader();void loadInventory(true);
+});
 $("#refresh-inventory").addEventListener("click", () => { void (state.inventoryQueryPending ? loadInventory(true) : refreshInventoryWindow(true)); void refreshInventoryStats(); });
 $("#refresh-history").addEventListener('click',()=>{if(state.network)void inventoryHistory.refresh()});
 $("#history-search").addEventListener('input',event=>{clearTimeout(historySearchTimer);if(event.isComposing)return;$("#history-search-results").hidden=false;event.target.setAttribute('aria-expanded','true');historySearchTimer=setTimeout(()=>inventoryHistory.search(event.target.value.trim()),220)});

@@ -244,6 +244,7 @@ type cooperativeCandidate struct {
 	RequestID        string
 	ExpiresAt        time.Time
 	NextQuantityTurn int
+	NextResourceTurn int
 }
 
 const noActiveCooperativeQuantity = `NOT EXISTS(SELECT 1 FROM cooperative_read_fields f
@@ -273,9 +274,17 @@ func (s *Store) cooperativeCandidates(ctx context.Context, tx pgx.Tx, d Device, 
 			WHERE r.network_id=$1 AND ` + catalogScopeSQL + ` AND d.kind='item' AND d.exact AND r.next_attempt_at<=now() AND ` + noActiveCooperativeQuantity + ` AND ` + noActiveCooperativeRecipe + `
 			ORDER BY r.next_attempt_at,r.item_id LIMIT 32`
 	case "refresh":
+		var caps protocol.Capabilities
+		var encoded []byte
+		if err := tx.QueryRow(ctx, "SELECT capabilities FROM devices WHERE id=$1", d.ID).Scan(&encoded); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(encoded, &caps); err != nil {
+			return nil, err
+		}
 		query = `SELECT ` + columns + `r.token,least(r.expires_at,now()+interval '30 seconds')
 			FROM inventory_refreshes r JOIN item_definitions d ON d.network_id=r.network_id AND d.id=r.item_id
-			WHERE r.network_id=$1 AND ` + catalogScopeSQL + ` AND d.kind='item' AND d.exact AND r.confirmed_at IS NULL AND r.expires_at>now()+interval '1 millisecond'
+			WHERE r.network_id=$1 AND ` + catalogScopeSQL + ` AND (d.kind='item' OR ` + resourceSupportedSQL(caps) + `) AND d.exact AND r.confirmed_at IS NULL AND r.expires_at>now()+interval '1 millisecond'
 			AND r.next_attempt_at<=now() AND ` + noActiveCooperativeQuantity + `
 			ORDER BY r.next_attempt_at,r.item_id LIMIT 32`
 	default:
@@ -309,13 +318,13 @@ func (s *Store) cooperativeCandidates(ctx context.Context, tx pgx.Tx, d Device, 
 	defer rows.Close()
 	result := []cooperativeCandidate{}
 	for rows.Next() {
-		c := cooperativeCandidate{}
+		c := cooperativeCandidate{NextResourceTurn: -1, NextQuantityTurn: -1}
 		c.Kind, c.Purpose = kind, category
 		if err = rows.Scan(&c.ID, &c.Item.Kind, &c.Item.Name, &c.Item.Damage, &c.Item.NBT,
 			&c.Item.Label, &c.Item.Exact, &c.RequestID, &c.ExpiresAt); err != nil {
 			return nil, err
 		}
-		if c.Item.Kind == "item" && c.Item.Exact {
+		if c.Item.Exact && (c.Item.Kind == "item" || category == "refresh") {
 			result = append(result, c)
 		}
 	}
@@ -340,8 +349,8 @@ func (s *Store) cooperativeReads(ctx context.Context, tx pgx.Tx, d Device, sessi
 	if _, err := tx.Exec(ctx, "INSERT INTO cooperative_rotation(network_id) VALUES($1) ON CONFLICT DO NOTHING", d.NetworkID); err != nil {
 		return err
 	}
-	var opportunity, background, quantityTurn int
-	if err := tx.QueryRow(ctx, "SELECT opportunity,background_turn,plain_quantity_turn FROM cooperative_rotation WHERE network_id=$1", d.NetworkID).Scan(&opportunity, &background, &quantityTurn); err != nil {
+	var opportunity, background, quantityTurn, resourceTurn int
+	if err := tx.QueryRow(ctx, "SELECT opportunity,background_turn,plain_quantity_turn,resource_turn FROM cooperative_rotation WHERE network_id=$1", d.NetworkID).Scan(&opportunity, &background, &quantityTurn, &resourceTurn); err != nil {
 		return err
 	}
 	budget := ack.ScanBudget
@@ -364,6 +373,17 @@ func (s *Store) cooperativeReads(ctx context.Context, tx pgx.Tx, d Device, sessi
 	var cold []cooperativeCandidate
 	if plain {
 		cold, err = s.plainBackgroundCandidates(ctx, tx, d, quantityTurn)
+		if err == nil {
+			var caps protocol.Capabilities
+			var encoded []byte
+			if err = tx.QueryRow(ctx, "SELECT capabilities FROM bridge_sessions WHERE id=$1", session).Scan(&encoded); err != nil {
+				return err
+			}
+			if err = json.Unmarshal(encoded, &caps); err != nil {
+				return err
+			}
+			cold, err = s.mergeResourceCandidates(ctx, tx, d, caps, cold, resourceTurn)
+		}
 	} else {
 		cold, err = s.cooperativeCandidates(ctx, tx, d, "background", d.Role == "primary" && background%2 == 1)
 	}
@@ -457,6 +477,9 @@ func (s *Store) cooperativeReads(ctx context.Context, tx pgx.Tx, d Device, sessi
 		if plain && category == "background" && c.NextQuantityTurn >= 0 {
 			quantityTurn = c.NextQuantityTurn
 		}
+		if plain && category == "background" && c.NextResourceTurn >= 0 {
+			resourceTurn = c.NextResourceTurn
+		}
 		seen[c.ID] = true
 		fieldNames := []string{"quantity"}
 		if c.Kind == "quantity_recipe" {
@@ -498,8 +521,9 @@ func (s *Store) cooperativeReads(ctx context.Context, tx pgx.Tx, d Device, sessi
 	// discovery/quantity/recipe rotation through their polling cadence.
 	_, err = tx.Exec(ctx, `UPDATE cooperative_rotation SET opportunity=$2,
 		background_turn=(background_turn+CASE WHEN $3 THEN 1 ELSE 0 END)%2,
-		plain_quantity_turn=CASE WHEN $4 THEN $5 ELSE plain_quantity_turn END WHERE network_id=$1`,
-		d.NetworkID, opportunity, d.Role == "primary", plain, quantityTurn)
+		plain_quantity_turn=CASE WHEN $4 THEN $5 ELSE plain_quantity_turn END,
+		resource_turn=CASE WHEN $4 THEN $6 ELSE resource_turn END WHERE network_id=$1`,
+		d.NetworkID, opportunity, d.Role == "primary", plain, quantityTurn, resourceTurn)
 	return err
 }
 
@@ -523,6 +547,9 @@ func cooperativeReadMemory(read protocol.ReadAssignment) (int, error) {
 	// adapter:key retains registry name, NUL, decimal metadata, NUL, and an
 	// optional fixed-width canonical NBT SHA-256 hex digest.
 	keyBytes := len(read.Item.Name) + len(strconv.Itoa(read.Item.Damage)) + 2
+	if read.Item.Kind == "fluid" || read.Item.Kind == "essentia" {
+		keyBytes = len(read.Item.Kind) + len(read.Item.Name) + 2
+	}
 	if read.Item.NBT != "" {
 		keyBytes += 64
 	}

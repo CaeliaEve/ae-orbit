@@ -11,6 +11,8 @@ import (
 // and orders remain durable when a network switches to this profile.
 const catalogScopeSQL = `(NOT EXISTS(SELECT 1 FROM network_inventory_profiles profile WHERE profile.network_id=d.network_id)
 	OR (d.kind='item' AND d.exact AND d.nbt='' AND EXISTS(SELECT 1 FROM plain_catalog_candidates candidate
+	WHERE candidate.network_id=d.network_id AND candidate.item_id=d.id))
+	OR (d.kind IN ('fluid','essentia') AND d.exact AND d.nbt='' AND EXISTS(SELECT 1 FROM resource_catalog_candidates candidate
 	WHERE candidate.network_id=d.network_id AND candidate.item_id=d.id)))`
 
 const catalogObservedSQL = `(NOT EXISTS(SELECT 1 FROM network_inventory_profiles profile WHERE profile.network_id=d.network_id)

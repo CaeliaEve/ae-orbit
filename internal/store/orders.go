@@ -78,7 +78,7 @@ func (s *Store) CreateOrder(ctx context.Context, userID, networkID string, in pr
 		}
 		var craftable, exact bool
 		var pending int
-		if err = tx.QueryRow(ctx, `SELECT i.craftable,d.exact FROM inventory i JOIN item_definitions d ON d.id=i.item_id AND d.network_id=i.network_id WHERE i.network_id=$1 AND i.item_id=$2 AND `+catalogScopeSQL+` AND `+catalogObservedSQL, networkID, int64(in.ItemID)).Scan(&craftable, &exact); err != nil {
+		if err = tx.QueryRow(ctx, `SELECT i.craftable,d.exact FROM inventory i JOIN item_definitions d ON d.id=i.item_id AND d.network_id=i.network_id WHERE i.network_id=$1 AND i.item_id=$2 AND d.kind='item' AND `+catalogScopeSQL+` AND `+catalogObservedSQL, networkID, int64(in.ItemID)).Scan(&craftable, &exact); err != nil {
 			return notFound(err)
 		}
 		if !craftable || !exact {

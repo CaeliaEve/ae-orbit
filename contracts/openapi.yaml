@@ -611,6 +611,7 @@ paths:
         Returns 406 if neither gzip nor identity is acceptable. OC and SSE encodings are unchanged.
       parameters:
         - {name: q, in: query, description: 'Chinese label, pinyin, first letters or registry name; whitespace terms are ANDed and @modid selects an exact registry namespace', schema: {type: string, maxLength: 128}}
+        - {name: kind, in: query, description: 'Resource type. NESQL profile defaults to item. Fluid quantities are mB; essentia quantities are aspect units. Type is part of cursor identity.', schema: {type: string, enum: [item, fluid, essentia]}}
         - {name: sort, in: query, schema: {type: string, enum: [name, quantity], default: name}}
         - {name: consistency, in: query, schema: {type: string, enum: [strict, live, window], default: strict}, description: Live requires name sorting. Window follows a moving keyset boundary across membership changes for either sort.}
         - {name: craftable, in: query, schema: {type: boolean}}
@@ -717,7 +718,8 @@ paths:
         Viewing access suffices; no crafting is performed. Returns cached values immediately, with
         latest per-item refresh status. Aliases share a canonical request. Pending duplicates reuse
         its generation and 60-second deadline; a request after confirmation or expiry starts a new generation.
-        After alias resolution, every existing requested cached resource must have kind=item and exact=true;
+        After alias resolution, every existing requested cached resource must be an exact item or a registered
+        NESQL fluid/essentia identity in a cooperative network with a matching safe OC capability;
         otherwise the entire batch returns 400 invalid_request without enqueueing any work.
         Unknown and cross-network IDs remain missing_ids and do not cause this rejection.
         Limits are 128 pending and 256 retained statuses per network. Old terminal statuses may be evicted.
@@ -769,6 +771,9 @@ paths:
                   pending: {type: string}
                   oldest_observation: {type: string, format: date-time}
                   last_observation: {type: string, format: date-time}
+                  resources:
+                    type: array
+                    items: {$ref: '#/components/schemas/ResourceStatistics'}
         default: {$ref: '#/components/responses/Error'}
   /api/v1/networks/{network}/inventory-profile/nesql-plain:
     parameters: [{$ref: '#/components/parameters/NetworkID'}]
@@ -779,6 +784,16 @@ paths:
       parameters: [{$ref: '#/components/parameters/CSRF'}, {$ref: '#/components/parameters/Origin'}]
       responses:
         '200': {description: Scoped inventory statistics and candidate progress}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/networks/{network}/inventory-profile/resources:
+    parameters: [{$ref: '#/components/parameters/NetworkID'}]
+    post:
+      operationId: enableResourceInventoryProfile
+      tags: [Inventory]
+      description: 'Administrator only. Idempotently add NESQL no-NBT fluid registry names and aspect tags to an existing cooperative plain profile. Counts remain unknown until authenticated quantity-only receipts. Does not reset item schedules, profile epoch or history. Dispatch requires matching fluid/essentia capabilities and disabled native enumeration/events. Resources are inventory-only.'
+      parameters: [{$ref: '#/components/parameters/CSRF'}, {$ref: '#/components/parameters/Origin'}]
+      responses:
+        '204': {description: Resource candidates enabled}
         default: {$ref: '#/components/responses/Error'}
   /api/v1/networks/{network}/inventory-history:
     parameters:
@@ -1636,12 +1651,24 @@ components:
       additionalProperties: false
       required: [network_id, can_craft]
       properties: {network_id: {$ref: '#/components/schemas/ID'}, can_craft: {type: boolean}}
+    ResourceStatistics:
+      type: object
+      required: [kind, unit, candidates, checked, entries, total_quantity, supported]
+      properties:
+        kind: {type: string, enum: [fluid, essentia]}
+        unit: {type: string, enum: [mB, 源质]}
+        candidates: {type: string, pattern: '^(0|[1-9][0-9]*)$'}
+        checked: {type: string, pattern: '^(0|[1-9][0-9]*)$'}
+        entries: {type: string, pattern: '^(0|[1-9][0-9]*)$'}
+        total_quantity: {type: string, pattern: '^(0|[1-9][0-9]*)$'}
+        last_observation: {type: string, format: date-time}
+        supported: {type: boolean, description: A current safe OC session reports the matching method. Not an online guarantee.}
     Definition:
       type: object
       additionalProperties: false
       required: [kind, name, damage, label, exact]
       properties:
-        kind: {type: string, enum: [item, fluid]}
+        kind: {type: string, enum: [item, fluid, essentia]}
         name: {type: string, minLength: 1, maxLength: 256}
         damage: {type: integer, minimum: 0, maximum: 2147483647}
         nbt: {type: string, maxLength: 16384, description: 'Canonical base64 of one gzip member containing a typed NBT root compound. At most 12288 compressed bytes, 65536 expanded bytes, 32 levels and 1024 tags. Compound order and root name do not affect identity; primitive bits, types and list order do. Omitted for untagged items.'}
@@ -1655,6 +1682,8 @@ components:
         native_scan_disabled: {type: boolean, description: Native full inventory enumeration is disabled for this boot.}
         events_disabled: {type: boolean, description: Native inventory event subscription was disabled before handshake.}
         quantity_refresh: {type: boolean, description: Supports the independent quantity-only refresh lane. A new boot is required to change negotiated capabilities.}
+        fluids: {type: boolean, description: Supports exact getFluidInNetwork with a registry-name descriptor.}
+        essentia: {type: boolean, description: Supports getEssentiaInNetwork with an explicit aspect-name descriptor.}
         craft: {type: boolean}
         cpu_output: {type: boolean}
         cpu_selection: {type: boolean, description: 'The primary OC supports strict named CPU selection when true. Targets must be unique; duplicate, missing, or busy targets never fall back to automatic assignment.'}
@@ -1714,7 +1743,7 @@ components:
         quantity_known: {type: boolean, description: False means an unqueried NESQL plain candidate; its quantity field is a placeholder and must not be displayed as confirmed zero. Absent preserves legacy observed-item semantics.}
         id: {$ref: '#/components/schemas/PositiveQuantity'}
         canonical_id: {allOf: [{$ref: '#/components/schemas/PositiveQuantity'}], description: 'Present only when an ID lookup used a legacy alias. Stock belongs to this canonical item; aliases must not be added together.'}
-        kind: {type: string, enum: [item, fluid]}
+        kind: {type: string, enum: [item, fluid, essentia]}
         name: {type: string}
         damage: {type: integer}
         label: {type: string}

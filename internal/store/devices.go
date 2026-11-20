@@ -247,7 +247,7 @@ func lockDevice(ctx context.Context, tx pgx.Tx, d Device, sessionID string, vers
 func deviceCapabilities(role string, caps protocol.Capabilities) protocol.Capabilities {
 	if role == "quantity_worker" {
 		return protocol.Capabilities{Inventory: caps.Inventory, ExactQuantities: caps.ExactQuantities, QuantityRefresh: caps.QuantityRefresh,
-			NativeScanDisabled: caps.NativeScanDisabled, EventsDisabled: caps.EventsDisabled}
+			NativeScanDisabled: caps.NativeScanDisabled, EventsDisabled: caps.EventsDisabled, Fluids: caps.Fluids, Essentia: caps.Essentia}
 	}
 	return caps
 }

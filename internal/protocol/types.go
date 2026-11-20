@@ -50,6 +50,8 @@ type Definition struct {
 }
 
 type Capabilities struct {
+	Fluids             bool     `json:"fluids,omitempty"`
+	Essentia           bool     `json:"essentia,omitempty"`
 	NativeScanDisabled bool     `json:"native_scan_disabled,omitempty"`
 	EventsDisabled     bool     `json:"events_disabled,omitempty"`
 	Inventory          bool     `json:"inventory"`
@@ -233,6 +235,7 @@ type ItemPage struct {
 }
 
 type ItemQuery struct {
+	Kind        string
 	View        string
 	Search      string
 	Sort        string

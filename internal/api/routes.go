@@ -24,6 +24,13 @@ func integerQuery(r *http.Request, key string) (int, error) {
 }
 
 func (s *Server) routes() {
+	s.mux.HandleFunc("POST /api/v1/networks/{network}/inventory-profile/resources", s.user(func(w http.ResponseWriter, r *http.Request, m protocol.Member) {
+		if err := s.db.EnableResourceCatalog(r.Context(), m.ID, r.PathValue("network")); err != nil {
+			fail(w, err)
+			return
+		}
+		respond(w, 204, nil)
+	}))
 	s.playerRoutes()
 	s.productionJobRoutes()
 	s.mux.HandleFunc("GET /api/v1/networks/{network}/devices", s.user(s.devices))
@@ -100,7 +107,7 @@ func (s *Server) routes() {
 			fail(w, err)
 			return
 		}
-		q := protocol.ItemQuery{Search: r.URL.Query().Get("q"), Sort: r.URL.Query().Get("sort"), Cursor: r.URL.Query().Get("cursor"), Limit: limit, Consistency: r.URL.Query().Get("consistency")}
+		q := protocol.ItemQuery{Kind: r.URL.Query().Get("kind"), Search: r.URL.Query().Get("q"), Sort: r.URL.Query().Get("sort"), Cursor: r.URL.Query().Get("cursor"), Limit: limit, Consistency: r.URL.Query().Get("consistency")}
 		q.View = r.URL.Query().Get("view")
 		if len(r.URL.Query()["anchor"]) > 1 || len(r.URL.Query()["cursor"]) > 1 || len(r.URL.Query()["page"]) > 1 || len(r.URL.Query()["pagination"]) > 1 {
 			fail(w, store.ErrInvalid)
