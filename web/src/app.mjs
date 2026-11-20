@@ -7,6 +7,7 @@ import {
 } from "lucide";
 import { createAPI } from "./api.mjs";
 import { createInventoryWheel, inventoryKeyboardDirection } from "./inventory-paging.mjs";
+import { inventoryTooltipModel, paginateTooltipLines, splitTooltipLine, tooltipLineHTML, tooltipPosition } from "./inventory-tooltip.mjs";
 import { quantityKnown, stockText, stockFreshness, inventorySummary } from "./plain-inventory.mjs";
 import { inventoryTrendHTML, inventoryTrendModel, loadTrendHistory, recordTrendSample, saveTrendHistory, trendStorageKey } from "./inventory-trend.mjs";
 import { dashboardTasks, dashboardInventory, dashboardTasksHTML } from "./dashboard.mjs";
@@ -46,9 +47,6 @@ import {
   animationFrameAt,
   catalogAnimation,
   catalogDisplayName,
-  catalogFacts,
-  catalogSource,
-  catalogTooltips,
   spriteLayout,
 } from "./inventory-catalog.mjs";
 
@@ -515,54 +513,76 @@ function itemFor(id) {
   return state.itemCache.get(String(id)) || Object.values(state.draft.receipts).find(r => r.item?.id === String(id))?.item;
 }
 
-function inventoryHoverHTML(item) {
-  if (!item) return "";
-  const label = catalogDisplayName(item);
-  const source = catalogSource(item);
-  const quantity = stockText(item);
-  const status = !item.craftable_observed_at ? "合成能力未确认" : item.craftable ? item.craftable_current_session === false ? "待重新核验" : "可合成" : "不可合成";
-  const sourceHTML = source ? `<span class="inventory-hover-source">${esc(source)}</span>` : "";
-  const catalogHTML = catalogFacts(item).map(([factLabel, value]) => `<div class="inventory-hover-catalog"><dt>${esc(factLabel)}</dt><dd>${esc(value)}</dd></div>`).join("");
-  const tooltips = catalogTooltips(item);
-  const tooltipHTML = tooltips.length
-    ? `<div class="inventory-hover-tooltip"><span>说明</span><ul>${tooltips.map(value => `<li>${esc(value)}</li>`).join("")}</ul></div>`
-    : "";
-  return `<div class="inventory-hover-head"><span class="inventory-hover-media">${itemImage(item)}</span><span><strong class="inventory-hover-title">${esc(label)}</strong>${sourceHTML}</span></div><dl class="inventory-hover-facts"><div><dt>精确数量</dt><dd>${esc(quantity)}</dd></div><div><dt>状态</dt><dd>${esc(status)}</dd></div><div><dt>物品 ID</dt><dd>${esc(item.id)}</dd></div>${catalogHTML}</dl>${tooltipHTML}`;
-}
-
-let inventoryHoverTimer;
+const inventoryHover = { button: null, pointer: { x: 0, y: 0 }, frame: 0, pages: [], page: 0, model: null, advanced: false, size: null };
 
 function hideInventoryHover() {
-  clearTimeout(inventoryHoverTimer);
+  cancelAnimationFrame(inventoryHover.frame);
+  inventoryHover.frame = 0;
+  inventoryHover.button?.removeAttribute("aria-describedby");
+  inventoryHover.button = null;
   const card = $("#inventory-hover-card");
   if (!card) return;
   card.hidden = true;
-  card.removeAttribute("data-placement");
   card.innerHTML = "";
 }
 
-function showInventoryHover(button) {
-  const item = itemFor(button?.dataset.item);
+function positionInventoryHover() {
+  inventoryHover.frame = 0;
+  if (!inventoryHover.button?.isConnected) { hideInventoryHover(); return; }
   const card = $("#inventory-hover-card");
-  const wrap = $("#view-inventory .table-wrap");
-  if (!item || !card || !wrap || matchMedia("(max-width: 800px)").matches) return;
-  clearTimeout(inventoryHoverTimer);
-  inventoryHoverTimer = setTimeout(() => {
-    if (!button.isConnected) return;
-    card.innerHTML = inventoryHoverHTML(item);
-    card.hidden = false;
-    scheduleSpriteAnimation();
-    const buttonRect = button.getBoundingClientRect();
-    const cardRect = card.getBoundingClientRect();
-    const tableRect = wrap.getBoundingClientRect();
-    const left = tableRect.left + (tableRect.width - cardRect.width) / 2;
-    const boundedLeft = Math.min(Math.max(10, left), Math.max(10, window.innerWidth - cardRect.width - 10));
-    const top = Math.max(tableRect.top + 12, buttonRect.top - cardRect.height - 12);
-    const boundedTop = Math.min(Math.max(10, top), Math.max(10, window.innerHeight - cardRect.height - 10));
-    card.style.left = `${boundedLeft}px`;
-    card.style.top = `${boundedTop}px`;
-    card.dataset.placement = "overlay";
-  }, 150);
+  const position = tooltipPosition(inventoryHover.pointer, inventoryHover.size, { width: innerWidth, height: innerHeight });
+  card.style.left = `${position.left}px`;
+  card.style.top = `${position.top}px`;
+}
+
+function renderInventoryHoverPage() {
+  const card = $("#inventory-hover-card");
+  const { model, pages, page } = inventoryHover;
+  const paging = pages.length > 1 ? tooltipLineHTML({ kind: "hint", text: `${page + 1} / ${pages.length} · Z 下一页` }) : "";
+  card.innerHTML = [model.title, ...pages[page], ...model.footers].map(tooltipLineHTML).join("") + paging;
+  inventoryHover.size = card.getBoundingClientRect();
+  positionInventoryHover();
+}
+
+function refreshInventoryHover() {
+  const button = inventoryHover.button;
+  const item = itemFor(button?.dataset.item);
+  if (!item || !button?.isConnected) { hideInventoryHover(); return; }
+  const card = $("#inventory-hover-card");
+  const model = inventoryTooltipModel(item, inventoryHover.advanced);
+  if (JSON.stringify(model) === JSON.stringify(inventoryHover.model) && !card.hidden) return;
+  inventoryHover.model = model;
+  // Use the longest content's width for every page, avoiding jumps when pressing Z.
+  card.style.width = "max-content";
+  card.innerHTML = [model.title, ...model.lines, ...model.footers].map(tooltipLineHTML).join("");
+  card.hidden = false;
+  card.style.width = `${card.getBoundingClientRect().width}px`;
+  const rows = [...card.children];
+  const rowHeight = row => {
+    const style = getComputedStyle(row);
+    return row.getBoundingClientRect().height + parseFloat(style.marginTop) + parseFloat(style.marginBottom);
+  };
+  const reserved = rowHeight(rows[0]) + rows.slice(1 + model.lines.length).reduce((height, row) => height + rowHeight(row), 0) + 36;
+  const available = Math.max(18, innerHeight - 16 - reserved);
+  const probe = document.createElement("div");
+  card.append(probe);
+  const measure = line => { probe.innerHTML = tooltipLineHTML(line); return rowHeight(probe.firstElementChild); };
+  const lines = model.lines.flatMap(line => splitTooltipLine(line, fragment => measure(fragment) <= available));
+  const heights = lines.map(measure);
+  inventoryHover.pages = paginateTooltipLines(lines, heights, available);
+  inventoryHover.page = Math.min(inventoryHover.page, inventoryHover.pages.length - 1);
+  renderInventoryHoverPage();
+}
+
+function showInventoryHover(button, event) {
+  if (!itemFor(button?.dataset.item) || matchMedia("(max-width: 800px)").matches || !matchMedia("(any-hover: hover)").matches) return;
+  if (inventoryHover.button !== button) { hideInventoryHover(); inventoryHover.model = null; inventoryHover.page = 0; }
+  inventoryHover.button = button;
+  inventoryHover.pointer = { x: event.clientX, y: event.clientY };
+  inventoryHover.advanced = event.shiftKey;
+  button.setAttribute("aria-describedby", "inventory-hover-card");
+  refreshInventoryHover();
+  button.querySelectorAll("[title]").forEach(element => element.removeAttribute("title"));
 }
 
 const networkPath = (suffix = "", network = state.network?.id) => `/api/v1/networks/${encodeURIComponent(network)}${suffix}`;
@@ -735,6 +755,8 @@ function closeInspector(restore = true) {
 }
 
 function renderInventory() {
+  const hoveredID = inventoryHover.button?.dataset.item;
+  if (hoveredID) hideInventoryHover();
   const tbody = $("#inventory-rows");
   tbody.innerHTML = state.items.map(item => `<tr data-selected="${state.selected?.id === item.id}" data-id="${esc(item.id)}">
     <td><button class="item-button ${itemHasTexture(item) ? "" : "missing-texture"}" data-item="${esc(item.id)}" aria-label="${esc(`${catalogDisplayName(item)}，库存 ${stockText(item)}`)}">${itemImage(item)}<span class="item-copy"><span class="item-name">${esc(catalogDisplayName(item))}</span><span class="item-meta">${esc(item.name.split(":")[0])}${item.craftable ? " · 可合成" : ""}${!item.exact ? " · 身份待确认" : ""}</span></span></button></td>
@@ -746,6 +768,10 @@ function renderInventory() {
   renderInventoryPager();
   paint();
   scheduleSpriteAnimation();
+  if (hoveredID) {
+    const button = document.elementFromPoint(inventoryHover.pointer.x, inventoryHover.pointer.y)?.closest(".inventory-table .item-button");
+    if (button?.dataset.item === hoveredID) showInventoryHover(button, { clientX: inventoryHover.pointer.x, clientY: inventoryHover.pointer.y, shiftKey: inventoryHover.advanced });
+  }
 }
 
 function patchInventoryRows() {
@@ -802,6 +828,7 @@ function patchInventoryRows() {
   renderInventoryPager();
   paint();
   scheduleSpriteAnimation();
+  if (inventoryHover.button) refreshInventoryHover();
   return true;
 }
 
@@ -1846,7 +1873,7 @@ function applyInventoryPage(destination, page) {
   const focusedItem = document.activeElement?.dataset?.item || document.activeElement?.dataset?.quickAdd;
   const focusKind = document.activeElement?.dataset?.quickAdd ? "data-quick-add" : "data-item";
   const windowX = window.scrollX, windowY = window.scrollY;
-  hideInventoryHover();
+  if (navigated) hideInventoryHover();
   if (page.total != null && state.inventoryTotal != null && page.total !== state.inventoryTotal) invalidateInventoryPageNumbers(page.total, page.pageCount);
   state.page = page.pageNumber ? page.pageNumber - 1 : destination.page;
   state.inventoryPageCount = page.pageCount || state.inventoryPageCount;
@@ -2542,12 +2569,40 @@ $("#settings-sections").addEventListener("click", event => {
 document.addEventListener("mouseover", event => {
   const button = event.target.closest(".inventory-table .item-button");
   if (!button || (event.relatedTarget instanceof Node && button.contains(event.relatedTarget))) return;
-  showInventoryHover(button);
+  showInventoryHover(button, event);
+});
+document.addEventListener("mousemove", event => {
+  const button = event.target.closest(".inventory-table .item-button");
+  if (!button) return;
+  if (inventoryHover.button !== button) { showInventoryHover(button, event); return; }
+  inventoryHover.pointer = { x: event.clientX, y: event.clientY };
+  if (!inventoryHover.frame) inventoryHover.frame = requestAnimationFrame(positionInventoryHover);
 });
 document.addEventListener("mouseout", event => {
   const button = event.target.closest(".inventory-table .item-button");
   if (button && !(event.relatedTarget instanceof Node && button.contains(event.relatedTarget))) hideInventoryHover();
 });
+document.addEventListener("keydown", event => {
+  if (!inventoryHover.button || $$("dialog[open]").length) return;
+  if (event.key === "Shift") {
+    if (!inventoryHover.advanced) { inventoryHover.advanced = true; refreshInventoryHover(); }
+    return;
+  }
+  if (event.target.closest("input,textarea,select,[contenteditable]")) return;
+  if (event.key === "Escape") hideInventoryHover();
+  else if (event.code === "KeyZ" && !event.ctrlKey && !event.metaKey && !event.altKey && inventoryHover.pages.length > 1) {
+    event.preventDefault();
+    inventoryHover.page = (inventoryHover.page + 1) % inventoryHover.pages.length;
+    renderInventoryHoverPage();
+  }
+});
+document.addEventListener("keyup", event => {
+  if (event.key === "Shift" && inventoryHover.button && inventoryHover.advanced) {
+    inventoryHover.advanced = false; refreshInventoryHover();
+  }
+});
+window.addEventListener("blur", hideInventoryHover);
+document.addEventListener("scroll", hideInventoryHover, true);
 document.addEventListener("click", async event => {
   const button = event.target.closest("button");
   if (!button || button.disabled) return;
@@ -2737,6 +2792,7 @@ window.addEventListener("resize", () => {
   inventoryResizeTimer = setTimeout(() => refreshInventoryCapacity(), 120);
 });
 document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "visible") hideInventoryHover();
   if (document.visibilityState === "visible" && state.member && state.network) { refreshNetwork(); refreshInventoryObservation(); refreshOrders(false); refreshJobs(); }
 });
 document.addEventListener("error", event => {

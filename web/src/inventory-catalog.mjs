@@ -38,7 +38,7 @@ export function catalogFacts(item) {
 export function catalogTooltips(item) {
   const values = item?.catalog?.tooltips;
   if (!Array.isArray(values)) return [];
-  return values.map(text).filter(Boolean).slice(0, 8);
+  return values.map(text).filter(Boolean);
 }
 
 export function catalogAnimation(item) {
