@@ -1,3 +1,4 @@
+import { newId } from './model.mjs';
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const number = /^[1-9][0-9]{4,14}$/;
 export function notificationTarget(value) {
@@ -11,8 +12,24 @@ const stateLabels={queued:'等待发送',leased:'准备发送',sending:'发送�
 export function qqDeliveryHTML(rows=[]) {
  return rows.length ? rows.map(d=>`<article class="qq-delivery"><div><strong>${esc(d.payload?.title || '任务通知')}</strong><small>${esc(d.payload?.cpu || d.payload?.device || d.payload?.network || '')} · ${esc(d.group_id)}${d.recipient ? ` · @${esc(d.recipient)}` : ''} · ${d.channel==='private'?'私聊':'群消息'}</small><p>${esc(d.payload?.reason || d.detail || '')}</p></div><div><span data-state="${esc(d.state)}">${esc(stateLabels[d.state] || d.state)}</span><small>${esc(new Date(d.created_at).toLocaleString('zh-CN',{hour12:false}))}</small></div></article>`).join('') : '<div class="empty">尚无通知。完成任务或触发告警后在这里查看发送状态。</div>';
 }
+export async function prepareCPUNotificationTarget({request,network,cpu,session,sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms))}) {
+ const captured=network()?.id;
+ if(!captured)throw new Error('请先选择网络');
+ if(network()?.capabilities?.cpu_notifications!==true)return null;
+ const base=`/api/v1/networks/${captured}/qq-reminders/targets`;
+ let target=await request(base,{method:'POST',body:{request_key:`cpu-target-${newId()}`,session_id:session,cpu_id:cpu.id}});
+ for(let attempt=0;target.status==='pending'&&attempt<30;attempt++){
+  await sleep(1000);
+  if(network()?.id!==captured)throw new Error('网络已切换，请重新设置');
+  target=await request(`${base}/${target.id}`);
+ }
+ if(network()?.id!==captured)throw new Error('网络已切换，请重新设置');
+ if(target.status==='pending')throw new Error('主 OC 尚未确认这台 CPU，请稍后重试');
+ if(target.status!=='busy')throw new Error('这台 CPU 的任务已结束、变化或断开，请刷新后重新选择');
+ return target.id;
+}
 export function createQQNotifications({root,request,member,network,toast,changed=()=>{}}) {
- let settings=null,group='',generation=0,chooser=null;
+ let settings=null,group='',generation=0,chooser=null,preparing=false;
  const path=(suffix='')=>`/api/v1/monitoring/groups/${encodeURIComponent(group)}/qq${suffix}`;
  async function refresh(){
   const token=++generation;group=network()?.server_group || '';if(!group){root.innerHTML='<div class="empty">选择网络后配置 QQ 联动。</div>';return}
@@ -43,7 +60,22 @@ export function createQQNotifications({root,request,member,network,toast,changed
   search.oninput=draw;f.elements.group_id.onchange=()=>{f.elements.recipient.value='';void loadMembers()};d.querySelector('[data-refresh-members]').onclick=()=>void loadMembers(true);d.querySelector('[data-members]').onclick=e=>{const b=e.target.closest('[data-qq-member]');if(b)f.elements.recipient.value=b.dataset.qqMember};void loadMembers();
   return new Promise((resolve,reject)=>{let result=null,saved=false;f.onsubmit=e=>{e.preventDefault();try{if(network()?.id!==captured)throw new Error('网络已切换，请重新设置');result=notificationTarget({group_id:f.elements.group_id.value,recipient:f.elements.recipient.value.trim(),private_copy:f.elements.private_copy.checked});saved=true;d.close()}catch(e){d.querySelector('[data-error]').textContent=e.message}};d.querySelector('[data-clear]').onclick=()=>{saved=true;d.close()};d.addEventListener('close',()=>{clearTimeout(timer);if(chooser===d)chooser=null;saved?resolve(result):reject(new Error('已取消设置'))},{once:true})});
  }
- async function cpuReminder(cpu,session){const captured=network()?.id,n=await choose();if(!n)return;if(network()?.id!==captured)throw new Error('网络已切换，请重新设置');await request(`/api/v1/networks/${captured}/qq-reminders`,{method:'POST',body:{request_key:`cpu-notify-${crypto.randomUUID()}`,session_id:session,cpu_id:cpu.id,notification:n}});toast('已设置本次 CPU 任务提醒')}
+ async function cpuReminder(cpu,session){
+  if(preparing)return;
+  preparing=true;const captured=network()?.id;
+  try{
+   if(network()?.capabilities?.cpu_notifications===true)toast('正在确认这台 CPU 的本次任务…');
+   const target=await prepareCPUNotificationTarget({request,network,cpu,session});
+   const n=await choose();if(!n)return;
+   if(network()?.id!==captured)throw new Error('网络已切换，请重新设置');
+   await request(`/api/v1/networks/${captured}/qq-reminders`,{method:'POST',body:{request_key:`cpu-notify-${newId()}`,session_id:session,cpu_id:cpu.id,...(target?{target_id:target}:{}),notification:n}});
+   toast('已设置本次 CPU 任务提醒');
+  }catch(e){
+   if(e.code==='view_changed'||e.code==='not_found')throw new Error('CPU 任务或连接已变化，请刷新后重新选择');
+   if(e.code==='capability_unavailable')throw new Error('请更新并重启主 OC，再设置本次任务通知');
+   throw e;
+  }finally{preparing=false}
+ }
  function reset(){generation++;settings=null;group='';chooser?.close()}
  return {refresh,show:()=>void refresh().catch(e=>toast(e.message,true)),choose,cpuReminder,reset};
 }

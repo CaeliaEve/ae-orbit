@@ -297,9 +297,15 @@ func uniqueIdleCPU(cpus *[]protocol.CPU, truncated bool, name string) bool {
 }
 
 func (s *Store) saveCPUs(ctx context.Context, tx pgx.Tx, networkID string, p protocol.Poll) error {
+	if _, err := tx.Exec(ctx, `DELETE FROM qq_cpu_candidates WHERE network_id=$1 AND (session_id<>$2 OR observed_at<=now()-interval '90 seconds')`, networkID, p.SessionID); err != nil {
+		return err
+	}
 	encoded, _ := json.Marshal(*p.CPUs)
 	if string(encoded) == "null" {
 		encoded = []byte("[]")
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO qq_cpu_candidates(network_id,session_id,cpu_id,cpu) SELECT $1,$2,c->>'id',c FROM jsonb_array_elements($3::jsonb) c ON CONFLICT(network_id,session_id,cpu_id) DO UPDATE SET cpu=excluded.cpu,observed_at=now()`, networkID, p.SessionID, encoded); err != nil {
+		return err
 	}
 	var previousSession string
 	var previousJSON []byte

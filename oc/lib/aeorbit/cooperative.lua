@@ -5,6 +5,7 @@ local tracker=require("aeorbit.tracker")
 local read_diagnostics=require("aeorbit.read_diagnostics")
 local cancel=require("aeorbit.cancel")
 local cpu_packet=require("aeorbit.cpu_packet")
+local cpu_watches=require("aeorbit.cpu_watches")
 local native_pcall=pcall
 local function preserve_stop(ok,...)
   if not ok then cancel.rethrow((...)) end
@@ -59,6 +60,7 @@ function M.new(config,deps)
     grants=cache.new(64,16384),
     task_bytes=task_bytes,scan_memory_floor=scan_floor,scan_memory_blocked=false,batch_delay=batch_delay,
     cpu_detail_seen=cache.new(32,8192),next_cpu_detail=0,
+    cpu_watch_targets=primary and cpu_watches.new() or nil,
     statistics={batches=0,updates=0,bytes=0,credits_used=0,collect_millis=0},
     inventory_seq="0",poll_seq="0",observation="0",credits=0,poll_delay=1,
     uploaded=0,next_scan=0,next_cpu=0,next_recipe_check=0,task_turn=true,read_opportunity=1}
@@ -261,6 +263,7 @@ function M.new(config,deps)
         read_slots=ready and math.max(0,self.limits.read_slots-self.tasks.count-self.candidates.count) or 0,read_bytes=ready and remaining or 0}
       local hints={}
       if primary then
+        if self.pending_cpu_watches then body.cpu_watches=self.pending_cpu_watches end
         if self.pending_cpu_detail then
           body.cpu_detail=self.pending_cpu_detail
           -- Bound the combined control packet before optional CPU/report fields.
@@ -300,7 +303,7 @@ function M.new(config,deps)
         if #samples==0 then body.health.read_failures=nil;diagnostic_token=nil end
       end
       self.pending_poll={body=json.encode(body,self.client.request_bytes),sequence=body.sequence,
-        reports=body.reports,hints=hints,diagnostic_token=diagnostic_token,cpu_detail=body.cpu_detail}
+        reports=body.reports,hints=hints,diagnostic_token=diagnostic_token,cpu_detail=body.cpu_detail,cpu_watches=body.cpu_watches}
     end
     local pending=self.pending_poll
     local started=deps.now()
@@ -315,6 +318,15 @@ function M.new(config,deps)
       not integer(ack.scan_budget,0,512) or not integer(ack.poll_millis,1,30000) or
       (not no_grant and not valid_grant) or (not primary and #ack.commands>0) then fatal("invalid_poll_confirmation") end
     local detail=ack.cpu_detail
+    local watches=ack.cpu_watches
+    if watches~=nil then
+      if not primary or not list(watches,4) then fatal("invalid_cpu_watch_assignment")end
+      local seen={}
+      for _,watch in ipairs(watches)do
+        if type(watch)~="table" or not token(watch.target_id) or seen[watch.target_id] or type(watch.cpu_id)~="string" or #watch.cpu_id<1 or #watch.cpu_id>128 or not integer(watch.ttl_millis,1,120000) then fatal("invalid_cpu_watch_assignment")end
+        seen[watch.target_id]=true
+      end
+    end
     if detail~=nil then
       if not primary or type(detail)~="table" or not token(detail.assignment_id) or type(detail.cpu_id)~="string" or #detail.cpu_id<1 or #detail.cpu_id>128 or (detail.kind~="active" and detail.kind~="pending" and detail.kind~="stored") or not integer(detail.ttl_millis,1,8000) or no_grant then fatal("invalid_cpu_detail_assignment") end
     end
@@ -341,6 +353,10 @@ function M.new(config,deps)
       end
     end
     if pending.cpu_detail==self.pending_cpu_detail then self.pending_cpu_detail=nil end
+    if pending.cpu_watches==self.pending_cpu_watches then self.pending_cpu_watches=nil end
+    if watches and #watches>0 then
+      self.pending_cpu_watches=self.cpu_watch_targets:read(watches,self.adapter.cpu_detail_targets,deps.now(),deps.check)
+    end
     if detail and not self.cpu_detail_seen:get(detail.assignment_id) then
       self.cpu_detail_seen:put(detail.assignment_id,true,128)
       self.cpu_detail_assignment={value=detail,deadline=started+detail.ttl_millis/1000}

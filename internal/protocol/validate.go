@@ -133,13 +133,26 @@ func (h Hello) validate(version int) error {
 }
 
 func (p Poll) Validate(maxCPUs, maxReports int) error {
-	if p.CPUDetail != nil || p.v2ReadFields || p.ReadSlots != nil || p.ReadBytes != nil || p.Hints != nil {
+	if len(p.CPUWatches) > 0 || p.CPUDetail != nil || p.v2ReadFields || p.ReadSlots != nil || p.ReadBytes != nil || p.Hints != nil {
 		return fmt.Errorf("v2 fields require protocol 2")
 	}
 	return p.validate(maxCPUs, maxReports)
 }
 
 func (p Poll) ValidateV2(maxCPUs, maxReports int) error {
+	if len(p.CPUWatches) > 4 {
+		return fmt.Errorf("CPU watches exceed budget")
+	}
+	seenWatches := map[string]bool{}
+	for _, r := range p.CPUWatches {
+		if err := r.Validate(); err != nil {
+			return err
+		}
+		if seenWatches[r.TargetID] {
+			return fmt.Errorf("duplicate CPU watch")
+		}
+		seenWatches[r.TargetID] = true
+	}
 	if p.legacyReadFields || p.RecheckSlots != nil || p.RecheckBytes != nil || p.RefreshSlots != nil || p.RefreshBytes != nil {
 		return fmt.Errorf("legacy read capacities are not supported in protocol 2")
 	}

@@ -61,6 +61,7 @@ type Capabilities struct {
 	QuantityRefresh    bool     `json:"quantity_refresh,omitempty"`
 	Craft              bool     `json:"craft"`
 	CPUDetails         bool     `json:"cpu_details,omitempty"`
+	CPUNotifications   bool     `json:"cpu_notifications,omitempty"`
 	CPUOutput          bool     `json:"cpu_output"`
 	CPUSelection       bool     `json:"cpu_selection"`
 	ExactQuantities    bool     `json:"exact_quantities"`
@@ -361,6 +362,7 @@ type InventoryTelemetry struct {
 }
 
 type Poll struct {
+	CPUWatches       []CPUWatchResult `json:"cpu_watches,omitempty"`
 	CPUDetail        *CPUDetailResult `json:"cpu_detail,omitempty"`
 	SessionID        string           `json:"session_id"`
 	Sequence         Quantity         `json:"sequence"`
@@ -438,6 +440,7 @@ type Verification struct {
 }
 
 type PollAck struct {
+	CPUWatches     []CPUWatchAssignment `json:"cpu_watches,omitempty"`
 	CPUDetail      *CPUDetailAssignment `json:"cpu_detail,omitempty"`
 	Ack            Quantity             `json:"ack"`
 	Commands       []Command            `json:"commands"`
@@ -461,6 +464,7 @@ func (p PollAck) MarshalJSON() ([]byte, error) {
 		commands = []Command{}
 	}
 	return json.Marshal(struct {
+		CPUWatches     []CPUWatchAssignment `json:"cpu_watches,omitempty"`
 		CPUDetail      *CPUDetailAssignment `json:"cpu_detail,omitempty"`
 		Ack            Quantity             `json:"ack"`
 		Commands       []Command            `json:"commands"`
@@ -469,7 +473,7 @@ func (p PollAck) MarshalJSON() ([]byte, error) {
 		Reads          []ReadAssignment     `json:"reads"`
 		GrantID        string               `json:"grant_id,omitempty"`
 		GrantTTLMillis int                  `json:"grant_ttl_millis,omitempty"`
-	}{p.CPUDetail, p.Ack, commands, p.PollMillis, p.ScanBudget, p.Reads, p.GrantID, p.GrantTTLMillis})
+	}{p.CPUWatches, p.CPUDetail, p.Ack, commands, p.PollMillis, p.ScanBudget, p.Reads, p.GrantID, p.GrantTTLMillis})
 }
 
 type QuantityRefresh struct {

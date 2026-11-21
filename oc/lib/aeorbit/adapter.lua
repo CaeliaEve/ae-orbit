@@ -24,7 +24,7 @@ function M.new(me,config)
   assert(M.has_method(me,"getItemInNetwork"),"adapter: missing getItemInNetwork; requires OC 1.12.47-GTNH+ (table/NBT API)")
   local cpu_limit=config.cpu_limit or 64
   assert(type(cpu_limit)=="number" and cpu_limit%1==0 and cpu_limit>=1 and cpu_limit<=64,"adapter: CPU limit must be 1..64")
-  local adapter={me=me,identity_bytes=config.identity_bytes or 4096,cpu_limit=cpu_limit,cpu_generation="0",cpu_detail_targets=cache.new(128,32768),
+  local adapter={me=me,identity_bytes=config.identity_bytes or 4096,cpu_limit=cpu_limit,cpu_generation="0",cpu_detail_targets=cache.new(768,196608),
     nbt_cache=cache.new(64,32768)}
   local function cpu_name(raw)
     return tostring(raw and raw.name or ""):sub(1,256)
@@ -51,7 +51,7 @@ function M.new(me,config)
     if worker then
       return {inventory=true,craft=false,cpu_output=false,cpu_selection=false,exact_quantities=true,quantity_refresh=true,fluids=fluids,essentia=essentia,exact_nbt=true,max_nbt_bytes=self.identity_bytes}
     end
-    return {inventory=true,cpu_details=M.has_method(me,"getCpus"),craft=M.has_method(me,"getCraftable"),cpu_output=M.has_method(me,"getCpus"),
+    return {inventory=true,cpu_notifications=M.has_method(me,"getCpus"),cpu_details=M.has_method(me,"getCpus"),craft=M.has_method(me,"getCraftable"),cpu_output=M.has_method(me,"getCpus"),
       cpu_selection=M.has_method(me,"getCraftable") and M.has_method(me,"getCpus"),
       exact_quantities=true,quantity_refresh=true,fluids=fluids,essentia=essentia,craft_fluids=fluids and M.has_method(me,"getCraftable"),max_craft_quantity=quantity.maximum(),exact_nbt=true,max_nbt_bytes=self.identity_bytes,
       enumeration=exact_only and "exact_only" or "volatile_iterator"}

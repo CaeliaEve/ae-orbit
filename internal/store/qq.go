@@ -176,6 +176,7 @@ type QQReminder struct {
 	CreatedAt    time.Time               `json:"created_at"`
 }
 type QQReminderInput struct {
+	TargetID     string                  `json:"target_id,omitempty"`
 	RequestKey   string                  `json:"request_key"`
 	SessionID    string                  `json:"session_id"`
 	CPUID        string                  `json:"cpu_id"`
@@ -215,7 +216,7 @@ func (s *Store) AddQQCPUReminder(ctx context.Context, member, network string, in
 	if err := s.RequireAccess(ctx, member, network, true); err != nil {
 		return "", err
 	}
-	if !protocol.ProductionJobKeyValid(in.RequestKey) || len(in.SessionID) > 128 || len(in.CPUID) > 128 {
+	if !protocol.ProductionJobKeyValid(in.RequestKey) || len(in.SessionID) > 128 || len(in.CPUID) > 128 || len(in.TargetID) > 128 {
 		return "", ErrInvalid
 	}
 	id := newID()
@@ -224,6 +225,11 @@ func (s *Store) AddQQCPUReminder(ctx context.Context, member, network string, in
 			return err
 		}
 		if err := validateQQTarget(ctx, tx, network, &in.Notification); err != nil {
+			return err
+		}
+		if in.TargetID != "" {
+			var err error
+			id, err = addPinnedQQReminder(ctx, tx, member, network, in)
 			return err
 		}
 		var raw []byte
@@ -240,9 +246,13 @@ func (s *Store) AddQQCPUReminder(ctx context.Context, member, network string, in
 		if err = json.Unmarshal(raw, &cpus); err != nil {
 			return err
 		}
+		clicked, err := qqCPUObservation(ctx, tx, network, session, in.CPUID)
+		if err != nil {
+			return err
+		}
 		var target *protocol.CPU
 		for i := range cpus {
-			if cpus[i].ID == in.CPUID {
+			if cpus[i].Name == clicked.Name {
 				target = &cpus[i]
 			}
 		}
@@ -260,6 +270,11 @@ func (s *Store) AddQQCPUReminder(ctx context.Context, member, network string, in
 		}
 		if count != 1 {
 			return ErrConflict
+		}
+		before, _ := json.Marshal(cpuQQFingerprint(*clicked))
+		after, _ := json.Marshal(cpuQQFingerprint(*target))
+		if string(before) != string(after) {
+			return ErrViewChanged
 		}
 		var entry *string
 		rows, err := tx.Query(ctx, `SELECT e.id FROM production_job_entries e JOIN production_jobs j ON j.id=e.job_id WHERE e.network_id=$1 AND j.member_id=$2 AND e.cpu_name=$3 AND e.state='running' LIMIT 2`, network, member, target.Name)
@@ -382,7 +397,7 @@ func updateQQCPUWatches(ctx context.Context, tx pgx.Tx, network string, p protoc
 	if p.CPUs == nil {
 		return nil
 	}
-	rows, err := tx.Query(ctx, `SELECT id,cpu_name,session_id,cpu_fingerprint FROM qq_reminders WHERE network_id=$1 AND entry_id IS NULL AND state='watching' FOR UPDATE`, network)
+	rows, err := tx.Query(ctx, `SELECT id,cpu_name,session_id,cpu_fingerprint FROM qq_reminders WHERE network_id=$1 AND entry_id IS NULL AND cpu_target_id IS NULL AND state='watching' FOR UPDATE`, network)
 	if err != nil {
 		return err
 	}

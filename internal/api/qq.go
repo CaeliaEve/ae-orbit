@@ -79,6 +79,27 @@ func (s *Server) qqRoutes() {
 		respond(w, 200, v)
 	}))
 	const network = "/api/v1/networks/{network}/qq-reminders"
+	s.mux.HandleFunc("POST "+network+"/targets", s.user(func(w http.ResponseWriter, r *http.Request, m protocol.Member) {
+		var in store.QQCPUTargetInput
+		if e := readJSON(w, r, &in, 1024); e != nil {
+			fail(w, e)
+			return
+		}
+		v, e := s.db.PrepareQQCPUTarget(r.Context(), m.ID, r.PathValue("network"), in)
+		if e != nil {
+			fail(w, e)
+			return
+		}
+		respond(w, 201, v)
+	}))
+	s.mux.HandleFunc("GET "+network+"/targets/{target}", s.user(func(w http.ResponseWriter, r *http.Request, m protocol.Member) {
+		v, e := s.db.QQCPUTarget(r.Context(), m.ID, r.PathValue("network"), r.PathValue("target"))
+		if e != nil {
+			fail(w, e)
+			return
+		}
+		respond(w, 200, v)
+	}))
 	s.mux.HandleFunc("GET "+network, s.user(func(w http.ResponseWriter, r *http.Request, m protocol.Member) {
 		v, e := s.db.QQReminders(r.Context(), m.ID, r.PathValue("network"))
 		if e != nil {

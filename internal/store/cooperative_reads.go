@@ -27,7 +27,7 @@ func (s *Store) PollV2(ctx context.Context, d Device, p protocol.Poll) (protocol
 		if err != nil {
 			return err
 		}
-		if d.Role != "primary" && (p.CPUDetail != nil || p.CPUs != nil || len(p.Reports) > 0 || len(p.Hints) > 0 || p.CPUsTruncated) {
+		if d.Role != "primary" && (len(p.CPUWatches) > 0 || p.CPUDetail != nil || p.CPUs != nil || len(p.Reports) > 0 || len(p.Hints) > 0 || p.CPUsTruncated) {
 			return ErrForbidden
 		}
 		var last protocol.Quantity
@@ -80,6 +80,12 @@ func (s *Store) PollV2(ctx context.Context, d Device, p protocol.Poll) (protocol
 		}
 		ready := !plain || (caps.NativeScanDisabled && caps.EventsDisabled && caps.ExactQuantities)
 		if d.Role == "primary" {
+			if len(p.CPUWatches) > 0 && !caps.CPUNotifications {
+				return ErrCapability
+			}
+			if err = acceptQQCPUWatches(ctx, tx, d.NetworkID, p.SessionID, p.CPUWatches); err != nil {
+				return err
+			}
 			if p.CPUDetail != nil && !caps.CPUDetails {
 				return ErrCapability
 			}
@@ -110,6 +116,16 @@ func (s *Store) PollV2(ctx context.Context, d Device, p protocol.Poll) (protocol
 			}
 		}
 		ack.Ack = p.Sequence
+		if d.Role == "primary" && ready && caps.CPUNotifications {
+			ack.CPUWatches, err = s.cpuWatchAssignments(ctx, tx, d.NetworkID, p.SessionID)
+			if err != nil {
+				return err
+			}
+			encoded, _ := json.Marshal(ack)
+			if len(encoded) > responseBytes {
+				ack.CPUWatches = nil
+			}
+		}
 		slots, queueBytes := 0, 0
 		if ready && caps.Inventory && (caps.ExactQuantities || d.Role == "primary") && p.ReadSlots != nil && p.ReadBytes != nil {
 			slots, queueBytes = *p.ReadSlots, *p.ReadBytes
@@ -198,7 +214,8 @@ func (s *Store) acceptReadHints(ctx context.Context, tx pgx.Tx, network string, 
 }
 
 func (s *Store) filterCooperativeReplay(ctx context.Context, tx pgx.Tx, d Device, session string, ack *protocol.PollAck) error {
-	ack.CPUDetail = nil // Replay never grants another native list invocation.
+	ack.CPUWatches = nil // A lost acknowledgement is retried on a new poll.
+	ack.CPUDetail = nil  // Replay never grants another native list invocation.
 	commands := []protocol.Command{}
 	for _, c := range ack.Commands {
 		var live bool

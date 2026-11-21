@@ -1406,7 +1406,7 @@ function renderCPUList(model = cpuMonitorModel(state.cpus.cpus || [], state.cpuM
   const list = $("#cpu-list"), scroll = list.scrollTop;
   const active = document.activeElement?.closest(".cpu-monitor-row");
   const activeKey = active && list.contains(active) ? active.dataset.cpuKey : null;
-  list.innerHTML = cpuMonitorListHTML(model, { connected: !!state.network, supported: state.network?.capabilities?.cpu_selection === true, truncated: state.cpus.truncated, expanded: state.cpuMonitor.expanded,
+  list.innerHTML = cpuMonitorListHTML(model, { connected: !!state.network, supported: state.network?.capabilities?.cpu_selection === true, notificationSupported: state.network?.capabilities?.cpu_notifications === true, online: !!state.network?.online, truncated: state.cpus.truncated, expanded: state.cpuMonitor.expanded,
     outputImage: (output,cpu) => itemImage({...output,id:`cpu:${cpu.id}`,kind:output.has_tag === false && Number.isInteger(output.damage) ? output.kind : "unknown"}) });
   list.scrollTop = scroll;
   if (activeKey) $$(".cpu-monitor-row", list).find(row => row.dataset.cpuKey === activeKey)?.querySelector("summary")?.focus({ preventScroll: true });

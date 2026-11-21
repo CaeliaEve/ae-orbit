@@ -61,3 +61,12 @@ test("CPU NBT output reuses verified artwork and retains the observed custom nam
  const html=cpuMonitorListHTML(cpuMonitorModel(cpus),{outputImage:()=>'<img class="item-image" src="/paper.png" alt="">'});
  assert.match(html,/src="\/paper.png"/);assert.match(html,/棕基板被动/);assert.match(html,/使用基础纹理/);assert.match(html,/NBT 变种外观未单独确认/);
 });
+
+test('unnamed and duplicate CPUs can notify with native target support; legacy explains upgrade',()=>{
+ const model=cpuMonitorModel([{id:'1:1',name:'',busy:true,storage:'4096',coprocessors:1},{id:'1:2',name:'Same',busy:true,storage:'4096',coprocessors:1},{id:'1:3',name:'Same',busy:true,storage:'4096',coprocessors:1}]);
+ const old=cpuMonitorListHTML(model);
+ assert.match(old,/data-cpu-notify="1:1" disabled/);assert.match(old,/更新主 OC/);
+ const current=cpuMonitorListHTML(model,{notificationSupported:true,truncated:true});
+ assert.doesNotMatch(current,/data-cpu-notify="[^"]+" disabled/);
+ assert.match(cpuMonitorListHTML(model,{notificationSupported:true,online:false}),/OC 离线，暂时不能设置/);
+});

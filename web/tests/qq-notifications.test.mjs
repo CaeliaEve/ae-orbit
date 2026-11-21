@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { notificationTarget,notificationLabel,qqDeliveryHTML } from '../src/qq-notifications.mjs';
+import { notificationTarget,notificationLabel,qqDeliveryHTML,prepareCPUNotificationTarget } from '../src/qq-notifications.mjs';
 import { createJobIntent,createJobJournal } from '../src/jobs.mjs';
 import { saveDraft,storageKey } from '../src/model.mjs';
 
@@ -22,4 +22,25 @@ test('notification target persists inside immutable order manifest',()=>{
 test('delivery history escapes member and device supplied values',()=>{
  const html=qqDeliveryHTML([{id:'1',group_id:'1081348823',channel:'group',state:'uncertain',created_at:'2026-11-21T00:00:00Z',payload:{title:'<script>',cpu:'<img>',reason:'&'}}]);
  assert.ok(!html.includes('<script>'));assert.match(html,/发送待确认/);assert.match(html,/&lt;img&gt;/);
+});
+test('CPU notification preparation pins clicked ID before recipient selection',async()=>{
+ const network=()=>({id:'net',capabilities:{cpu_notifications:true}}),calls=[];
+ const request=async(path,options)=>{calls.push({path,options});return {id:'target',status:calls.length===1?'pending':'busy'}};
+ assert.equal(await prepareCPUNotificationTarget({network,request,cpu:{id:'old:7'},session:'boot',sleep:async()=>{}}),'target');
+ assert.equal(calls[0].options.body.cpu_id,'old:7');assert.equal(calls[1].path,'/api/v1/networks/net/qq-reminders/targets/target');
+});
+test('changed tasks and network switching never receive a notification target',async()=>{
+ const options={network:()=>({id:'net',capabilities:{cpu_notifications:true}}),cpu:{id:'1:1'},session:'boot',sleep:async()=>{},request:async()=>({id:'t',status:'idle'})};
+ await assert.rejects(prepareCPUNotificationTarget(options),/任务已结束/);
+ let id='net';options.network=()=>({id,capabilities:{cpu_notifications:true}});options.request=async()=>({id:'t',status:'pending'});options.sleep=async()=>{id='other'};
+ await assert.rejects(prepareCPUNotificationTarget(options),/网络已切换/);
+});
+test('HTTP context without randomUUID can prepare CPU reminders',async()=>{
+ const previous=Object.getOwnPropertyDescriptor(globalThis,'crypto');
+ Object.defineProperty(globalThis,'crypto',{configurable:true,value:{getRandomValues:values=>{values.fill(12);return values}}});
+ try{
+  let key;
+  const target=await prepareCPUNotificationTarget({network:()=>({id:'net',capabilities:{cpu_notifications:true}}),cpu:{id:'1:1'},session:'boot',request:async(_path,options)=>{key=options.body.request_key;return {id:'target',status:'busy'}}});
+  assert.equal(target,'target');assert.match(key,/^cpu-target-[0-9a-f]{32}$/);
+ }finally{Object.defineProperty(globalThis,'crypto',previous)}
 });
