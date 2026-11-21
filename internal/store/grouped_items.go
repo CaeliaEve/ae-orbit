@@ -49,6 +49,11 @@ func (s *Store) GroupedItems(ctx context.Context, user, network string, q protoc
 		return result, err
 	}
 	defer tx.Rollback(context.Background())
+	// A catalogue page is small. Parallel hash workers amplify shared-memory
+	// use on the production database; this budget is local to the read-only tx.
+	if _, err = tx.Exec(ctx, "SET LOCAL max_parallel_workers_per_gather=0; SET LOCAL work_mem='8MB'"); err != nil {
+		return result, err
+	}
 	var session string
 	if err = tx.QueryRow(ctx, "SELECT revision,current_session FROM networks WHERE id=$1", network).Scan(&result.Revision, &session); err != nil {
 		return result, notFound(err)
@@ -84,19 +89,39 @@ func (s *Store) GroupedItems(ctx context.Context, user, network string, q protoc
 		conditions = append(conditions, "craftable="+param(*q.Craftable))
 	}
 	matchWhere := strings.Join(conditions, " AND ")
-	// Search matches a child but returns its whole base group, so a new variant
-	// cannot appear on a different page from its existing siblings.
-	cte := `WITH variants AS MATERIALIZED (
- SELECT d.id,d.name,d.damage,d.nbt,c.label,c.search_text,coalesce(i.quantity,0) quantity,i.item_id IS NOT NULL known,
- coalesce(i.craftable,false) craftable,i.observed_at,i.craftable_observed_at,` + quantityCurrentSessionSQL + ` current_session,` + recipeCurrentSessionSQL + ` recipe_current
- FROM item_catalog_candidates c JOIN item_definitions d ON d.network_id=c.network_id AND d.id=c.item_id
+	// Only bases with observed stock can appear in the stock view. Retain all
+	// their siblings so candidate counts and search still describe the whole group.
+	stockCTE, stockJoin := "", ""
+	if q.View == "stock" {
+		stockCTE = `stock_bases AS MATERIALIZED (
+ SELECT DISTINCT d.name,d.damage FROM inventory i
+ JOIN item_definitions d ON d.network_id=i.network_id AND d.id=i.item_id
+ JOIN network_inventory_profiles p ON p.network_id=i.network_id
+ WHERE i.network_id=$1 AND i.quantity>0 AND i.observed_at>=p.enabled_at AND d.kind='item'),`
+		stockJoin = " JOIN stock_bases b ON b.name=d.name AND b.damage=d.damage "
+	}
+	cte := `WITH ` + stockCTE + `live_sources AS MATERIALIZED (
+ SELECT source.id,owner.role FROM bridge_sessions source
+ JOIN devices owner ON owner.id=source.device_id AND owner.current_session=source.id AND NOT owner.revoked
+ JOIN networks n ON n.id=source.network_id
+ WHERE source.network_id=$1 AND NOT source.retired
+ AND source.protocol=CASE n.bridge_mode WHEN 'single' THEN 1 ELSE 2 END
+ AND (n.bridge_mode<>'single' OR source.id=$2)),
+ variants AS (
+ SELECT d.id,d.name,d.damage,(d.nbt='') untagged,c.label,c.search_text,coalesce(i.quantity,0) quantity,i.item_id IS NOT NULL known,
+ coalesce(i.craftable,false) craftable,i.observed_at,i.craftable_observed_at,
+ qty.id IS NOT NULL current_session,recipe.id IS NOT NULL recipe_current
+ FROM item_catalog_candidates c JOIN item_definitions d ON d.network_id=c.network_id AND d.id=c.item_id ` + stockJoin + `
  JOIN network_inventory_profiles p ON p.network_id=c.network_id
  LEFT JOIN inventory i ON i.network_id=c.network_id AND i.item_id=c.item_id AND i.observed_at>=p.enabled_at
+ LEFT JOIN live_sources qty ON qty.id=i.session_id
+ LEFT JOIN live_sources recipe ON recipe.id=i.craftable_session_id AND recipe.role='primary'
  WHERE c.network_id=$1 AND d.kind='item' AND d.exact),
- grouped AS (SELECT min(id) id,name,damage,
- coalesce(min(label) FILTER(WHERE nbt=''),min(label)) label,count(*) candidates,count(*) FILTER(WHERE known) checked,
+ grouped AS MATERIALIZED (SELECT min(id) id,name,damage,
+ coalesce(min(label) FILTER(WHERE untagged),min(label)) label,count(*) candidates,count(*) FILTER(WHERE known) checked,
  count(*) FILTER(WHERE known AND quantity>0) stock,coalesce(sum(quantity) FILTER(WHERE known),0)::text quantity,
- coalesce(max(observed_at),'epoch'::timestamptz) observed_at,max(craftable_observed_at) recipe_at,bool_and(current_session) FILTER(WHERE known) current_session,
+ coalesce(max(observed_at),'epoch'::timestamptz) observed_at,max(craftable_observed_at) recipe_at,
+ bool_and(current_session) FILTER(WHERE known) current_session,
  bool_or(craftable) craftable,bool_and(recipe_current) FILTER(WHERE craftable) recipe_current
  FROM variants d GROUP BY name,damage HAVING bool_or(` + matchWhere + `))`
 	where := "true"
@@ -107,41 +132,44 @@ func (s *Store) GroupedItems(ctx context.Context, user, network string, q protoc
 	if q.Sort == "quantity" {
 		order = "quantity::numeric DESC,id"
 	}
-	var total int64
-	if err = tx.QueryRow(ctx, cte+" SELECT count(*) FROM grouped WHERE "+where, args...).Scan(&total); err != nil {
-		return result, err
-	}
-	quantity := protocol.Quantity(total)
-	result.Total = &quantity
-	result.PageCount = max(1, int((total+int64(size)-1)/int64(size)))
-	result.PageNumber = max(1, q.Page)
-	if q.LastPage {
-		result.PageNumber = result.PageCount
-	}
-	if q.Anchor != "" {
-		var rank int64
-		rankArgs := append(append([]any{}, args...), int64(anchor.ID))
-		err = tx.QueryRow(ctx, cte+" SELECT position FROM (SELECT id,row_number() OVER(ORDER BY "+order+")-1 position FROM grouped WHERE "+where+") x WHERE id="+fmt.Sprintf("$%d", len(rankArgs)), rankArgs...).Scan(&rank)
-		if err == nil {
-			result.PageNumber = int(rank/int64(size)) + 1
-		} else if err != pgx.ErrNoRows {
-			return result, err
-		}
-	}
-	result.PageNumber = min(result.PageNumber, result.PageCount)
-	rows, err := tx.Query(ctx, cte+` SELECT id,name,damage,label,candidates,checked,stock,quantity,observed_at,recipe_at,coalesce(current_session,false),craftable,coalesce(recipe_current,false)
- FROM grouped WHERE `+where+" ORDER BY "+order+" LIMIT "+param(q.Limit)+" OFFSET "+param((result.PageNumber-1)*size), args...)
+	// Count, anchor rank and selected page share the same materialized groups.
+	// Previously every page aggregated the entire catalogue two or three times.
+	sizeParam := param(int64(size))
+	pageParam := param(int64(max(0, q.Page-1)))
+	lastParam := param(q.LastPage)
+	anchorParam := param(int64(anchor.ID))
+	limitParam := param(q.Limit)
+	statement := cte + `, ranked AS MATERIALIZED (
+ SELECT *,row_number() OVER(ORDER BY ` + order + `)-1 position FROM grouped WHERE ` + where + `),
+ summary AS (SELECT count(*) total FROM ranked),
+ bounds AS (SELECT total,greatest(1,(total+` + sizeParam + `-1)/` + sizeParam + `) page_count,
+ least(greatest(0,(total-1)/` + sizeParam + `),
+ CASE WHEN ` + lastParam + ` THEN greatest(0,(total-1)/` + sizeParam + `)
+ ELSE coalesce((SELECT position/` + sizeParam + ` FROM ranked WHERE id=` + anchorParam + `),` + pageParam + `) END) page
+ FROM summary)
+ SELECT bounds.total,bounds.page_count,bounds.page+1,
+ coalesce(p.id,0),coalesce(p.name,''),coalesce(p.damage,0),coalesce(p.label,''),coalesce(p.candidates,0),coalesce(p.checked,0),
+ coalesce(p.stock,0),coalesce(p.quantity,'0'),coalesce(p.observed_at,'epoch'::timestamptz),p.recipe_at,
+ coalesce(p.current_session,false),coalesce(p.craftable,false),coalesce(p.recipe_current,false)
+ FROM bounds LEFT JOIN LATERAL (
+ SELECT * FROM ranked WHERE position>=bounds.page*` + sizeParam + ` ORDER BY position LIMIT ` + limitParam + `)p ON true
+ ORDER BY p.position`
+	rows, err := tx.Query(ctx, statement, args...)
 	if err != nil {
 		return result, err
 	}
 	for rows.Next() {
 		item := protocol.Item{Kind: "item", Exact: true, Group: &protocol.ItemGroup{}}
-		var known bool
-		if err = rows.Scan(&item.ID, &item.Name, &item.Damage, &item.Label, &item.Group.Candidates, &item.Group.Checked, &item.Group.Stock, &item.Group.Quantity, &item.ObservedAt, &item.CraftableObservedAt, &item.CurrentSession, &item.Craftable, &item.CraftableCurrentSession); err != nil {
+		var total protocol.Quantity
+		if err = rows.Scan(&total, &result.PageCount, &result.PageNumber, &item.ID, &item.Name, &item.Damage, &item.Label, &item.Group.Candidates, &item.Group.Checked, &item.Group.Stock, &item.Group.Quantity, &item.ObservedAt, &item.CraftableObservedAt, &item.CurrentSession, &item.Craftable, &item.CraftableCurrentSession); err != nil {
 			rows.Close()
 			return result, err
 		}
-		known = item.Group.Checked > 0
+		result.Total = &total
+		if item.ID == 0 {
+			continue
+		}
+		known := item.Group.Checked > 0
 		item.QuantityKnown = &known
 		result.Items = append(result.Items, item)
 	}
