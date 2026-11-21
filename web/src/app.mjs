@@ -6,7 +6,7 @@ import {
   WifiOff, PanelLeftClose, UserRound, Puzzle, Ellipsis, BatteryCharging, ArrowUp, ArrowDown, GripVertical,
 } from "lucide";
 import { createAPI } from "./api.mjs";
-import { createCPUDetails, cpuDetailColumnsHTML } from "./cpu-details.mjs";
+import { createCPUDetails, cpuDetailColumnsHTML, cpuDetailStatus } from "./cpu-details.mjs";
 import { cpuOutputText } from "./cpu-ui.mjs";
 import { createPluginMarket } from "./plugin-market.mjs";
 import { coreNavigation, pluginNavigation, availableNavigation, orderedNavigation, partitionNavigation, navigationKey, loadNavigation, saveNavigation, moveNavigation, placeNavigation, normalizeNavigation } from "./navigation.mjs";
@@ -1411,7 +1411,7 @@ function renderCPUProcess() {
   const target=cpuDetails.current;if(!target)return;
   $("#cpu-process-title").textContent=`${target.name} · 合成过程`;
   $("#cpu-process-goal").textContent=cpuOutputText(target.data?.cpu || target.cpu);
-  $("#cpu-process-status").textContent=target.error || (target.data?.status==="ready" ? "持续更新 · 各栏读取时间如下" : "正在等待主 OC 分栏采集，首次集齐约需 30 秒");
+  $("#cpu-process-status").textContent=cpuDetailStatus(target);
   const columns=$("#cpu-process-columns");
   const scroll=new Map($$("[data-cpu-process-scroll]",columns).map(node=>[node.dataset.cpuProcessScroll,node.scrollTop]));
   columns.innerHTML=cpuDetailColumnsHTML(target.data,{search:$("#cpu-process-search").value,age,image:item=>itemImage({...item,id:`process:${item.row_id}`,kind:item.has_tag===false&&Number.isInteger(item.damage)?item.kind:"unknown"})});
@@ -2685,7 +2685,12 @@ $("#cpu-list").addEventListener("click",event=>{
   cpuDetails.open({network:state.network.id,session:state.cpus.session_id||state.network.session_id,cpu,name:cpu.name?.trim()||`未命名 CPU ${index+1}`});
 });
 $("#cpu-process-search").addEventListener("input",renderCPUProcess);
-$("#cpu-process-dialog").addEventListener("close",()=>cpuDetails.close());
+$("#cpu-process-dialog").addEventListener("close",()=>{if(!$("#cpu-process-dialog").open)void cpuDetails.close();});
+$("#cpu-process-reconnect").addEventListener("click",()=>{
+  const target=cpuDetails.current;if(!target)return;
+  if(target.stopped){$("#cpu-process-status").textContent=target.error || "请关闭后重新选择 CPU";return;}
+  void cpuDetails.refresh().catch(error=>{ $("#cpu-process-status").textContent=error.message; });
+});
 $("#cpu-monitor-search").addEventListener("input", event => {
   state.cpuMonitor.search = event.target.value;
   $("#cpu-list").scrollTop = 0;
