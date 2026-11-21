@@ -332,8 +332,8 @@ func TestQQPowerQueryUsesCachedTelemetryAndAuthorizedGroup(t *testing.T) {
 		t.Fatal("same message duplicated", err)
 	}
 	in.RequestKey = "power-0002"
-	if err = s.QQRequestPower(ctx, auth, in); !errors.Is(err, store.ErrCapacity) {
-		t.Fatal("query rate limit", err)
+	if err = s.QQRequestPower(ctx, auth, in); err != nil {
+		t.Fatal("distinct query was throttled", err)
 	}
 	if _, err = s.QQPower(ctx, auth, "99999999", ""); err == nil {
 		t.Fatal("unauthorized group got telemetry")
@@ -342,7 +342,7 @@ func TestQQPowerQueryUsesCachedTelemetryAndAuthorizedGroup(t *testing.T) {
 		t.Fatal(err)
 	}
 	out, err := s.QQDeliveries(ctx, a.ID, n.ServerGroup)
-	if err != nil || len(out) != 2 {
+	if err != nil || len(out) != 3 {
 		t.Fatal(out, err)
 	}
 	var found bool

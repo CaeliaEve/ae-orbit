@@ -25,7 +25,7 @@ class ConnectorSettings(PluginConfigBase):
     enabled: bool = Field(default=True, description="启用连接器")
     endpoint: str = Field(default="http://125.77.172.25:8080", description="AE Orbit 地址")
     credential_file: str = Field(default="/opt/qqbot/ae-orbit-connector.json", description="连接凭据文件（服务器 chmod 600）")
-    config_version: str = Field(default="1.2.0", description="配置版本")
+    config_version: str = Field(default="1.2.1", description="配置版本")
 
 
 class ConnectorConfig(PluginConfigBase):
@@ -52,6 +52,7 @@ class AEOrbitPlugin(MaiBotPlugin):
         self._catalog_at = -100.0
         self._status = "等待连接"
         self._sending_enabled = False
+        self._wake = asyncio.Event()
 
     async def on_load(self) -> None:
         credentials = await asyncio.to_thread(lambda: json.loads(Path(self.config.plugin.credential_file).read_text()))
@@ -169,6 +170,7 @@ class AEOrbitPlugin(MaiBotPlugin):
         device = str((matched_groups or {}).get("device") or "").strip()
         try:
             await self._http("/bridge/qq/v1/power", {"group_id":group_id,"request_key":"qq-power:"+key,"device":device})
+            self._wake.set()
         except Exception as exc:
             self.ctx.logger.warning("Power request could not be queued: %s",type(exc).__name__)
             return False, None, True
@@ -241,6 +243,8 @@ class AEOrbitPlugin(MaiBotPlugin):
     async def _run(self) -> None:
         delay = 3
         while True:
+            self._wake.clear()
+            has_deliveries = False
             try:
                 # Explicitly bind to the SnowLuma account, even if another QQ
                 # adapter is also installed in MaiBot.
@@ -262,7 +266,7 @@ class AEOrbitPlugin(MaiBotPlugin):
                     for delivery in response["deliveries"]:
                         async with self._policy_lock:
                             await self._deliver(delivery)
-                        await asyncio.sleep(2)
+                    has_deliveries = bool(response["deliveries"])
                 delay = 3
             except asyncio.CancelledError:
                 raise
@@ -272,7 +276,14 @@ class AEOrbitPlugin(MaiBotPlugin):
                 self.ctx.logger.warning("AE Orbit connector cycle failed: %s", type(exc).__name__)
                 self._status = "连接待恢复：" + type(exc).__name__
                 delay = min(delay * 2, 60)
-            await asyncio.sleep(delay)
+            # Drain a backlog immediately; distinct queries never wait for an
+            # application-level cooldown or a fixed gap between sends.
+            if has_deliveries:
+                continue
+            try:
+                await asyncio.wait_for(self._wake.wait(), timeout=delay)
+            except asyncio.TimeoutError:
+                pass
 
 
 def create_plugin() -> AEOrbitPlugin:

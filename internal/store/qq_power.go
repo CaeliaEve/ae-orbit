@@ -57,7 +57,8 @@ func (s *Store) QQRequestPower(ctx context.Context, a QQAuth, in QQPowerRequest)
 		return ErrInvalid
 	}
 	return s.monitorTransaction(ctx, func(tx pgx.Tx) error {
-		// The group row bounds manual requests and serializes duplicate message IDs.
+		// Serialize duplicate callbacks from the same group without imposing a
+		// cooldown on distinct incoming messages.
 		if _, err := tx.Exec(ctx, `SELECT group_id FROM qq_groups WHERE server_group=$1 AND group_id=$2 FOR UPDATE`, a.Group, in.GroupID); err != nil {
 			return err
 		}
@@ -71,13 +72,6 @@ func (s *Store) QQRequestPower(ctx context.Context, a QQAuth, in QQPowerRequest)
 		v, err := qqPowerView(ctx, tx, a, in.GroupID, in.Device)
 		if err != nil {
 			return err
-		}
-		tag, err := tx.Exec(ctx, `UPDATE qq_groups SET last_power_request_at=now() WHERE server_group=$1 AND group_id=$2 AND (last_power_request_at IS NULL OR last_power_request_at<now()-interval '10 seconds')`, a.Group, in.GroupID)
-		if err != nil {
-			return err
-		}
-		if tag.RowsAffected() == 0 {
-			return ErrCapacity
 		}
 		payload, err := json.Marshal(v)
 		if err != nil {
