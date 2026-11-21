@@ -7,27 +7,44 @@ local function energy(s)
  return type(s)=='string' and #s>=1 and #s<=128 and s:match('^%d+$') and (s=='0' or s:sub(1,1)~='0')
 end
 local function compare(a,b) if #a~=#b then return #a<#b and -1 or 1 end;return a==b and 0 or a<b and -1 or 1 end
+local function capacitorIdentity(proxy)
+ if not proxy or not proxy.getName then return false end
+ local ok,name=pcall(function()return proxy.getName()end)
+ if not ok then cancel.rethrow(name) end
+ return ok and name=='multimachine.supercapacitor'
+end
 function M.sample(proxy)
  if not proxy then return nil,nil,'component_missing' end
+ -- Compound adapters can be named gt_machine by Computronics. Generic GT
+ -- machines also expose energy methods, so recheck the controller identity.
+ if proxy.type=='gt_machine' and not capacitorIdentity(proxy) then return nil,nil,'controller_mismatch' end
+ if proxy.type and proxy.type~='gt_machine' and proxy.type~='lsc' and proxy.type~='LSC' then return nil,nil,'controller_mismatch' end
  if not proxy.getStoredEUString or not proxy.getEUCapacityString then return nil,nil,'interface_unsupported' end
  local ok,a,b=pcall(function()return proxy.getStoredEUString(),proxy.getEUCapacityString()end)
  if not ok then cancel.rethrow(a);return nil,nil,'read_failed' end
  if not energy(a) or not energy(b) or b=='0' or compare(a,b)>0 then return nil,nil,'invalid_energy' end
  return a,b
 end
-function M.discover(component)
+function M.discover(component,check,yield)
  local out=json.array({})
- local seen={}
+ local seen,inspected={},0
  -- Adapter CompoundBlockDriver.cleanName lowercases the preferred "LSC"
  -- name to "lsc". Keep the wire type canonical and support direct drivers.
- for _,name in ipairs({'lsc','LSC'}) do
+ -- Computronics' higher-priority name hides LSC on a compound adapter;
+ -- its callbacks remain merged into that gt_machine component.
+ for _,name in ipairs({'lsc','LSC','gt_machine'}) do
   for address in component.list(name,true) do
    if not seen[address] then
-    if #out>=32 then return out end
+    if inspected>=32 then return out end
+    inspected=inspected+1
     seen[address]=true
+    if check then check() end
     local ok,p=pcall(component.proxy,address)
     if not ok then cancel.rethrow(p) end
-    out[#out+1]={address=address,type='LSC',supported=ok and p.getStoredEUString~=nil and p.getEUCapacityString~=nil or false}
+    if name~='gt_machine' or ok and capacitorIdentity(p) then
+     out[#out+1]={address=address,type='LSC',supported=ok and p.getStoredEUString~=nil and p.getEUCapacityString~=nil or false}
+    end
+    if yield then yield() end
    end
   end
  end
@@ -44,7 +61,7 @@ local function validWelcome(w)
 end
 function M.new(config,deps)
  local self={session=nil,sequence=0,objects={},due={},pending=nil,next_discovery=0,uploaded=0,cursor=1}
- local components=M.discover(deps.component)
+ local components=M.discover(deps.component,deps.check,deps.yield)
  local hash=sha.new()
  hash:update((deps.address or 'monitor')..':'..tostring(deps.now())..':'..tostring(math.random())..':'..tostring(os.time()))
  local boot=hash:finish():sub(1,32)
@@ -57,7 +74,7 @@ function M.new(config,deps)
   if not self.pending then
    local body={session_id=self.session,sequence=self.sequence+1,free_memory=deps.free_memory(),samples=json.array({})}
    local now=deps.now()
-   if now>=self.next_discovery then components=M.discover(deps.component);body.components=components;self.next_discovery=now+30 end
+   if now>=self.next_discovery then components=M.discover(deps.component,deps.check,deps.yield);body.components=components;self.next_discovery=now+30 end
    local n=#self.objects
    for step=1,n do
     if #body.samples>=4 then break end
