@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/CaeliaEve/ae-orbit/internal/plugins"
 	"github.com/CaeliaEve/ae-orbit/internal/protocol"
 	"github.com/CaeliaEve/ae-orbit/internal/store"
 )
@@ -366,5 +367,135 @@ func TestQQPowerQueryUsesCachedTelemetryAndAuthorizedGroup(t *testing.T) {
 		if d.Kind == "alarm" && (!strings.Contains(string(d.Payload), "current_energy") || !strings.Contains(string(d.Payload), `"status": "stale"`)) {
 			t.Fatal(string(d.Payload))
 		}
+	}
+}
+
+func TestQQNetworkTransitionsStaySilentAndOldLeasesStop(t *testing.T) {
+	s, a, n, auth := qqFixture(t)
+	enableQQSending(t, s, a, n)
+	for _, observed := range []string{"now()", "now()-interval '1 day'", "now()"} {
+		if _, err := s.Pool().Exec(ctx, `UPDATE networks SET last_seen=`+observed+` WHERE id=$1`, n.ID); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.MaintainQQ(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.Pool().Exec(ctx, `SELECT qq_enqueue($1,$2,NULL,'heartbeat','network','1081348823','',false,'{}')`, n.ServerGroup, n.ID); err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	if err := s.Pool().QueryRow(ctx, `SELECT count(*) FROM qq_outbox WHERE server_group=$1 AND kind='network'`, n.ServerGroup).Scan(&count); err != nil || count != 0 {
+		t.Fatal("heartbeat queued", count, err)
+	}
+	// Simulate records written by the previous deployed version before migration.
+	tx, err := s.Pool().Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	for _, statement := range []string{
+		`ALTER TABLE qq_outbox DISABLE TRIGGER qq_suppress_network_health`,
+		`INSERT INTO qq_outbox(id,server_group,network_id,source_key,kind,group_id,channel,state,attempt_id,lease_until,payload) VALUES('old-network-queued',$1,$2,'old-queued','network','1081348823','group','queued','',NULL,'{}'),('old-network-leased',$1,$2,'old-leased','network','1081348823','group','leased','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',now()+interval '90 seconds','{}')`,
+		`ALTER TABLE qq_outbox ENABLE TRIGGER qq_suppress_network_health`,
+	} {
+		if strings.HasPrefix(statement, "INSERT") {
+			_, err = tx.Exec(ctx, statement, n.ServerGroup, n.ID)
+		} else {
+			_, err = tx.Exec(ctx, statement)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.QQBeginDelivery(ctx, auth, "old-network-leased", strings.Repeat("a", 32)); !errors.Is(err, store.ErrConflict) {
+		t.Fatal("old lease authorized", err)
+	}
+	enqueueQQ(t, s, n)
+	ack, err := s.QQBridgePoll(ctx, auth, store.QQBridgePoll{BotID: "12345678", Adapter: "snowluma"})
+	if err != nil || len(ack.Deliveries) != 1 || ack.Deliveries[0].Kind != "craft" {
+		t.Fatal(ack, err)
+	}
+	if err = s.Pool().QueryRow(ctx, `SELECT count(*) FROM qq_outbox WHERE kind='network' AND state='expired'`).Scan(&count); err != nil || count != 2 {
+		t.Fatal("pending announcements not stopped", count, err)
+	}
+	settings, err := s.QQSettings(ctx, a.ID, n.ServerGroup)
+	if err != nil || !settings.Enabled || !settings.SendingEnabled || !settings.Alarms || !settings.Exceptions || !settings.Recoveries {
+		t.Fatal("other notifications altered", settings, err)
+	}
+}
+
+func TestQQLowEnergyCustomThresholdAndReconnectAreDistinct(t *testing.T) {
+	s, a, n, _ := qqFixture(t)
+	settings := plugins.Defaults()
+	settings.LowPercent = 35
+	settings.RecoverPercent = 40
+	settings.LowDurationSeconds = 0
+	if err := s.SetMonitoringPlugin(ctx, a.ID, n.ServerGroup, plugins.LSC, true, settings, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Pool().Exec(ctx, `INSERT INTO monitor_collectors(id,server_group,name,token_hash,last_seen) VALUES('threshold-collector',$1,'Collector','\x0102',now())`, n.ServerGroup); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Pool().Exec(ctx, `INSERT INTO plugin_objects(id,server_group,plugin_id,collector_id,component_address,name) VALUES('threshold-object',$1,'gtnh.lsc','threshold-collector','address','LSC')`, n.ServerGroup); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Pool().Exec(ctx, `INSERT INTO monitor_latest(object_id,session_id,stored_eu,capacity_eu,observed_at) VALUES('threshold-object','session',35,100,now())`); err != nil {
+		t.Fatal(err)
+	}
+	maintain := func(want int) {
+		t.Helper()
+		if err := s.MaintainMonitoring(ctx); err != nil {
+			t.Fatal(err)
+		}
+		out, err := s.QQDeliveries(ctx, a.ID, n.ServerGroup)
+		if err != nil || len(out) != want {
+			t.Fatal(out, err)
+		}
+	}
+	maintain(0) // Exactly on the low boundary is not below it.
+	if _, err := s.Pool().Exec(ctx, `UPDATE monitor_collectors SET last_seen=now()-interval '1 day' WHERE id='threshold-collector'`); err != nil {
+		t.Fatal(err)
+	}
+	maintain(0)
+	if _, err := s.Pool().Exec(ctx, `UPDATE monitor_collectors SET last_seen=now() WHERE id='threshold-collector'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Pool().Exec(ctx, `UPDATE monitor_latest SET stored_eu=34,observed_at=now() WHERE object_id='threshold-object'`); err != nil {
+		t.Fatal(err)
+	}
+	maintain(1)
+	maintain(1)
+	if _, err := s.Pool().Exec(ctx, `UPDATE monitor_collectors SET last_seen=now()-interval '1 day' WHERE id='threshold-collector'`); err != nil {
+		t.Fatal(err)
+	}
+	maintain(1)
+	if _, err := s.Pool().Exec(ctx, `UPDATE monitor_collectors SET last_seen=now() WHERE id='threshold-collector'`); err != nil {
+		t.Fatal(err)
+	}
+	maintain(1) // Same low-energy event survives a reconnect without another @.
+	if _, err := s.Pool().Exec(ctx, `UPDATE monitor_latest SET stored_eu=37,observed_at=now() WHERE object_id='threshold-object'`); err != nil {
+		t.Fatal(err)
+	}
+	maintain(1) // The recovery boundary must be reached.
+	if _, err := s.Pool().Exec(ctx, `UPDATE monitor_latest SET stored_eu=40,observed_at=now() WHERE object_id='threshold-object'`); err != nil {
+		t.Fatal(err)
+	}
+	maintain(2)
+	var other int
+	if err := s.Pool().QueryRow(ctx, `SELECT count(*) FROM monitor_alerts WHERE kind IN ('collector_offline','read_error')`).Scan(&other); err != nil || other != 0 {
+		t.Fatal(other, err)
+	}
+	for _, kind := range []string{"collector_offline", "read_error", "falling", "capacity_changed"} {
+		if _, err := s.Pool().Exec(ctx, `INSERT INTO monitor_alerts(id,object_id,kind,state,detail) VALUES($1,'threshold-object',$2,'active','diagnostic')`, "ignored-"+kind, kind); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out, err := s.QQDeliveries(ctx, a.ID, n.ServerGroup)
+	if err != nil || len(out) != 2 {
+		t.Fatal("diagnostic alert reached QQ", out, err)
 	}
 }

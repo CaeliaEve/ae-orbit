@@ -2663,3 +2663,5 @@ body { padding: 0; background: #0a0a0b; }
 @media(max-width:760px){.qq-layout{grid-template-columns:1fr;gap:24px}.qq-heading{align-items:flex-start;flex-direction:column}.qq-delivery{gap:12px}.qq-delivery>div:last-child{max-width:110px}.qq-members{grid-template-columns:1fr}}
 
 .qq-channel-list{display:grid;gap:12px}.qq-channel strong,.qq-channel small{display:block}.qq-channel small{color:var(--muted);font-size:12px}
+.lsc-alert-rule{display:flex;align-items:center;justify-content:space-between;gap:24px;padding:24px 0}.lsc-alert-rule h3{margin:0 0 10px;font-size:16px}.lsc-alert-rule p{margin:0 0 8px;font-size:13px}.lsc-alert-rule small{color:var(--muted);font-size:12px}.lsc-alert-rule>button{flex-shrink:0}
+@media(max-width:760px){.lsc-alert-rule{align-items:flex-start;flex-direction:column;gap:14px}}

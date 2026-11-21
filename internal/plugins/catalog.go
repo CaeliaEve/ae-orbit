@@ -25,7 +25,7 @@ type Manifest struct {
 func Catalog() []Manifest {
 	return []Manifest{
 		{LSC, "蓝波顿超级电容库", "1.1.0", "储能、容量、长期趋势与站内告警；支持每秒实时采集与独立历史间隔。", true, "LSC", []string{"getStoredEUString", "getEUCapacityString"}, 10},
-		{QQ, "QQ 联动", "1.0.0", "通过 MaiBot 接收蓝波顿告警、CPU 任务提醒和网络异常，支持群内 @ 与私聊。", true, "", []string{}, 0},
+		{QQ, "QQ 联动", "1.0.0", "通过 MaiBot 接收蓝波顿低电量告警和 CPU 任务提醒，支持群内 @ 与私聊。", true, "", []string{}, 0},
 	}
 }
 func Supported(id string) bool { return id == LSC }
@@ -81,7 +81,7 @@ type Settings struct {
 }
 
 func Defaults() Settings {
-	return Settings{IntervalSeconds: 10, HistorySeconds: 10, LowPercent: 20, RecoverPercent: 25, LowDurationSeconds: 30, OfflineSeconds: 60, FallingMinutes: 15, RawRetentionDays: 30, Alerts: true}
+	return Settings{IntervalSeconds: 10, HistorySeconds: 10, LowPercent: 20, RecoverPercent: 25, LowDurationSeconds: 30, OfflineSeconds: 60, FallingMinutes: 0, RawRetentionDays: 30, Alerts: true}
 }
 
 // Omitted by pre-1.1 clients: preserve the ten-second history cadence.
@@ -96,5 +96,5 @@ func (s Settings) HistoryCadence() int {
 	return n
 }
 func (s Settings) Valid() bool {
-	return s.IntervalSeconds >= 1 && s.IntervalSeconds <= 3600 && (s.HistorySeconds == 0 || s.HistorySeconds >= 5 && s.HistorySeconds <= 3600) && s.LowPercent >= 1 && s.LowPercent <= 95 && s.RecoverPercent > s.LowPercent && s.RecoverPercent <= 100 && s.LowDurationSeconds >= 10 && s.LowDurationSeconds <= 3600 && s.OfflineSeconds >= max(30, s.IntervalSeconds*3) && s.OfflineSeconds <= 10800 && s.FallingMinutes >= 0 && s.FallingMinutes <= 1440 && (s.RawRetentionDays == 0 || s.RawRetentionDays >= 7 && s.RawRetentionDays <= 3650)
+	return s.IntervalSeconds >= 1 && s.IntervalSeconds <= 3600 && (s.HistorySeconds == 0 || s.HistorySeconds >= 5 && s.HistorySeconds <= 3600) && s.LowPercent >= 1 && s.LowPercent <= 95 && s.RecoverPercent > s.LowPercent && s.RecoverPercent <= 100 && s.LowDurationSeconds >= 0 && s.LowDurationSeconds <= 3600 && s.OfflineSeconds >= max(30, s.IntervalSeconds*3) && s.OfflineSeconds <= 10800 && s.FallingMinutes >= 0 && s.FallingMinutes <= 1440 && (s.RawRetentionDays == 0 || s.RawRetentionDays >= 7 && s.RawRetentionDays <= 3650)
 }

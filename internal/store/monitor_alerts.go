@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"math/big"
 	"time"
 
@@ -97,33 +98,17 @@ func (s *Store) MaintainMonitoring(ctx context.Context) error {
 			stale := time.Duration(v.settings.OfflineSeconds) * time.Second
 			offline := v.revoked || v.seen != nil && now.Sub(*v.seen) > stale
 			if offline {
-				if err = monitorCondition(ctx, tx, v.id, "collector_offline", "监控 OC 已离线，当前显示最后一次有效观测。", 0, now); err != nil {
+				if _, err = tx.Exec(ctx, `DELETE FROM monitor_conditions WHERE object_id=$1 AND kind='low_energy'`, v.id); err != nil {
 					return err
 				}
-				for _, k := range []string{"low_energy", "read_error", "falling"} {
-					if err = monitorResolve(ctx, tx, v.id, k, "observation_unavailable", now); err != nil {
-						return err
-					}
-				}
 				continue
-			}
-			if err = monitorResolve(ctx, tx, v.id, "collector_offline", "collector_online", now); err != nil {
-				return err
 			}
 			bad := v.error != "" || v.observed != nil && now.Sub(*v.observed) > stale || v.observed == nil && v.reported != nil && now.Sub(*v.reported) > stale
 			if bad {
-				if err = monitorCondition(ctx, tx, v.id, "read_error", "OC 在线，但电容库数据无法确认。请检查适配器、区块加载和多方块结构。", 30*time.Second, now); err != nil {
+				if _, err = tx.Exec(ctx, `DELETE FROM monitor_conditions WHERE object_id=$1 AND kind='low_energy'`, v.id); err != nil {
 					return err
 				}
-				for _, k := range []string{"low_energy", "falling"} {
-					if err = monitorResolve(ctx, tx, v.id, k, "observation_unavailable", now); err != nil {
-						return err
-					}
-				}
 				continue
-			}
-			if err = monitorResolve(ctx, tx, v.id, "read_error", "reading_recovered", now); err != nil {
-				return err
 			}
 			if v.observed == nil {
 				continue
@@ -138,7 +123,8 @@ func (s *Store) MaintainMonitoring(ctx context.Context) error {
 			}
 			low := a.Mul(a, big.NewInt(100)).Cmp(b.Mul(b, big.NewInt(int64(v.settings.LowPercent)))) < 0
 			if low {
-				if err = monitorCondition(ctx, tx, v.id, "low_energy", "电量持续低于配置阈值。", time.Duration(v.settings.LowDurationSeconds)*time.Second, now); err != nil {
+				detail := fmt.Sprintf("电量 %s%%，低于 %d%%，持续 %d 秒后告警；回升至 %d%%解除。", plugins.Percent(v.stored, v.capacity), v.settings.LowPercent, v.settings.LowDurationSeconds, v.settings.RecoverPercent)
+				if err = monitorCondition(ctx, tx, v.id, "low_energy", detail, time.Duration(v.settings.LowDurationSeconds)*time.Second, now); err != nil {
 					return err
 				}
 			} else {

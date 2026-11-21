@@ -47,3 +47,16 @@ func TestFastSamplingKeepsIndependentHistoryCadence(t *testing.T) {
 		t.Fatal("invalid interval")
 	}
 }
+func TestLowEnergyCanNotifyImmediatelyWithHysteresis(t *testing.T) {
+	s := Defaults()
+	s.LowPercent = 35
+	s.RecoverPercent = 40
+	s.LowDurationSeconds = 0
+	if !s.Valid() || s.FallingMinutes != 0 {
+		t.Fatal(s)
+	}
+	s.RecoverPercent = 35
+	if s.Valid() {
+		t.Fatal("invalid recovery boundary")
+	}
+}
