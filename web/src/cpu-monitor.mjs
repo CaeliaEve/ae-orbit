@@ -40,13 +40,13 @@ export function cpuMonitorListHTML(model, { connected = true, supported = false,
         <span class="cpu-monitor-state"><i class="cpu-state-dot" aria-hidden="true"></i>${cpu.busy ? "忙碌" : "空闲"}</span>
         <span class="cpu-monitor-storage number" title="${formatQuantity(cpu.storage)} B"><span class="sr-only">合成存储 </span>${esc(formatCPUStorage(cpu.storage))}</span>
         <span class="cpu-monitor-coprocessors number"><span class="sr-only">协处理器 </span>${formatQuantity(cpu.coprocessors)}<span class="cpu-mobile-unit"> 协处理器</span></span>
-        <span class="cpu-monitor-output${output ? " has-output" : ""}" title="${esc(outputText)}">${output ? `<span class="cpu-output-media">${outputImage(output,cpu)}</span>` : icon(cpu.busy ? "circle-help" : "minus")}<span>${output ? `<strong>${esc(outputLabel)}</strong><small>× ${quantity}${unit}</small>` : cpu.busy ? "产物未提供" : "暂无合成任务"}</span></span>
+        <span class="cpu-monitor-output${output ? " has-output" : ""}" title="${esc(outputText)}">${output ? `<span class="cpu-output-media"${output.catalog?.base_fallback ? ' title="使用基础纹理；NBT 外观未单独确认"' : ""}>${outputImage(output,cpu)}</span>` : icon(cpu.busy ? "circle-help" : "minus")}<span>${output ? `<strong>${esc(outputLabel)}</strong><small>× ${quantity}${unit}</small>` : cpu.busy ? "产物未提供" : "暂无合成任务"}</span></span>
         <span class="cpu-monitor-expand">${icon("chevron-down")}</span>
       </summary>
       <div class="cpu-monitor-details">
         <dl><div><dt>快照 ID</dt><dd>${esc(cpu.id || "未提供")}</dd></div><div><dt>合成存储</dt><dd>${formatQuantity(cpu.storage)} B</dd></div><div><dt>指定合成</dt><dd>${selection.selectable ? "可通过合成清单指定" : esc(selection.reason)}</dd></div></dl>
         <p>${esc(outputText)}${output?.name ? `<span class="cpu-output-registry">${esc(output.name)}</span>` : ""}</p>
-        <p class="cpu-detail-note">快照 ID 可能随重新枚举变化。当前接口提供忙碌状态和最终产物，没有合成完成百分比。</p>
+        ${output?.catalog?.base_fallback ? '<p class="cpu-detail-note">产物使用基础纹理，名称保留游戏上报值；NBT 变种外观未单独确认。</p>' : ""}<p class="cpu-detail-note">快照 ID 可能随重新枚举变化。当前接口提供忙碌状态和最终产物，没有合成完成百分比。</p>
       </div>
     </details>`;
   }).join("");

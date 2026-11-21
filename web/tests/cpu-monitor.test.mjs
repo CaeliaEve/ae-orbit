@@ -54,3 +54,10 @@ test("CPU output textures use catalog names, preserve fluid units and escape tex
   assert.doesNotMatch(html,/<script>/);
   assert.equal(cpuMonitorModel(cpus,{search:"水"}).visible.length,1);
 });
+
+
+test("CPU NBT output reuses verified artwork and retains the observed custom name",()=>{
+ const cpus=[{id:"1",name:"Custom",busy:true,storage:"4096",coprocessors:1,output:{kind:"item",name:"minecraft:paper",label:"棕基板被动",quantity:"64",has_tag:true,damage:0,catalog:{localized_name:"棕基板被动",base_fallback:true,image_url:"/paper.png"}}}];
+ const html=cpuMonitorListHTML(cpuMonitorModel(cpus),{outputImage:()=>'<img class="item-image" src="/paper.png" alt="">'});
+ assert.match(html,/src="\/paper.png"/);assert.match(html,/棕基板被动/);assert.match(html,/使用基础纹理/);assert.match(html,/NBT 变种外观未单独确认/);
+});

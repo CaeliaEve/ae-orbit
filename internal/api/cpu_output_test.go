@@ -32,13 +32,16 @@ func TestCPUOutputCatalogImageWithoutInventoryMutation(t *testing.T) {
 	decode[protocol.PollAck](t, sendServer(t, server, "POST", "/bridge/v1/poll", f.device, wire(t, protocol.Poll{SessionID: welcome.SessionID, Sequence: 1, CPUs: &cpus})), 200)
 	base := "/api/v1/networks/" + f.network.ID
 	view := decode[store.CPUView](t, sendServer(t, server, "GET", base+"/cpus", adminToken, ""), 200)
-	if len(view.CPUs) != 3 || view.CPUs[0].Output.Catalog == nil || view.CPUs[0].Output.Catalog.ImageURL == "" || view.CPUs[1].Output.Catalog != nil || view.CPUs[2].Output.Catalog == nil {
+	if len(view.CPUs) != 3 || view.CPUs[0].Output.Catalog == nil || view.CPUs[0].Output.Catalog.ImageURL == "" || view.CPUs[1].Output.Catalog == nil || !view.CPUs[1].Output.Catalog.BaseFallback || view.CPUs[2].Output.Catalog == nil {
 		t.Fatal("output catalog mismatch", view)
 	}
 	if view.CPUs[0].Output.Quantity != 64 || view.CPUs[0].Output.Catalog.LocalizedName != "石头" {
 		t.Fatal(view)
 	}
-	imageURL := view.CPUs[0].Output.Catalog.ImageURL
+	if view.CPUs[1].Output.Label != "Custom Stone" || view.CPUs[1].Output.Catalog.LocalizedName != "Custom Stone" || len(view.CPUs[1].Output.Catalog.Tooltips) != 0 || view.CPUs[0].Output.Catalog.BaseFallback {
+		t.Fatal("base artwork replaced the observed NBT name or claimed exact metadata", view)
+	}
+	imageURL := view.CPUs[1].Output.Catalog.ImageURL
 	response := sendServer(t, server, "GET", imageURL, adminToken, "")
 	data, err := io.ReadAll(response.Body)
 	response.Body.Close()
@@ -52,7 +55,7 @@ func TestCPUOutputCatalogImageWithoutInventoryMutation(t *testing.T) {
 		t.Fatal("wrong asset version accepted")
 	}
 	stored, err := f.db.CPUs(context.Background(), f.admin.ID, f.network.ID)
-	if err != nil || stored.CPUs[0].Output.Catalog != nil || stored.CPUs[2].Output.Kind != "" {
+	if err != nil || stored.CPUs[0].Output.Catalog != nil || stored.CPUs[1].Output.Catalog != nil || stored.CPUs[2].Output.Kind != "" {
 		t.Fatal("visual enrichment persisted", stored, err)
 	}
 	var definitions int

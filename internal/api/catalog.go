@@ -110,6 +110,16 @@ func (s *Server) enrichCPUOutputs(network string, cpus []protocol.CPU) {
 			continue
 		}
 		public := match.Public(state)
+		public.BaseFallback = output.HasTag != nil && *output.HasTag || match.NBT != ""
+		if public.BaseFallback {
+			// The artwork can be shared; the exported variant's name/tooltips
+			// cannot identify an output whose actual tag was never transmitted.
+			public.Tooltips = nil
+			public.LocalizedName = output.Name
+			if output.Label != "" {
+				public.LocalizedName = output.Label
+			}
+		}
 		if state == "available" {
 			public.ImageURL = "/api/v1/networks/" + url.PathEscape(network) + "/catalog/cpus/" + url.PathEscape(match.Key) + "/image?v=" + url.QueryEscape(public.ImageKey)
 		}
