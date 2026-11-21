@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "id": "aeorbit.qq-notifications",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "name": "AE Orbit QQ 联动",
   "description": "蓝波顿告警、指定 CPU 的任务通知和采集异常。复用 SnowLuma，支持群内 @ 和私聊。",
   "author": {"name": "AE Orbit", "url": "https://github.com/CaeliaEve/ae-orbit"},

@@ -8,6 +8,7 @@
   "queries": {"status": {"api": "channels_status", "version": "1"}},
   "actions": {
    "refresh": {"api": "channels_refresh", "version": "1"},
+   "preview": {"api": "power_preview", "version": "1", "parameters": {"group_id": {"type":"string", "required":true,"max_length":15}}},
    "save": {"api": "channels_save", "version": "1", "parameters": {
     "groups": {"type": "array", "required": true, "max_items": 16, "items": {"type": "string", "max_length": 15}},
     "allow_private": {"type": "boolean", "required": true},

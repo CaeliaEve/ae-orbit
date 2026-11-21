@@ -9,21 +9,23 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.error import HTTPError
+from urllib.parse import urlencode
 
 import asyncio
 import json
 import re
+import hashlib
 
-from maibot_sdk import API, ConfigWidget, ConfigWidgetState, Field, HomeCard, MaiBotPlugin, PluginConfigBase
+from maibot_sdk import API, Command, ConfigWidget, ConfigWidgetState, Field, HomeCard, MaiBotPlugin, PluginConfigBase
 
-from .bridge import BridgeClient, ChannelPolicy, ReceiptJournal, message_segments, normalize_channels
+from .bridge import BridgeClient, ChannelPolicy, ReceiptJournal, message_segments, normalize_channels, notification_text
 
 
 class ConnectorSettings(PluginConfigBase):
     enabled: bool = Field(default=True, description="启用连接器")
     endpoint: str = Field(default="http://125.77.172.25:8080", description="AE Orbit 地址")
     credential_file: str = Field(default="/opt/qqbot/ae-orbit-connector.json", description="连接凭据文件（服务器 chmod 600）")
-    config_version: str = Field(default="1.1.0", description="配置版本")
+    config_version: str = Field(default="1.2.0", description="配置版本")
 
 
 class ConnectorConfig(PluginConfigBase):
@@ -78,7 +80,7 @@ class AEOrbitPlugin(MaiBotPlugin):
             await self.on_unload()
             await self.on_load()
 
-    async def _http(self, path: str, body: Dict[str, Any], method: str = "POST") -> Any:
+    async def _http(self, path: str, body: Optional[Dict[str, Any]], method: str = "POST") -> Any:
         if self._client is None:
             raise RuntimeError("Connector not initialized")
         return await asyncio.to_thread(self._client.request, path, body, method)
@@ -140,6 +142,37 @@ class AEOrbitPlugin(MaiBotPlugin):
             # failure cannot keep a removed group authorized to send.
             await self._sync_channels()
         return await self.channels_status()
+
+    @API("power_preview", description="预览授权群的蓝波顿电量，不发送消息", version="1")
+    async def power_preview(self, group_id: str) -> Dict[str, Any]:
+        if group_id not in self._policy["groups"]:
+            raise ValueError("请先保存并授权该群")
+        payload = await self._http("/bridge/qq/v1/power?" + urlencode({"group_id":group_id}), None, "GET")
+        return {"text": notification_text({"id":"preview", "payload":payload}), "sending_enabled":payload["sending_enabled"]}
+
+    @Command(name="lsc_power", description="查询当前蓝波顿电量（授权群内 /电量 或 /电量 设备名）",
+             pattern=r"^\s*[!/／](?:电量|蓝波顿|蓝博顿|ae电量)(?:\s+(?P<device>[^\r\n]{1,128}))?\s*$",
+             aliases=["/电量", "/蓝波顿", "/蓝博顿", "/ae电量"])
+    async def query_power(self, group_id: str = "", platform: str = "", matched_groups: Optional[Dict[str, str]] = None,
+                          message: Optional[Dict[str, Any]] = None, **kwargs: Any) -> tuple[bool, Optional[str], bool]:
+        del kwargs
+        if platform != "qq" or group_id not in self._policy["groups"]:
+            return True, None, True
+        incoming = message or {}
+        if incoming.get("account_id") and str(incoming["account_id"]) != self._bot_id:
+            return True, None, True
+        message_id = str(incoming.get("message_id", ""))
+        if not message_id:
+            self.ctx.logger.warning("Power query has no stable incoming message ID; request skipped")
+            return False, None, True
+        key = hashlib.sha256((group_id+":"+message_id).encode()).hexdigest()
+        device = str((matched_groups or {}).get("device") or "").strip()
+        try:
+            await self._http("/bridge/qq/v1/power", {"group_id":group_id,"request_key":"qq-power:"+key,"device":device})
+        except Exception as exc:
+            self.ctx.logger.warning("Power request could not be queued: %s",type(exc).__name__)
+            return False, None, True
+        return True, None, True
 
     async def _flush_receipts(self) -> None:
         if self._journal is None:

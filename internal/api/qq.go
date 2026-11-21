@@ -145,6 +145,26 @@ func (s *Server) qqRoutes() {
 		}
 		respond(w, 204, nil)
 	}))
+	s.mux.HandleFunc("GET /bridge/qq/v1/power", s.qqBridge(func(w http.ResponseWriter, r *http.Request, a store.QQAuth) {
+		v, err := s.db.QQPower(r.Context(), a, r.URL.Query().Get("group_id"), r.URL.Query().Get("device"))
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		respond(w, 200, v)
+	}))
+	s.mux.HandleFunc("POST /bridge/qq/v1/power", s.qqBridge(func(w http.ResponseWriter, r *http.Request, a store.QQAuth) {
+		var in store.QQPowerRequest
+		if err := readJSON(w, r, &in, 2048); err != nil {
+			fail(w, err)
+			return
+		}
+		if err := s.db.QQRequestPower(r.Context(), a, in); err != nil {
+			fail(w, err)
+			return
+		}
+		respond(w, 202, map[string]bool{"queued": true})
+	}))
 	s.mux.HandleFunc("PUT /bridge/qq/v1/groups/{qqgroup}", s.qqBridge(func(w http.ResponseWriter, r *http.Request, a store.QQAuth) {
 		var in store.QQGroupSync
 		if e := readJSON(w, r, &in, 2*1024*1024); e != nil {

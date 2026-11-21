@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/CaeliaEve/ae-orbit/internal/protocol"
@@ -299,5 +300,71 @@ func TestQQMaiBotOwnsChannelsAndRevocationStopsLeases(t *testing.T) {
 	out, err = s.QQDeliveries(ctx, a.ID, n.ServerGroup)
 	if err != nil || len(out) != 2 {
 		t.Fatal("private created after policy revoked", out, err)
+	}
+}
+
+func TestQQPowerQueryUsesCachedTelemetryAndAuthorizedGroup(t *testing.T) {
+	s, a, n, auth := qqFixture(t)
+	if _, err := s.Pool().Exec(ctx, `INSERT INTO plugin_installations(server_group,plugin_id,enabled,settings) VALUES($1,'gtnh.lsc',true,'{"offline_seconds":60}')`, n.ServerGroup); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Pool().Exec(ctx, `INSERT INTO monitor_collectors(id,server_group,name,token_hash,last_seen) VALUES('power-collector',$1,'Collector','\x0102',now())`, n.ServerGroup); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Pool().Exec(ctx, `INSERT INTO plugin_objects(id,server_group,plugin_id,collector_id,component_address,name) VALUES('power-object',$1,'gtnh.lsc','power-collector','address','Main LSC')`, n.ServerGroup); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Pool().Exec(ctx, `INSERT INTO monitor_latest(object_id,session_id,stored_eu,capacity_eu,observed_at) VALUES('power-object','power-session',9007199254740993,18014398509481986,now())`); err != nil {
+		t.Fatal(err)
+	}
+	v, err := s.QQPower(ctx, auth, "1081348823", "")
+	if err != nil || len(v.Devices) != 1 {
+		t.Fatal(v, err)
+	}
+	if !strings.Contains(string(v.Devices[0]), `"stored_eu": "9007199254740993"`) {
+		t.Fatal(string(v.Devices[0]))
+	}
+	in := store.QQPowerRequest{GroupID: "1081348823", RequestKey: "power-0001"}
+	if err = s.QQRequestPower(ctx, auth, in); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.QQRequestPower(ctx, auth, in); err != nil {
+		t.Fatal("same message duplicated", err)
+	}
+	in.RequestKey = "power-0002"
+	if err = s.QQRequestPower(ctx, auth, in); !errors.Is(err, store.ErrCapacity) {
+		t.Fatal("query rate limit", err)
+	}
+	if _, err = s.QQPower(ctx, auth, "99999999", ""); err == nil {
+		t.Fatal("unauthorized group got telemetry")
+	}
+	if _, err = s.Pool().Exec(ctx, `INSERT INTO monitor_alerts(id,object_id,kind,state,detail) VALUES('power-alert','power-object','low_energy','active','Low')`); err != nil {
+		t.Fatal(err)
+	}
+	out, err := s.QQDeliveries(ctx, a.ID, n.ServerGroup)
+	if err != nil || len(out) != 2 {
+		t.Fatal(out, err)
+	}
+	var found bool
+	for _, d := range out {
+		if d.Kind == "alarm" {
+			found = strings.Contains(string(d.Payload), "9007199254740993")
+		}
+	}
+	if !found {
+		t.Fatal("alarm missed trigger telemetry")
+	}
+	if _, err = s.Pool().Exec(ctx, `UPDATE monitor_latest SET stored_eu=5,observed_at=now()-interval '2 minutes' WHERE object_id='power-object'`); err != nil {
+		t.Fatal(err)
+	}
+	enableQQSending(t, s, a, n)
+	p, err := s.QQBridgePoll(ctx, auth, store.QQBridgePoll{BotID: "12345678", Adapter: "snowluma"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range p.Deliveries {
+		if d.Kind == "alarm" && (!strings.Contains(string(d.Payload), "current_energy") || !strings.Contains(string(d.Payload), `"status": "stale"`)) {
+			t.Fatal(string(d.Payload))
+		}
 	}
 }

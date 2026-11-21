@@ -112,9 +112,34 @@ func (s *Store) QQBridgePoll(ctx context.Context, a QQAuth, in QQBridgePoll) (QQ
 		}
 		for _, id := range ids {
 			var d QQDelivery
+			// Keep trigger-time telemetry and add a fresh cached observation at
+			// dispatch, so a delayed notification never labels old EU as current.
+			if _, err := tx.Exec(ctx, `UPDATE qq_outbox SET payload=payload||jsonb_build_object('current_energy',qq_lsc_snapshot(payload->>'object_id')) WHERE id=$1 AND kind='alarm' AND payload ? 'object_id'`, id); err != nil {
+				return err
+			}
 			err = tx.QueryRow(ctx, `UPDATE qq_outbox SET state='leased',attempt_id=$2,lease_until=now()+interval '90 seconds',attempts=attempts+1 WHERE id=$1 RETURNING id,attempt_id,kind,group_id,recipient,channel,payload,created_at,state,external_id,detail`, id, newID()).Scan(&d.ID, &d.AttemptID, &d.Kind, &d.GroupID, &d.Recipient, &d.Channel, &d.Payload, &d.CreatedAt, &d.State, &d.ExternalID, &d.Detail)
 			if err != nil {
 				return err
+			}
+			if d.Kind == "power" {
+				var requested struct {
+					Device string `json:"requested_device"`
+				}
+				if err := json.Unmarshal(d.Payload, &requested); err != nil {
+					return err
+				}
+				current, err := qqPowerView(ctx, tx, a, d.GroupID, requested.Device)
+				if err != nil {
+					return err
+				}
+				payload, err := json.Marshal(current)
+				if err != nil {
+					return err
+				}
+				d.Payload = payload
+				if _, err = tx.Exec(ctx, `UPDATE qq_outbox SET payload=$2 WHERE id=$1`, d.ID, payload); err != nil {
+					return err
+				}
 			}
 			out.Deliveries = append(out.Deliveries, d)
 		}

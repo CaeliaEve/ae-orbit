@@ -44,6 +44,19 @@ class BridgeTests(unittest.TestCase):
         delivery["channel"] = "private"
         self.assertEqual(bridge.message_segments(delivery, True)[0]["type"], "text")
 
+    def test_power_formats_exact_eu_and_stale_observation(self):
+        energy={"status":"online","stored_eu":"9007199254740993","capacity_eu":"18014398509481986","percent":"50.00","observed_at":"2026-11-21T14:00:00Z","flow":{"input_eut":"1000","output_eut":"2000","loss_eut":"10"}}
+        text=bridge.notification_text({"id":"test", "payload":{"title":"蓝波顿告警","energy":energy}})
+        self.assertIn("9,007,199,254,740,993",text)
+        self.assertIn("电量：50.00%",text)
+        self.assertIn("输入：1,000 EU/t",text)
+        self.assertIn("11-21 22:00:00",text)
+        energy["status"]="offline"
+        text=bridge.notification_text({"id":"test", "payload":{"title":"蓝波顿电量","devices":[energy]}})
+        self.assertIn("最后观测储能",text)
+        self.assertNotIn("当前储能",text)
+        self.assertIn("当前电量未确认",text)
+
 
 if __name__ == "__main__":
     unittest.main()
