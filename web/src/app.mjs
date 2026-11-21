@@ -3,10 +3,11 @@ import {
   Search, ListPlus, ChevronLeft, ChevronRight, ChevronDown, X, Plus, Minus, Package,
   Trash2, Check, Clock, CircleAlert, LogIn, ArrowUpRight, Server, Send, Pause, Play, Square,
   LayoutDashboard, Settings, Github, Bell, Activity, Monitor, SlidersHorizontal, Code2, FileText, CircleHelp, Copy,
-  WifiOff, PanelLeftClose, UserRound, Puzzle,
+  WifiOff, PanelLeftClose, UserRound, Puzzle, Ellipsis, BatteryCharging, ArrowUp, ArrowDown, GripVertical,
 } from "lucide";
 import { createAPI } from "./api.mjs";
 import { createPluginMarket } from "./plugin-market.mjs";
+import { coreNavigation, pluginNavigation, availableNavigation, orderedNavigation, partitionNavigation, navigationKey, loadNavigation, saveNavigation, moveNavigation, placeNavigation, normalizeNavigation } from "./navigation.mjs";
 import { createInventoryWheel, inventoryKeyboardDirection } from "./inventory-paging.mjs";
 import { inventoryTooltipModel, paginateTooltipLines, splitTooltipLine, tooltipLineHTML, tooltipPosition } from "./inventory-tooltip.mjs";
 import { quantityKnown, craftingKindSupported, craftingQuantityLabel, stockText, stockFreshness, inventorySummary,resourceUnit,resourceLabel } from "./plain-inventory.mjs";
@@ -70,7 +71,7 @@ function inventoryIcon(name) {
   }
   return inventoryIconCache.get(name);
 }
-const icons = { Orbit, Network, LogOut, Boxes, ListChecks, Cpu, RadioTower, RefreshCw, Search, ListPlus, ChevronLeft, ChevronRight, ChevronDown, X, Plus, Minus, Package, Trash2, Check, Clock, CircleAlert, LogIn, ArrowUpRight, Server, Send, Pause, Play, Square, LayoutDashboard, Settings, Github, Bell, Activity, Monitor, SlidersHorizontal, Code2, FileText, CircleHelp, Copy, WifiOff, PanelLeftClose, UserRound, Puzzle };
+const icons = { Orbit, Network, LogOut, Boxes, ListChecks, Cpu, RadioTower, RefreshCw, Search, ListPlus, ChevronLeft, ChevronRight, ChevronDown, X, Plus, Minus, Package, Trash2, Check, Clock, CircleAlert, LogIn, ArrowUpRight, Server, Send, Pause, Play, Square, LayoutDashboard, Settings, Github, Bell, Activity, Monitor, SlidersHorizontal, Code2, FileText, CircleHelp, Copy, WifiOff, PanelLeftClose, UserRound, Puzzle, Ellipsis, BatteryCharging, ArrowUp, ArrowDown, GripVertical };
 const paint = () => {
   const pending = $$('i[data-lucide]');
   if (!pending.length) return;
@@ -115,7 +116,11 @@ const jobs = createJobController({
     if (!$("#detail-panel").contains(document.activeElement)) renderDetail();
   },
 });
-const pluginMarket = createPluginMarket({root:$('#view-plugins'),widget:$('#dashboard-energy-widgets'),request:(path,options)=>api.request(path,options),member:()=>state.member,network:()=>state.network,showView,toast});
+let navigationPreferences = loadNavigation(localStorage, "");
+let navigationInstallations = [];
+let navigationSignature = "", mobileNavigationSignature = "";
+const navigationButtons = new Map($$("#navigation-primary [data-view]").map(button => [button.dataset.view, button]));
+const pluginMarket = createPluginMarket({runtimeRoot:$("#view-plugin-lsc"),onPluginsChanged:installationsChanged,root:$('#view-plugins'),widget:$('#dashboard-energy-widgets'),request:(path,options)=>api.request(path,options),member:()=>state.member,network:()=>state.network,showView,toast});
 const activeStates = new Set(["queued", "assigned", "computing", "running"]);
 const attentionStates = new Set(["failed", "needs_review"]);
 const inventoryHistory = createHistoryController({ request: (path,options) => api.request(networkPath(path),options), onChange: () => renderInventoryHistory() });
@@ -207,10 +212,90 @@ function applySettings() {
 }
 
 function placeGlobalControls() {
-  const controls = $("#global-controls");
-  if (matchMedia("(min-width: 901px)").matches) {
-    if (controls.parentElement !== $("#sidebar-tools")) $("#sidebar-tools").append(controls);
-  } else if (controls.parentElement !== $(".content")) $(".content").insertBefore(controls, $("#main"));
+  for (const [id, slot] of [["connection-controls", "connection-controls-slot"], ["account-controls", "account-controls-slot"]]) {
+    const controls = $(`#${id}`), destination = $(`#${slot}`) || $("#settings-control-parking");
+    if (controls.parentElement !== destination) destination.append(controls);
+  }
+  renderNavigation();
+}
+function navigationAvailable() { return availableNavigation(navigationInstallations); }
+function navigationButtonHTML(entry) {
+  return `<button data-view="${entry.id}" aria-label="${esc(entry.title || entry.label)}" title="${esc(entry.title || entry.label)}">${icon(entry.icon)}<span>${esc(entry.label)}</span></button>`;
+}
+function renderNavigationCurrent() {
+  $$("[data-view]").forEach(button => {
+    if (button.dataset.view === state.view) button.setAttribute("aria-current", "page");
+    else button.removeAttribute("aria-current");
+  });
+  $$('[data-navigation-more]').forEach(button => {
+    const outside = !$("#navigation-primary")?.querySelector(`[data-view="${state.view}"]`);
+    const mobile = button.closest('.mobile-nav');
+    const current = mobile ? !mobile.querySelector(`[data-view="${state.view}"]`) && state.view !== 'settings' : outside && state.view !== 'settings';
+    if (current) button.setAttribute('aria-current','page'); else button.removeAttribute('aria-current');
+  });
+}
+function renderNavigation() {
+  const available = navigationAvailable();
+  const sidebar = $("#sidebar"), head = $(".sidebar-head"), settings = $('#sidebar > [data-view="settings"]');
+  const style = getComputedStyle(sidebar);
+  const height = sidebar.clientHeight - head.offsetHeight - parseFloat(getComputedStyle(head).marginBottom || 0)
+    - parseFloat(style.paddingTop || 0) - parseFloat(style.paddingBottom || 0) - settings.offsetHeight - 56;
+  const desktop = partitionNavigation(navigationPreferences, available, Math.floor(height / 46));
+  const mobile = partitionNavigation(navigationPreferences, available, Math.max(1, Math.min(4, Math.floor(innerWidth / 68) - 2)));
+  const signature = desktop.primary.map(row => row.id).join(',') + '|' + desktop.drawer.map(row => row.id).join(',');
+  if (signature !== navigationSignature) {
+    navigationSignature = signature;
+    for (const entry of available) if (!navigationButtons.has(entry.id)) {
+      const template = document.createElement('template'); template.innerHTML = navigationButtonHTML(entry);
+      navigationButtons.set(entry.id, template.content.firstElementChild);
+    }
+    for (const button of navigationButtons.values()) $('#navigation-parking').append(button);
+    for (const entry of desktop.primary) $('#navigation-primary').append(navigationButtons.get(entry.id));
+    $('#navigation-more').hidden = !desktop.drawer.length;
+  }
+  const mobileSignature = mobile.primary.map(row => row.id).join(',');
+  if (mobileNavigationSignature !== mobileSignature || !$('.mobile-nav').children.length) {
+    mobileNavigationSignature = mobileSignature;
+    $('.mobile-nav').innerHTML = mobile.primary.map(navigationButtonHTML).join('') + `<button data-navigation-more aria-label="更多功能" aria-haspopup="dialog">${icon('ellipsis')}<span>更多</span></button><button data-view="settings" aria-label="设置">${icon('settings')}<span>设置</span></button>`;
+  }
+  renderNavigationDrawer(matchMedia('(max-width:900px)').matches ? mobile : desktop);
+  renderNavigationCurrent(); paint();
+}
+function renderNavigationDrawer(layout) {
+  const html = layout.drawer.map(entry => navigationButtonHTML(entry)).join('') || '<p class="muted">所有功能都已显示在导航中。</p>';
+  const host = $('#navigation-drawer-items');
+  if (host.dataset.signature !== html) {
+    const focused = host.contains(document.activeElement) ? document.activeElement.closest('[data-view]')?.dataset.view : '';
+    host.innerHTML = html; host.dataset.signature = html;
+    if ($('#navigation-dialog').open && focused) (host.querySelector(`[data-view="${focused}"]`) || $('#navigation-dialog [data-navigation-settings]')).focus();
+  }
+  renderNavigationCurrent(); paint();
+}
+
+function openNavigationDrawer() {
+  const mobile = matchMedia('(max-width:900px)').matches;
+  const available = navigationAvailable();
+  const capacity = mobile ? Math.max(1,Math.min(4,Math.floor(innerWidth / 68)-2)) : $('#navigation-primary').children.length;
+  renderNavigationDrawer(partitionNavigation(navigationPreferences,available,capacity));
+  $('#navigation-dialog').showModal();
+}
+function installationsChanged(installations) {
+  const before = navigationInstallations.map(row => `${row.plugin.id}:${row.enabled}`).join(',');
+  navigationInstallations = installations;
+  renderNavigation();
+  if (state.view === 'plugin-lsc' && !navigationAvailable().some(entry => entry.id === state.view)) showView('plugins');
+  if (before !== installations.map(row => `${row.plugin.id}:${row.enabled}`).join(',') && state.settingsSection === 'navigation' && state.view === 'settings') renderSettings();
+}
+function navigationSettingsHTML() {
+  const entries = orderedNavigation(navigationPreferences,navigationAvailable());
+  return `<p class="muted">拖动或使用上下按钮调整顺序。空间不足时，末尾常用入口临时收进“更多”；设置始终可见。新插件默认放入“更多”，采集不受入口位置影响。</p><div class="navigation-settings-list">${entries.map((entry,index) => `<div class="navigation-setting-row" data-navigation-row="${entry.id}"><button class="icon-button navigation-drag" draggable="true" data-navigation-drag="${entry.id}" title="拖动排序" aria-label="拖动${esc(entry.label)}">${icon('grip-vertical')}</button><span>${icon(entry.icon)}<strong>${esc(entry.label)}</strong></span><select data-navigation-placement="${entry.id}" aria-label="${esc(entry.label)}入口位置"><option value="primary" ${entry.placement === 'primary'?'selected':''}>常用导航</option><option value="drawer" ${entry.placement === 'drawer'?'selected':''}>更多抽屉</option></select><div class="navigation-move"><button class="icon-button" data-navigation-move="${entry.id}" data-direction="-1" aria-label="上移${esc(entry.label)}" ${index===0?'disabled':''}>${icon('arrow-up')}</button><button class="icon-button" data-navigation-move="${entry.id}" data-direction="1" aria-label="下移${esc(entry.label)}" ${index===entries.length-1?'disabled':''}>${icon('arrow-down')}</button></div></div>`).join('')}</div><div class="setting-actions"><button class="secondary" data-navigation-reset>恢复默认导航</button><span class="muted">当前用户 · 保存在此浏览器</span></div>`;
+}
+function updateNavigation(value, focusSelector) {
+  navigationPreferences = normalizeNavigation(value);
+  try { navigationPreferences = saveNavigation(localStorage,state.member?.id,navigationPreferences); }
+  catch { toast('布局已应用，但浏览器未能保存，下次打开可能恢复默认。',true); }
+  renderNavigation(); renderSettings();
+  if (focusSelector) $(focusSelector)?.focus({preventScroll:true});
 }
 
 function textureAssetURL(item) {
@@ -397,7 +482,7 @@ function renderConnectionDiagnostics() {
 }
 
 function connectionSettingsHTML() {
-  return settingControl("reconnect", "自动重连", "网络恢复后自动重新建立事件流连接。", state.settings.reconnect)
+  return `<div id="connection-controls-slot"></div>` + settingControl("reconnect", "自动重连", "网络恢复后自动重新建立事件流连接。", state.settings.reconnect)
     + settingControl("rememberSession", "记住本次会话", "仅保存会话恢复信息，不保存原始访问令牌。", state.settings.rememberSession)
     + connectionDiagnosticsHTML()
     + `<div class="setting-actions"><button type="button" class="secondary" data-session-action="test"><i data-lucide="refresh-cw"></i>测试连接</button><button type="button" class="secondary" data-session-action="login"><i data-lucide="log-in"></i>重新登录</button><button type="button" class="secondary" data-session-action="clear"><i data-lucide="trash-2"></i>清除已保存会话</button></div>`;
@@ -406,6 +491,7 @@ function connectionSettingsHTML() {
 function renderSettings() {
   const detail = $("#settings-detail");
   if (!detail) return;
+  for (const id of ["connection-controls", "account-controls"]) $("#settings-control-parking").append($(`#${id}`));
   const section = state.settingsSection;
   $$("[data-settings-section]").forEach(button => {
     button.setAttribute("aria-selected", String(button.dataset.settingsSection === section));
@@ -417,6 +503,7 @@ function renderSettings() {
       description: "调整工作台密度与库存网格，不改变页面结构。",
       body: `<div class="setting-field"><span><strong>界面密度</strong><small>控制页面标题、卡片和列表的垂直间距。</small></span><div class="setting-segment" role="group" aria-label="界面密度"><button type="button" data-setting-value="density" data-value="compact" aria-pressed="${state.settings.density === "compact"}">紧凑</button><button type="button" data-setting-value="density" data-value="comfortable" aria-pressed="${state.settings.density === "comfortable"}">舒适</button></div></div><div class="setting-field"><span><strong>库存网格</strong><small>在桌面端选择每行物品数量，自动模式随窗口宽度调整。</small></span><select data-setting="inventoryLayout" aria-label="库存网格"><option value="auto" ${state.settings.inventoryLayout === "auto" ? "selected" : ""}>自动</option><option value="dense" ${state.settings.inventoryLayout === "dense" ? "selected" : ""}>紧密</option><option value="wide" ${state.settings.inventoryLayout === "wide" ? "selected" : ""}>宽松</option></select></div>`,
     },
+    navigation: { title: "导航布局", description: "安排你的常用入口与更多抽屉，按当前用户保存。", body: navigationSettingsHTML() },
     notifications: {
       title: "通知",
       description: "选择哪些状态变化通过页面提示反馈。错误提示始终保留。",
@@ -427,7 +514,7 @@ function renderSettings() {
       description: "使用服务器按需纹理，或导入可复用的本地纹理包。",
       body: textureSettingsHTML(),
     },
-    account: { title: "玩家与团队", description: "每位玩家使用独立身份，下单自动署名。", body: playerAccountHTML(state.member,state.networks,state.teamMembers,state.teamInvitations) },
+    account: { title: "玩家与团队", description: "每位玩家使用独立身份，下单自动署名。", body: `<div id="account-controls-slot"></div>` + playerAccountHTML(state.member,state.networks,state.teamMembers,state.teamInvitations) },
     connection: {
       title: "连接与凭据",
       description: "管理服务连接、自动重连和浏览器会话。",
@@ -436,6 +523,7 @@ function renderSettings() {
   };
   const current = sections[section] || sections.display;
   detail.innerHTML = `<div class="settings-detail-heading"><div><h2>${current.title}</h2><span class="muted">${current.description}</span></div></div><div class="settings-detail-body">${current.body}</div>`;
+  placeGlobalControls();
   paint();
 }
 
@@ -695,6 +783,7 @@ function renderDashboard() {
 
 function refreshHeader() {
   $("#member-name").textContent = playerName(state.member);
+  $("#context-network").textContent = state.network?.name || "";
   $("#logout").hidden = !state.member;
   const network = state.network;
   const recovery = networkRecoveryState({
@@ -734,18 +823,24 @@ function refreshHeader() {
 
 function showView(view) {
   hideInventoryHover();
+  if (![...coreNavigation,...pluginNavigation,{id:'settings'}].some(entry=>entry.id===view)) return;
   state.view = view;
-  const viewName = $("#sidebar [data-view='" + view + "']")?.getAttribute("aria-label") || "AE Orbit";
+  $('#navigation-dialog').close();
+  const definition = [...coreNavigation,...pluginNavigation].find(entry=>entry.id===view);
+  const viewName = definition?.title || definition?.label || '设置';
+  $('#page-title').textContent = viewName;
   document.title = `${viewName} · AE Orbit`;
   let hasRefresh = false;
   $$("[data-refresh-view]").forEach(button => { button.hidden = button.dataset.refreshView !== view; if (!button.hidden) hasRefresh = true; });
   $(".page-refresh").hidden = !hasRefresh;
-  for (const name of ["dashboard", "inventory", "history", "orders", "cpus", "network", "plugins", "github", "settings"]) $(`#view-${name}`).hidden = name !== view;
+  for (const name of ["dashboard", "inventory", "history", "orders", "cpus", "network", "plugins", "plugin-lsc", "github", "settings"]) $(`#view-${name}`).hidden = name !== view;
   $$("[data-view]").forEach(button => {
     if (button.dataset.view === view) button.setAttribute("aria-current", "page");
     else button.removeAttribute("aria-current");
   });
+  renderNavigationCurrent();
   closeInspector(false);
+  if (view === "settings") renderSettings();
   if (view === "orders") {
     renderJobs();
     renderOrders();
@@ -762,6 +857,7 @@ function showView(view) {
   if (view === "inventory") refreshInventoryCapacity();
   if (view === "dashboard") { renderDashboard(); void pluginMarket.refresh(); }
   if (view === "plugins") pluginMarket.show();
+  if (view === "plugin-lsc") pluginMarket.showPlugin();
   if (view === "history") { renderInventoryHistory(); if(state.network&&!inventoryHistory.state.series) void inventoryHistory.load(); }
 }
 
@@ -2395,6 +2491,9 @@ async function acceptSession(member, csrf, expiresAt = "", persist = true) {
   await switchNetwork("");
   const context = state.context;
   state.member = member;
+  navigationInstallations = [];
+  navigationPreferences = loadNavigation(localStorage,member.id);
+  renderNavigation();
   api.setMember(member.id);
   api.setCSRF(csrf);
   pluginMarket.sessionChanged();
@@ -2447,6 +2546,7 @@ $("#logout").addEventListener("click", async () => {
     api.setCSRF(""); api.setMember(""); state.member = null; state.networks = [];
     clearSession(localStorage, sessionStorage);
     state.session = null;
+    navigationPreferences = loadNavigation(localStorage, "");
     pluginMarket.sessionChanged();
     $("#network").innerHTML = `<option value="">未连接</option>`;
     await switchNetwork("");
@@ -2454,6 +2554,7 @@ $("#logout").addEventListener("click", async () => {
   } catch (error) { toast(errorText(error), true); }
 });
 $("#network").addEventListener("change", event => switchNetwork(event.target.value));
+for (const id of ["#refresh-plugins", "#refresh-plugin-lsc"]) $(id).addEventListener("click", () => void pluginMarket.refresh());
 $("#notifications").addEventListener("click", () => { refreshHeader(); renderCPUs(); renderNetwork(); $("#sync-dialog").showModal(); });
 $("#refresh-dashboard").addEventListener("click", () => {
   renderDashboard();
@@ -2966,7 +3067,44 @@ document.addEventListener("keydown", event => {
     if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
   }
 });
+document.addEventListener('click',event=>{
+  const button = event.target.closest('button'); if (!button) return;
+  if (button.hasAttribute('data-navigation-more')) openNavigationDrawer();
+  if (button.hasAttribute('data-navigation-settings')) { state.settingsSection='navigation'; showView('settings'); }
+  if (button.dataset.navigationMove) {
+    updateNavigation(moveNavigation(navigationPreferences,button.dataset.navigationMove,Number(button.dataset.direction),navigationAvailable()),`[data-navigation-move="${button.dataset.navigationMove}"][data-direction="${button.dataset.direction}"]`);
+  }
+  if (button.hasAttribute('data-navigation-reset')) updateNavigation(null,'[data-navigation-reset]');
+});
+document.addEventListener('change',event=>{
+  const id=event.target.dataset.navigationPlacement;
+  if(id) updateNavigation(placeNavigation(navigationPreferences,id,event.target.value),`[data-navigation-placement="${id}"]`);
+});
+let navigationDragId='';
+document.addEventListener('dragstart',event=>{
+  const id=event.target.closest('[data-navigation-drag]')?.dataset.navigationDrag;
+  if(!id) return; navigationDragId=id;event.dataTransfer.setData('text/plain',id);event.dataTransfer.effectAllowed='move';
+});
+document.addEventListener('dragover',event=>{
+  const row=event.target.closest('[data-navigation-row]');if(!row||!navigationDragId)return;
+  event.preventDefault();event.dataTransfer.dropEffect='move';row.dataset.dragOver='true';
+});
+document.addEventListener('dragleave',event=>{const row=event.target.closest('[data-navigation-row]');if(row&&!row.contains(event.relatedTarget))delete row.dataset.dragOver;});
+document.addEventListener('dragend',()=>{navigationDragId='';$$('[data-drag-over]').forEach(row=>delete row.dataset.dragOver);});
+document.addEventListener('drop',event=>{
+  const target=event.target.closest('[data-navigation-row]')?.dataset.navigationRow;if(!target||!navigationDragId)return;
+  event.preventDefault();const entries=orderedNavigation(navigationPreferences,navigationAvailable());
+  const from=entries.findIndex(row=>row.id===navigationDragId),to=entries.findIndex(row=>row.id===target);
+  let preferences=navigationPreferences;
+  for(let step=0;step<Math.abs(to-from);step++) preferences=moveNavigation(preferences,navigationDragId,to<from?-1:1,navigationAvailable());
+  navigationDragId='';updateNavigation(preferences);
+});
+new ResizeObserver(()=>renderNavigation()).observe($('#sidebar'));
 window.addEventListener("storage", event => {
+  if (event.key === navigationKey(state.member?.id)) {
+    navigationPreferences = loadNavigation(localStorage,state.member?.id);renderNavigation();
+    if(state.view==='settings'&&state.settingsSection==='navigation')renderSettings();
+  }
   if ((event.key === state.draftKey || event.key?.startsWith("ae-orbit:jobs:v1:")) && !state.busy) {
     try { state.draft = jobs.local().draft; state.jobStorageError = false; } catch { state.jobStorageError = true; }
     state.draftBlocked = !!state.draft.warning || state.jobStorageError; renderDraft(); renderDetail(); renderJobs();

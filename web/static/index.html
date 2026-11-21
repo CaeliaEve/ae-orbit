@@ -19,6 +19,7 @@
         <a class="brand" href="/" aria-label="AE Orbit"><img class="brand-mark" src="/assets/brand/ae-orbit-mark.svg" alt=""><span>AE Orbit</span></a>
         <button id="sidebar-toggle" class="icon-button" type="button" aria-label="收起导航" title="收起导航" aria-controls="sidebar" aria-expanded="true"><i data-lucide="panel-left-close"></i><img class="sidebar-toggle-mark" src="/assets/brand/ae-orbit-mark.svg" alt=""></button>
       </div>
+      <div id="navigation-primary" class="navigation-primary">
       <button data-view="dashboard" aria-label="工作台" title="工作台" aria-current="page"><i data-lucide="layout-dashboard"></i><span>工作台</span></button>
       <button data-view="inventory" aria-label="库存" title="库存"><i data-lucide="boxes"></i><span>库存</span></button>
       <button data-view="history" aria-label="库存历史" title="库存历史"><i data-lucide="activity"></i><span>库存历史</span></button>
@@ -26,15 +27,16 @@
       <button data-view="cpus" aria-label="CPU 监控" title="CPU 监控"><i data-lucide="cpu"></i><span>CPU 监控</span></button>
       <button data-view="network" aria-label="网络管理" title="网络管理"><i data-lucide="radio-tower"></i><span>网络管理</span></button>
       <button data-view="plugins" aria-label="插件市场" title="插件市场"><i data-lucide="puzzle"></i><span>插件市场</span></button>
-      <div class="sidebar-secondary"><button data-view="github" aria-label="GitHub" title="GitHub"><i data-lucide="github"></i><span>GitHub</span></button></div>
+      <button data-view="github" aria-label="GitHub" title="GitHub"><i data-lucide="github"></i><span>GitHub</span></button>
+      </div>
+      <div id="navigation-parking" hidden></div>
+      <button id="navigation-more" data-navigation-more aria-label="更多功能" title="更多功能" aria-haspopup="dialog"><i data-lucide="ellipsis"></i><span>更多</span></button>
       <button data-view="settings" aria-label="设置" title="设置"><i data-lucide="settings"></i><span>设置</span></button>
-      <div id="sidebar-tools" class="sidebar-tools" aria-label="网络与页面操作"></div>
-      <div class="sidebar-foot"><span id="member-name">未登录</span><span id="network-quality"></span></div>
+
     </nav>
     <div class="content">
       <header id="global-controls" class="topbar">
         <div class="topbar-spacer"><a class="mobile-brand" href="/" aria-label="AE Orbit"><img src="/assets/brand/ae-orbit-mark.svg" alt=""></a></div>
-        <label class="network-picker" title="选择网络"><i data-lucide="network"></i><select id="network" aria-label="选择网络"><option value="">未连接</option></select></label>
         <div class="page-refresh">
           <button class="icon-button" data-refresh-view="dashboard" id="refresh-dashboard" title="刷新工作台" aria-label="刷新工作台"><i data-lucide="refresh-cw"></i></button>
           <button class="icon-button" data-refresh-view="inventory" id="refresh-inventory" title="刷新库存列表" aria-label="刷新库存列表" hidden><i data-lucide="refresh-cw"></i></button>
@@ -42,8 +44,10 @@
           <button class="icon-button" data-refresh-view="orders" id="refresh-orders" title="刷新任务" aria-label="刷新任务" hidden><i data-lucide="refresh-cw"></i></button>
           <button class="icon-button" data-refresh-view="cpus" id="refresh-cpus" title="刷新 CPU 状态" aria-label="刷新 CPU 状态" hidden><i data-lucide="refresh-cw"></i></button>
           <button class="icon-button" data-refresh-view="network" id="refresh-network" title="刷新网络状态" aria-label="刷新网络状态" hidden><i data-lucide="refresh-cw"></i></button>
+          <button class="icon-button" data-refresh-view="plugins" id="refresh-plugins" title="刷新插件市场" aria-label="刷新插件市场" hidden><i data-lucide="refresh-cw"></i></button>
+          <button class="icon-button" data-refresh-view="plugin-lsc" id="refresh-plugin-lsc" title="刷新储能监控" aria-label="刷新储能监控" hidden><i data-lucide="refresh-cw"></i></button>
         </div>
-        <button class="icon-button" id="notifications" title="网络与同步状态" aria-label="查看网络与同步状态"><i data-lucide="activity"></i></button><button class="icon-button" id="logout" title="退出登录" aria-label="退出登录" hidden><i data-lucide="log-out"></i></button>
+        <strong id="page-title">工作台</strong><span id="context-network" class="context-network" title="当前网络"></span>
       </header>
     <main id="main">
       <section id="view-dashboard" class="view">
@@ -123,6 +127,7 @@
         <div id="cpu-list" class="aux-list"></div>
       </section>
       <section id="view-plugins" class="view plugin-view" hidden></section>
+      <section id="view-plugin-lsc" class="view plugin-view" hidden aria-label="蓝波顿储能监控"></section>
       <section id="view-network" class="view" hidden>
         <h1 class="sr-only">网络管理</h1>
         <div class="network-toolbar"><span>网络管理</span><button class="secondary" id="add-network" type="button"><i data-lucide="plus"></i>添加网络</button></div>
@@ -151,21 +156,22 @@
       </section>
       <section id="view-settings" class="view" hidden>
         <h1 class="sr-only">设置</h1>
-        <div class="settings-layout"><section class="panel settings-panel"><div class="panel-heading"><div><h2>偏好设置</h2><span class="muted">设置会保存在当前浏览器</span></div><i data-lucide="settings"></i></div><div id="settings-sections" class="settings-sections" role="tablist" aria-label="设置分类"><button class="settings-row" type="button" role="tab" data-settings-section="display" aria-selected="true" aria-controls="settings-detail" aria-current="true"><i data-lucide="monitor"></i><span><strong>显示</strong><small>密度与库存网格布局</small></span><i data-lucide="chevron-right"></i></button><button class="settings-row" type="button" role="tab" data-settings-section="notifications" aria-selected="false" aria-controls="settings-detail" aria-current="false"><i data-lucide="bell"></i><span><strong>通知</strong><small>任务、网络与同步提醒</small></span><i data-lucide="chevron-right"></i></button><button class="settings-row" type="button" role="tab" data-settings-section="textures" aria-selected="false" aria-controls="settings-detail" aria-current="false"><i data-lucide="package"></i><span><strong>纹理资源</strong><small>按需加载或导入纹理包</small></span><i data-lucide="chevron-right"></i></button><button class="settings-row" type="button" role="tab" data-settings-section="account" aria-selected="false" aria-controls="settings-detail"><i data-lucide="user-round"></i><span><strong>玩家与团队</strong><small>身份、邀请码与账号恢复</small></span><i data-lucide="chevron-right"></i></button><button class="settings-row" type="button" role="tab" data-settings-section="connection" aria-selected="false" aria-controls="settings-detail" aria-current="false"><i data-lucide="radio-tower"></i><span><strong>连接与凭据</strong><small>自动重连与会话保存</small></span><i data-lucide="chevron-right"></i></button></div></section><section id="settings-detail" class="panel settings-detail" role="tabpanel" aria-live="polite"></section></div>
+        <div class="settings-layout"><section class="panel settings-panel"><div class="panel-heading"><div><h2>偏好设置</h2><span class="muted">设置会保存在当前浏览器</span></div><i data-lucide="settings"></i></div><div id="settings-sections" class="settings-sections" role="tablist" aria-label="设置分类"><button class="settings-row" type="button" role="tab" data-settings-section="display" aria-selected="true" aria-controls="settings-detail" aria-current="true"><i data-lucide="monitor"></i><span><strong>显示</strong><small>密度与库存网格布局</small></span><i data-lucide="chevron-right"></i></button><button class="settings-row" type="button" role="tab" data-settings-section="navigation" aria-selected="false" aria-controls="settings-detail"><i data-lucide="panel-left-close"></i><span><strong>导航布局</strong><small>常用入口、更多与排序</small></span><i data-lucide="chevron-right"></i></button><button class="settings-row" type="button" role="tab" data-settings-section="notifications" aria-selected="false" aria-controls="settings-detail" aria-current="false"><i data-lucide="bell"></i><span><strong>通知</strong><small>任务、网络与同步提醒</small></span><i data-lucide="chevron-right"></i></button><button class="settings-row" type="button" role="tab" data-settings-section="textures" aria-selected="false" aria-controls="settings-detail" aria-current="false"><i data-lucide="package"></i><span><strong>纹理资源</strong><small>按需加载或导入纹理包</small></span><i data-lucide="chevron-right"></i></button><button class="settings-row" type="button" role="tab" data-settings-section="account" aria-selected="false" aria-controls="settings-detail"><i data-lucide="user-round"></i><span><strong>玩家与团队</strong><small>身份、邀请码与账号恢复</small></span><i data-lucide="chevron-right"></i></button><button class="settings-row" type="button" role="tab" data-settings-section="connection" aria-selected="false" aria-controls="settings-detail" aria-current="false"><i data-lucide="radio-tower"></i><span><strong>连接与凭据</strong><small>自动重连与会话保存</small></span><i data-lucide="chevron-right"></i></button></div></section><section id="settings-detail" class="panel settings-detail" role="tabpanel" aria-live="polite"></section></div>
       </section>
     </main>
     </div>
   </div>
   </div>
-  <nav class="mobile-nav" aria-label="手机导航">
-    <button data-view="dashboard" aria-current="page"><i data-lucide="layout-dashboard"></i><span>工作台</span></button>
-    <button data-view="inventory"><i data-lucide="boxes"></i><span>库存</span></button>
-    <button data-view="history"><i data-lucide="activity"></i><span>历史</span></button>
-    <button data-view="orders"><i data-lucide="list-checks"></i><span>合成</span></button>
-    <button data-view="cpus"><i data-lucide="cpu"></i><span>CPU</span></button>
-    <button data-view="network"><i data-lucide="radio-tower"></i><span>网络</span></button>
-    <button data-view="settings"><i data-lucide="settings"></i><span>设置</span></button>
-  </nav>
+  <nav class="mobile-nav" aria-label="手机导航"></nav>
+  <dialog id="navigation-dialog" aria-labelledby="navigation-dialog-title">
+    <div class="dialog-heading"><h2 id="navigation-dialog-title">更多功能</h2><button class="icon-button" data-close="navigation-dialog" aria-label="关闭更多功能"><i data-lucide="x"></i></button></div>
+    <div id="navigation-drawer-items" class="navigation-drawer-items"></div>
+    <button class="text-button" data-navigation-settings><i data-lucide="sliders-horizontal"></i>自定义导航</button>
+  </dialog>
+  <div id="settings-control-parking" hidden>
+    <div id="connection-controls" class="connection-controls"><label class="network-picker" title="选择网络"><i data-lucide="network"></i><select id="network" aria-label="选择网络"><option value="">未连接</option></select></label><span id="network-quality"></span><button class="secondary" id="notifications" title="网络与同步状态" aria-label="查看网络与同步状态"><i data-lucide="activity"></i>同步详情</button></div>
+    <div id="account-controls" class="account-controls"><span id="member-name">未登录</span><button class="secondary" id="logout" title="退出登录" aria-label="退出登录" hidden><i data-lucide="log-out"></i>退出登录</button></div>
+  </div>
   <div id="sheet-backdrop" class="sheet-backdrop" hidden></div>
   <div id="toast" role="status" class="toast" hidden></div>
   <input id="texture-pack-file" type="file" accept=".zip,application/zip" hidden>
