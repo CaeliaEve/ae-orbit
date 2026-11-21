@@ -12,6 +12,7 @@ export const coreNavigation = Object.freeze([
 // Routes come from reviewed frontend modules, never from a server-supplied URL.
 export const pluginNavigation = Object.freeze([
   { id: 'plugin-lsc', pluginId: 'gtnh.lsc', label: '储能监控', title: '蓝波顿储能监控', icon: 'battery-charging', defaultPlacement: 'drawer' },
+  { id: 'plugin-qq', pluginId: 'aeorbit.qq', label: 'QQ 联动', title: 'QQ 通知联动', icon: 'messages-square', defaultPlacement: 'drawer' },
 ]);
 const known = [...coreNavigation, ...pluginNavigation];
 export const navigationKey = memberId => `ae-orbit:navigation:v1:${encodeURIComponent(memberId || 'guest')}`;

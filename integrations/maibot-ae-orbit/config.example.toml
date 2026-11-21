@@ -1,0 +1,8 @@
+[plugin]
+enabled = true
+endpoint = "http://125.77.172.25:8080"
+credential_file = "/opt/qqbot/ae-orbit-connector.json"
+config_version = "1.1.0"
+
+# Credential file (chmod 600), never place a real token in a repository:
+# {"token":"ac_qq_...", "bot_id":"YOUR_ACTUAL_BOT_QQ"}

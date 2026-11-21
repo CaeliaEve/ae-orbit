@@ -2653,3 +2653,13 @@ body { padding: 0; background: #0a0a0b; }
  .cpu-process-column header p { min-height:0; }
 }
 .lsc-observation>span { display:block; margin-top:5px; line-height:1.6; }
+/* QQ integration follows the open page layout; only the picker is a dialog. */
+.qq-heading,.qq-dialog-head,.qq-members-heading{display:flex;justify-content:space-between;align-items:center;gap:16px}
+.qq-heading{margin-bottom:28px}.qq-heading h2{font-size:28px;margin:6px 0}.qq-connection{font-size:13px;color:var(--muted)}
+.qq-layout{display:grid;grid-template-columns:minmax(250px,340px) minmax(0,1fr);gap:48px}.qq-layout form,.qq-chooser{display:flex;flex-direction:column;gap:14px}
+.qq-layout h3{margin:8px 0;font-size:16px}.qq-layout textarea,.qq-dialog textarea{width:100%;resize:vertical;background:var(--soft);color:inherit;border:0;border-radius:8px;padding:12px;font:inherit}
+.qq-delivery{display:flex;justify-content:space-between;gap:20px;padding:16px 0;border-bottom:1px solid var(--rule)}.qq-delivery small{display:block;color:var(--muted);font-size:12px;margin-top:5px}.qq-delivery p{font-size:13px;margin:8px 0 0}.qq-delivery>div:last-child{text-align:right;flex-shrink:0;font-size:12px}.qq-delivery [data-state=uncertain]{color:var(--red)}
+.qq-dialog{width:min(560px,calc(100vw - 32px));max-height:85vh;padding:24px;border:0;border-radius:16px;background:var(--panel);color:var(--text,#e9ebee)}.qq-dialog::backdrop{background:#0008}.qq-dialog-head{margin-bottom:20px}.qq-dialog-head h3{margin:0}.qq-chooser label:not(.check){display:flex;flex-direction:column;gap:8px}.qq-members-heading label{flex:1}.qq-members-heading button{margin-top:22px}.qq-members{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;max-height:230px;overflow:auto}.qq-members button{display:flex;flex-direction:column;text-align:left;gap:4px;background:transparent;border:0;padding:10px;border-radius:8px;color:inherit}.qq-members button:hover{background:var(--soft)}.qq-members small,[data-member-status]{color:var(--muted);font-size:12px}.qq-job-notification{font-size:12px;text-align:left;overflow-wrap:anywhere;margin:8px 0}
+@media(max-width:760px){.qq-layout{grid-template-columns:1fr;gap:24px}.qq-heading{align-items:flex-start;flex-direction:column}.qq-delivery{gap:12px}.qq-delivery>div:last-child{max-width:110px}.qq-members{grid-template-columns:1fr}}
+
+.qq-channel-list{display:grid;gap:12px}.qq-channel strong,.qq-channel small{display:block}.qq-channel small{color:var(--muted);font-size:12px}

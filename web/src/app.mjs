@@ -19,6 +19,7 @@ import { createHistoryController, historyChartHTML, historyChartModel, historyRe
 import { loadOrderSnapshot } from "./orders.mjs";
 import { createJobController } from "./job-controller.mjs";
 import { isJobClaim } from "./jobs.mjs";
+import { createQQNotifications, notificationLabel } from "./qq-notifications.mjs";
 import { jobListHTML, jobDetailHTML, recoveryHTML } from "./job-view.mjs";
 import { craftingJobModel, craftingOverviewHTML, craftingOrdersHTML } from "./crafting-center.mjs";
 import {
@@ -124,6 +125,8 @@ let navigationInstallations = [];
 let navigationSignature = "", mobileNavigationSignature = "";
 const navigationButtons = new Map($$("#navigation-primary [data-view]").map(button => [button.dataset.view, button]));
 const pluginMarket = createPluginMarket({runtimeRoot:$("#view-plugin-lsc"),onPluginsChanged:installationsChanged,root:$('#view-plugins'),widget:$('#dashboard-energy-widgets'),request:(path,options)=>api.request(path,options),member:()=>state.member,network:()=>state.network,showView,toast});
+let jobNotification = null;
+const qqNotifications = createQQNotifications({root:$('#view-plugin-qq'),request:(path,options)=>api.request(path,options),member:()=>state.member,network:()=>state.network,toast,changed:v=>installationsChanged([...navigationInstallations.filter(r=>r.plugin.id!=='aeorbit.qq'),{plugin:{id:'aeorbit.qq'},enabled:v.enabled}])});
 const activeStates = new Set(["queued", "assigned", "computing", "running"]);
 const attentionStates = new Set(["failed", "needs_review"]);
 const inventoryHistory = createHistoryController({ request: (path,options) => api.request(networkPath(path),options), onChange: () => renderInventoryHistory() });
@@ -286,7 +289,7 @@ function installationsChanged(installations) {
   const before = navigationInstallations.map(row => `${row.plugin.id}:${row.enabled}`).join(',');
   navigationInstallations = installations;
   renderNavigation();
-  if (state.view === 'plugin-lsc' && !navigationAvailable().some(entry => entry.id === state.view)) showView('plugins');
+  if (['plugin-lsc','plugin-qq'].includes(state.view) && !navigationAvailable().some(entry => entry.id === state.view)) showView('plugins');
   if (before !== installations.map(row => `${row.plugin.id}:${row.enabled}`).join(',') && state.settingsSection === 'navigation' && state.view === 'settings') renderSettings();
 }
 function navigationSettingsHTML() {
@@ -536,6 +539,7 @@ function errorText(error) {
   if (error?.code === "identity_changed") {
     api.setCSRF("");
     state.session = null;
+    qqNotifications.reset(); jobNotification=null;
     pluginMarket.sessionChanged();
     clearSession(localStorage,sessionStorage);
     state.stream?.close();
@@ -839,7 +843,7 @@ function showView(view) {
   let hasRefresh = false;
   $$("[data-refresh-view]").forEach(button => { button.hidden = button.dataset.refreshView !== view; if (!button.hidden) hasRefresh = true; });
   $(".page-refresh").hidden = !hasRefresh;
-  for (const name of ["dashboard", "inventory", "history", "orders", "cpus", "network", "plugins", "plugin-lsc", "github", "settings"]) $(`#view-${name}`).hidden = name !== view;
+  for (const name of ["dashboard", "inventory", "history", "orders", "cpus", "network", "plugins", "plugin-lsc", "plugin-qq", "github", "settings"]) $(`#view-${name}`).hidden = name !== view;
   $$("[data-view]").forEach(button => {
     if (button.dataset.view === view) button.setAttribute("aria-current", "page");
     else button.removeAttribute("aria-current");
@@ -864,6 +868,7 @@ function showView(view) {
   if (view === "dashboard") { renderDashboard(); void pluginMarket.refresh(); }
   if (view === "plugins") pluginMarket.show();
   if (view === "plugin-lsc") pluginMarket.showPlugin();
+  if (view === "plugin-qq") qqNotifications.show();
   if (view === "history") { renderInventoryHistory(); if(state.network&&!inventoryHistory.state.series) void inventoryHistory.load(); }
 }
 
@@ -1030,6 +1035,7 @@ function renderDetail() {
     <div class="detail-facts"><div class="fact"><span>库存观测</span><span>${stockFreshness(item, age)}</span></div><div class="fact"><span>合成样板</span><span>${!item.craftable_observed_at ? "未确认" : item.craftable ? item.craftable_current_session ? "已确认" : "待重新核验" : "不可合成"}</span></div><div class="fact"><span>身份</span><span>${item.exact ? "精确" : "待确认"}</span></div></div>
     <label class="field-label" for="craft-quantity">${craftingQuantityLabel(item)}</label><div class="stepper"><button data-step="-1" title="减少数量" aria-label="减少数量">${icon("minus")}</button><input id="craft-quantity" type="text" inputmode="numeric" maxlength="19" value="${esc(state.amount)}" autocomplete="off"><button data-step="1" title="增加数量" aria-label="增加数量">${icon("plus")}</button></div>
     <span class="field-label">合成 CPU</span><button class="cpu-select" id="detail-cpu" ${state.busy || state.preparing || !state.network ? "disabled" : ""} title="${cpuSelectionTitle()}"><span>${esc(state.cpuName || "自动分配")}${state.waitForCPU ? " · 等待" : ""}${!cpuSelectionSupported() ? " · 当前 OC 未启用" : ""}</span>${icon("cpu")}</button>
+    <button class="text-button qq-job-notification" data-job-notification ${state.busy ? 'disabled' : ''}>${icon('bell')}${esc(notificationLabel(jobNotification))}</button>
     <div class="detail-actions"><button class="primary wide" id="add-to-draft" ${canAdd ? "" : "disabled"}>${icon("list-plus")}加入清单</button><button class="secondary wide" id="submit-immediately" ${canAdd && jobs.state.support === "supported" && !state.busy ? "" : "disabled"}>${icon("send")}立即提交</button></div>
     <p class="draft-submitter">下单人：${esc(playerName(state.member))}</p><p id="detail-feedback" class="detail-feedback" role="status">${esc(reason || submissionStatus())}</p>`;
   if(item.has_tag){
@@ -1189,7 +1195,7 @@ function renderDraft() {
         ${entry.status === "uncertain" ? isJobClaim(entry) ? `<button class="secondary wide" data-job-reconcile="${esc(entry.batch_id.slice(4))}">${icon("refresh-cw")}核对原生产任务</button>` : `<button class="secondary wide" data-reconcile="${esc(entry.id)}">${icon("refresh-cw")}核对原单项订单</button>` : ""}
       </div>`;
     }).join("")}</div>
-    <div class="draft-submit"><p class="draft-submitter">以 <strong>${esc(playerName(state.member))}</strong> 的身份提交</p><div class="draft-total"><span>已选 <strong>${summary.selected}</strong> 项</span><span title="所选条目的合成数量合计">${summary.quantityByKind ? Object.entries(summary.quantityByKind).map(([kind,amount])=>`<strong class="number">${quantityHTML(amount)}</strong> ${kind === "fluid" ? "mB" : "件"}`).join(" · ") : `共 <strong class="number">${quantityHTML(summary.quantity)}</strong> 件`}</span></div><button class="primary" id="submit-draft" ${chosen.length && !state.busy && jobs.state.support === "supported" ? "" : "disabled"}>${icon("send")}${state.busy ? "正在提交生产任务" : `提交 ${chosen.length} 项`}</button><p class="draft-note">${esc(submissionStatus() || "提交后可在合成中心查看进度")}</p></div>`
+    <div class="draft-submit"><button class="text-button qq-job-notification" data-job-notification ${state.busy ? "disabled" : ""}>${icon("bell")}${esc(notificationLabel(jobNotification))}</button><p class="draft-submitter">以 <strong>${esc(playerName(state.member))}</strong> 的身份提交</p><div class="draft-total"><span>已选 <strong>${summary.selected}</strong> 项</span><span title="所选条目的合成数量合计">${summary.quantityByKind ? Object.entries(summary.quantityByKind).map(([kind,amount])=>`<strong class="number">${quantityHTML(amount)}</strong> ${kind === "fluid" ? "mB" : "件"}`).join(" · ") : `共 <strong class="number">${quantityHTML(summary.quantity)}</strong> 件`}</span></div><button class="primary" id="submit-draft" ${chosen.length && !state.busy && jobs.state.support === "supported" ? "" : "disabled"}>${icon("send")}${state.busy ? "正在提交生产任务" : `提交 ${chosen.length} 项`}</button><p class="draft-note">${esc(submissionStatus() || "提交后可在合成中心查看进度")}</p></div>`
     : `<div class="draft-empty">${icon("list-plus")}<strong>清单还是空的</strong><span>点击物品右上角的 +，或在物品详情中加入清单</span></div>`;
   const checkAll = $("#draft-check-all", panel);
   if (checkAll) checkAll.indeterminate = summary.selected > 0 && summary.selected < summary.editable;
@@ -1322,7 +1328,7 @@ async function submitDraft(ids = selectedDraftIds()) {
   state.busy = true;
   renderDraft(); renderDetail(); renderInventory();
   try {
-    await jobs.submit(ids);
+    await jobs.submit(ids, {notification:jobNotification});
     if (context === state.context) { toast(`${playerName(state.member)} 的生产任务已受理 · ${ids.length} 项`, false, "task"); await refreshJobs(); }
   } catch (error) {
     if (context === state.context) toast(`${errorText(error)} 原清单保持锁定，请到生产任务核对。`, true);
@@ -2345,6 +2351,7 @@ async function switchNetwork(id) {
   state.streamState = "closed";
   cpuCallback = null;
   for (const dialog of ["cpu-dialog", "order-dialog", "job-dialog"]) if ($(`#${dialog}`).open) $(`#${dialog}`).close();
+  qqNotifications.reset(); jobNotification=null;
   state.network = network || null;
   state.inventoryStats = null;
   state.inventoryTrend = [];
@@ -2567,6 +2574,7 @@ $("#logout").addEventListener("click", async () => {
     clearSession(localStorage, sessionStorage);
     state.session = null;
     navigationPreferences = loadNavigation(localStorage, "");
+    qqNotifications.reset(); jobNotification=null;
     pluginMarket.sessionChanged();
     $("#network").innerHTML = `<option value="">未连接</option>`;
     await switchNetwork("");
@@ -2575,6 +2583,7 @@ $("#logout").addEventListener("click", async () => {
 });
 $("#network").addEventListener("change", event => switchNetwork(event.target.value));
 for (const id of ["#refresh-plugins", "#refresh-plugin-lsc"]) $(id).addEventListener("click", () => void pluginMarket.refresh());
+$('#refresh-plugin-qq').addEventListener('click',()=>qqNotifications.show());
 $("#notifications").addEventListener("click", () => { refreshHeader(); renderCPUs(); renderNetwork(); $("#sync-dialog").showModal(); });
 $("#refresh-dashboard").addEventListener("click", () => {
   renderDashboard();
@@ -2677,6 +2686,7 @@ $("#order-dialog").addEventListener("cancel", () => invalidateOrderDetail());
 $("#order-dialog").addEventListener("close", () => { if (!$("#order-dialog").open) invalidateOrderDetail(); });
 $("#refresh-cpus").addEventListener("click", () => refreshCPUs());
 $("#cpu-list").addEventListener("click",event=>{
+  const notify=event.target.closest('[data-cpu-notify]');if(notify){const cpu=state.cpus.cpus?.find(c=>c.id===notify.dataset.cpuNotify);if(cpu)void qqNotifications.cpuReminder(cpu,state.cpus.session_id||state.network?.session_id).catch(e=>toast(e.message,true));return;}
   const button=event.target.closest("[data-cpu-process]");if(!button)return;
   const index=(state.cpus.cpus||[]).findIndex(cpu=>cpu.id===button.dataset.cpuProcess);
   const cpu=state.cpus.cpus?.[index];if(!cpu||!state.network)return;
@@ -2979,6 +2989,7 @@ document.addEventListener("click", async event => {
   if (button.id === "add-to-draft" || button.id === "submit-immediately") {
     await addItem(state.selected, $("#craft-quantity").value, button.id === "submit-immediately");
   }
+  if (button.hasAttribute("data-job-notification")) { try { jobNotification=await qqNotifications.choose(jobNotification); renderDetail(); renderDraft(); } catch(error) { if(error.message!=="已取消设置")toast(error.message,true); } return; }
   if (button.id === "detail-cpu") chooseCPU((name, wait) => { state.cpuName = name; state.waitForCPU = wait; renderDetail(); });
   if (data.remove) await changeDraft(current => ({ ...current, entries: removeDraft(current.entries, data.remove) }));
   if (button.id === "submit-draft") submitDraft();

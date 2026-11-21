@@ -102,7 +102,7 @@ export function createJobController({ storage, request, makeKey = newId, lock = 
     syncing = work;
     return work;
   }
-  async function submit(ids, { name = "", ttlSeconds = 3600 } = {}) {
+  async function submit(ids, { name = "", ttlSeconds = 3600, notification = null } = {}) {
     if (!scope || state.support !== "supported" || state.busy) throw new Error("Jobs unavailable.");
     const token = generation, path = base(), savedJournal = journal, key = draftKey();
     state.busy = true; emit();
@@ -112,7 +112,7 @@ export function createJobController({ storage, request, makeKey = newId, lock = 
         const draft = local().draft;
         if (draft.warning) throw new Error("Draft storage unavailable.");
         const rows = ids.map(id => draft.entries.find(row => row.id === id));
-        const intent = createJobIntent({ ...scope, requestKey: makeKey(), entries: rows, name, ttlSeconds });
+        const intent = createJobIntent({ ...scope, requestKey: makeKey(), entries: rows, name, ttlSeconds, notification });
         // Materialize journal overlays before prepare so a prior interrupted claim cannot be reused.
         saveDraft(storage, key, draft);
         return savedJournal.prepare(intent);

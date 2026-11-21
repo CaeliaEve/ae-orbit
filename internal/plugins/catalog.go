@@ -8,6 +8,7 @@ import (
 )
 
 const LSC = "gtnh.lsc"
+const QQ = "aeorbit.qq"
 const MaxObjects = 16
 
 type Manifest struct {
@@ -22,7 +23,10 @@ type Manifest struct {
 }
 
 func Catalog() []Manifest {
-	return []Manifest{{LSC, "蓝波顿超级电容库", "1.1.0", "储能、容量、长期趋势与站内告警；支持每秒实时采集与独立历史间隔。", true, "LSC", []string{"getStoredEUString", "getEUCapacityString"}, 10}}
+	return []Manifest{
+		{LSC, "蓝波顿超级电容库", "1.1.0", "储能、容量、长期趋势与站内告警；支持每秒实时采集与独立历史间隔。", true, "LSC", []string{"getStoredEUString", "getEUCapacityString"}, 10},
+		{QQ, "QQ 联动", "1.0.0", "通过 MaiBot 接收蓝波顿告警、CPU 任务提醒和网络异常，支持群内 @ 与私聊。", true, "", []string{}, 0},
+	}
 }
 func Supported(id string) bool { return id == LSC }
 

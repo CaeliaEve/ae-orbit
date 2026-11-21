@@ -71,7 +71,7 @@ func productionJobDetail(ctx context.Context, tx pgx.Tx, networkID, jobID string
 	if err != nil {
 		return result, err
 	}
-	rows, err := tx.Query(ctx, `SELECT id,entry_key,ordinal,requested_item_id,item_id,quantity,cpu_name,wait_for_cpu,state,reason,order_id,attempt_id,terminal_at
+	rows, err := tx.Query(ctx, `SELECT id,entry_key,ordinal,requested_item_id,item_id,quantity,cpu_name,wait_for_cpu,state,reason,order_id,attempt_id,terminal_at,notification
 		FROM production_job_entries WHERE job_id=$1 ORDER BY ordinal LIMIT 500`, jobID)
 	if err != nil {
 		return result, err
@@ -80,7 +80,7 @@ func productionJobDetail(ctx context.Context, tx pgx.Tx, networkID, jobID string
 	for rows.Next() {
 		var entry protocol.ProductionJobEntry
 		if err = rows.Scan(&entry.ID, &entry.EntryKey, &entry.Ordinal, &entry.RequestedItemID, &entry.ItemID,
-			&entry.Quantity, &entry.CPUName, &entry.WaitForCPU, &entry.State, &entry.Reason, &entry.OrderID, &entry.AttemptID, &entry.TerminalAt); err != nil {
+			&entry.Quantity, &entry.CPUName, &entry.WaitForCPU, &entry.State, &entry.Reason, &entry.OrderID, &entry.AttemptID, &entry.TerminalAt, &entry.Notification); err != nil {
 			return result, err
 		}
 		result.Entries = append(result.Entries, entry)
@@ -240,12 +240,27 @@ func (s *Store) CreateProductionJob(ctx context.Context, userID, networkID strin
 		batch := &pgx.Batch{}
 		for i, entry := range in.Entries {
 			entryID := newID()
-			batch.Queue(`INSERT INTO production_job_entries(id,job_id,network_id,entry_key,ordinal,requested_item_id,item_id,quantity,cpu_name,wait_for_cpu)
-				VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, entryID, jobID, networkID, entry.EntryKey, i, int64(entry.ItemID), int64(canonicalIDs[i]), int64(entry.Quantity), entry.CPUName, entry.WaitForCPU)
+			if err := validateQQTarget(ctx, tx, networkID, entry.Notification); err != nil {
+				return err
+			}
+			batch.Queue(`INSERT INTO production_job_entries(id,job_id,network_id,entry_key,ordinal,requested_item_id,item_id,quantity,cpu_name,wait_for_cpu,notification)
+				VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, entryID, jobID, networkID, entry.EntryKey, i, int64(entry.ItemID), int64(canonicalIDs[i]), int64(entry.Quantity), entry.CPUName, entry.WaitForCPU, entry.Notification)
 			batch.Queue(`INSERT INTO production_job_entry_receipts(member_id,network_id,entry_key,job_id,entry_id) VALUES($1,$2,$3,$4,$5)`, userID, networkID, entry.EntryKey, jobID, entryID)
 		}
 		if err = tx.SendBatch(ctx, batch).Close(); err != nil {
 			return err
+		}
+		for _, entry := range in.Entries {
+			if entry.Notification == nil {
+				continue
+			}
+			var entryID string
+			if err = tx.QueryRow(ctx, "SELECT id FROM production_job_entries WHERE job_id=$1 AND entry_key=$2", jobID, entry.EntryKey).Scan(&entryID); err != nil {
+				return err
+			}
+			if err = addQQEntryReminder(ctx, tx, userID, networkID, entryID, entry.Notification); err != nil {
+				return err
+			}
 		}
 		if _, err = tx.Exec(ctx, `INSERT INTO production_job_receipts(member_id,network_id,request_key,manifest_digest,job_id) VALUES($1,$2,$3,$4,$5)`, userID, networkID, in.RequestKey, digest, jobID); err != nil {
 			return err

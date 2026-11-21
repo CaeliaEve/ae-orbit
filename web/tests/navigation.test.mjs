@@ -32,7 +32,7 @@ test('member preferences stay isolated and disabled plugin positions survive', (
 });
 test('invalid saved rows cannot hide settings, inject routes, or duplicate buttons', () => {
   const normalized=normalizeNavigation({entries:[{id:'settings',placement:'drawer'},{id:'inventory',placement:'drawer'},{id:'inventory'},{id:'javascript:bad'}]});
-  assert.equal(normalized.entries.length,9);
+  assert.equal(normalized.entries.length,10);
   assert.deepEqual(normalized.entries[0],{id:'inventory',placement:'drawer'});
   assert.ok(!normalized.entries.some(row=>row.id==='settings'));
 });

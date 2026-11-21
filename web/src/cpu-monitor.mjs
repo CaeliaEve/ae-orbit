@@ -47,6 +47,7 @@ export function cpuMonitorListHTML(model, { connected = true, supported = false,
         <dl><div><dt>快照 ID</dt><dd>${esc(cpu.id || "未提供")}</dd></div><div><dt>合成存储</dt><dd>${formatQuantity(cpu.storage)} B</dd></div><div><dt>指定合成</dt><dd>${selection.selectable ? "可通过合成清单指定" : esc(selection.reason)}</dd></div></dl>
         <p>${esc(outputText)}${output?.name ? `<span class="cpu-output-registry">${esc(output.name)}</span>` : ""}</p>
         ${cpu.busy ? `<button class="secondary cpu-process-open" data-cpu-process="${esc(cpu.id)}"><i data-lucide="activity" aria-hidden="true"></i>查看合成过程</button>` : ""}
+        ${cpu.busy ? `<button class="secondary cpu-process-open" data-cpu-notify="${esc(cpu.id)}" ${row.unnamed||row.duplicate||truncated?'disabled':''}><i data-lucide="bell" aria-hidden="true"></i>本次任务通知</button>` : ''}
         ${output?.catalog?.base_fallback ? '<p class="cpu-detail-note">产物使用基础纹理，名称保留游戏上报值；NBT 变种外观未单独确认。</p>' : ""}<p class="cpu-detail-note">快照 ID 可能随重新枚举变化。详情按需读取三类任务清单，没有合成完成百分比。</p>
       </div>
     </details>`;

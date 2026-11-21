@@ -321,6 +321,9 @@ func (s *Store) saveCPUs(ctx context.Context, tx pgx.Tx, networkID string, p pro
 		return err
 	}
 	if changed {
+		if err := updateQQCPUWatches(ctx, tx, networkID, p); err != nil {
+			return err
+		}
 		return s.event(ctx, tx, networkID, "cpus")
 	}
 	return nil

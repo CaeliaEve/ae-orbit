@@ -187,6 +187,9 @@ func (s *Store) MonitoringPlugins(ctx context.Context, member, group string) ([]
 	}
 	out := []PluginInstallation{}
 	for _, p := range plugins.Catalog() {
+		if p.ID == plugins.QQ {
+			continue
+		}
 		v := PluginInstallation{Plugin: p, Settings: plugins.Defaults()}
 		var raw []byte
 		err := s.pool.QueryRow(ctx, `SELECT enabled,revision,settings FROM plugin_installations WHERE server_group=$1 AND plugin_id=$2`, group, p.ID).Scan(&v.Enabled, &v.Revision, &raw)

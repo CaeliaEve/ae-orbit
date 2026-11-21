@@ -1,0 +1,18 @@
+{
+ "schema_version": 2,
+ "required_capabilities": ["custom_pages", "structured_arguments"],
+ "workspace_title": "AE Orbit",
+ "pages": [{
+  "id": "channels", "title": "AE Orbit 通知渠道", "description": "选择允许通知的 QQ 群，自动同步到 AE Orbit。", "placement": "sidebar", "icon": "settings",
+  "mode": "custom", "entry": "channels.html",
+  "queries": {"status": {"api": "channels_status", "version": "1"}},
+  "actions": {
+   "refresh": {"api": "channels_refresh", "version": "1"},
+   "save": {"api": "channels_save", "version": "1", "parameters": {
+    "groups": {"type": "array", "required": true, "max_items": 16, "items": {"type": "string", "max_length": 15}},
+    "allow_private": {"type": "boolean", "required": true},
+    "alarm_recipient": {"type": "string", "max_length": 15}
+   }}
+  }
+ }]
+}

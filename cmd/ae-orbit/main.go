@@ -98,6 +98,12 @@ func run(parent context.Context) error {
 				if err != nil && ctx.Err() == nil {
 					slog.Error("monitoring maintenance failed", "error", err)
 				}
+				work, stop = context.WithTimeout(ctx, 10*time.Second)
+				err = db.MaintainQQ(work)
+				stop()
+				if err != nil && ctx.Err() == nil {
+					slog.Error("QQ maintenance failed", "error", err)
+				}
 			}
 		}
 	}()
