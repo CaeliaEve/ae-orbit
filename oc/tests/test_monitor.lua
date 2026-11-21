@@ -7,7 +7,7 @@ assert(select(3,monitor.sample(nil))=='component_missing')
 assert(select(3,monitor.sample({getStoredEU=function()error('must not use numeric energy')end}))=='interface_unsupported')
 local now=10
 local addr='11111111-1111-1111-1111-111111111111'
-local component={list=function(tp)assert(tp=='LSC');local done=false;return function()if not done then done=true;return addr end end end,
+local component={list=function(tp,exact)assert((tp=='lsc' or tp=='LSC') and exact);local done=false;return function()if tp=='lsc' and not done then done=true;return addr end end end,
  proxy=function(address)assert(address==addr);return {getStoredEUString=function()return '10'end,getEUCapacityString=function()return '100'end}end}
 local attempts,payload=0,nil
 local assignment={id=string.rep('a',32),plugin_id='gtnh.lsc',component_address=addr,revision=1,installation_revision=1,interval_seconds=10}

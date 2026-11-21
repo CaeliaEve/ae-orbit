@@ -17,11 +17,19 @@ function M.sample(proxy)
 end
 function M.discover(component)
  local out=json.array({})
- for address in component.list('LSC',true) do
-  if #out>=32 then break end
-  local ok,p=pcall(component.proxy,address)
-  if not ok then cancel.rethrow(p) end
-  out[#out+1]={address=address,type='LSC',supported=ok and p.getStoredEUString~=nil and p.getEUCapacityString~=nil or false}
+ local seen={}
+ -- Adapter CompoundBlockDriver.cleanName lowercases the preferred "LSC"
+ -- name to "lsc". Keep the wire type canonical and support direct drivers.
+ for _,name in ipairs({'lsc','LSC'}) do
+  for address in component.list(name,true) do
+   if not seen[address] then
+    if #out>=32 then return out end
+    seen[address]=true
+    local ok,p=pcall(component.proxy,address)
+    if not ok then cancel.rethrow(p) end
+    out[#out+1]={address=address,type='LSC',supported=ok and p.getStoredEUString~=nil and p.getEUCapacityString~=nil or false}
+   end
+  end
  end
  return out
 end
