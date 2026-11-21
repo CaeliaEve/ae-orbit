@@ -92,7 +92,7 @@ func TestMonitorPluginIndependentLifecycleAndAuthorization(t *testing.T) {
 	if alerts[0].State != "active" || alerts[0].AcknowledgedAt == nil {
 		t.Fatal("ack falsely recovered low energy", alerts)
 	}
-	if _, err = f.db.Pool().Exec(ctx, `UPDATE monitor_latest SET reported_at=now()-interval '20 seconds' WHERE object_id=$1`, id); err != nil {
+	if _, err = f.db.Pool().Exec(ctx, `UPDATE monitor_latest SET reported_at=now()-interval '20 seconds',last_recorded_at=now()-interval '20 seconds' WHERE object_id=$1`, id); err != nil {
 		t.Fatal(err)
 	}
 	poll.Samples[0].Flow = nil
@@ -149,7 +149,7 @@ func TestMonitorPluginIndependentLifecycleAndAuthorization(t *testing.T) {
 		t.Fatal("inconsistent energy accepted")
 	}
 	poll.Samples[0].Capacity = cap
-	if _, err = f.db.Pool().Exec(ctx, `UPDATE monitor_latest SET reported_at=now()-interval '20 seconds' WHERE object_id=$1`, id); err != nil {
+	if _, err = f.db.Pool().Exec(ctx, `UPDATE monitor_latest SET reported_at=now()-interval '20 seconds',last_recorded_at=now()-interval '20 seconds' WHERE object_id=$1`, id); err != nil {
 		t.Fatal(err)
 	}
 	// Failure preserves the last valid stock and does not manufacture zero.
@@ -163,7 +163,7 @@ func TestMonitorPluginIndependentLifecycleAndAuthorization(t *testing.T) {
 	if objects[0].Stored != "4000000000000000000000000000000000000000" || objects[0].Status != "read_error" {
 		t.Fatal(objects)
 	}
-	if _, err = f.db.Pool().Exec(ctx, `UPDATE monitor_latest SET reported_at=now()-interval '20 seconds' WHERE object_id=$1`, id); err != nil {
+	if _, err = f.db.Pool().Exec(ctx, `UPDATE monitor_latest SET reported_at=now()-interval '20 seconds',last_recorded_at=now()-interval '20 seconds' WHERE object_id=$1`, id); err != nil {
 		t.Fatal(err)
 	}
 	poll.Sequence = 5

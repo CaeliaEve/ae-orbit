@@ -67,23 +67,26 @@ func (f *MonitorFlow) valid() bool {
 }
 
 type MonitorObject struct {
-	Flow        *MonitorFlow `json:"flow,omitempty"`
-	FlowError   string       `json:"flow_error,omitempty"`
-	ID          string       `json:"id"`
-	PluginID    string       `json:"plugin_id"`
-	CollectorID string       `json:"collector_id"`
-	Address     string       `json:"component_address"`
-	Name        string       `json:"name"`
-	Location    string       `json:"location"`
-	Enabled     bool         `json:"enabled"`
-	Revision    int64        `json:"revision"`
-	Status      string       `json:"status"`
-	Stored      string       `json:"stored_eu,omitempty"`
-	Capacity    string       `json:"capacity_eu,omitempty"`
-	Percent     string       `json:"percent,omitempty"`
-	ObservedAt  *time.Time   `json:"observed_at,omitempty"`
-	Error       string       `json:"error,omitempty"`
-	Epoch       int64        `json:"epoch"`
+	SamplingInterval  int          `json:"sample_interval_seconds"`
+	RequestedInterval int          `json:"requested_interval_seconds"`
+	HistoryInterval   int          `json:"history_interval_seconds"`
+	Flow              *MonitorFlow `json:"flow,omitempty"`
+	FlowError         string       `json:"flow_error,omitempty"`
+	ID                string       `json:"id"`
+	PluginID          string       `json:"plugin_id"`
+	CollectorID       string       `json:"collector_id"`
+	Address           string       `json:"component_address"`
+	Name              string       `json:"name"`
+	Location          string       `json:"location"`
+	Enabled           bool         `json:"enabled"`
+	Revision          int64        `json:"revision"`
+	Status            string       `json:"status"`
+	Stored            string       `json:"stored_eu,omitempty"`
+	Capacity          string       `json:"capacity_eu,omitempty"`
+	Percent           string       `json:"percent,omitempty"`
+	ObservedAt        *time.Time   `json:"observed_at,omitempty"`
+	Error             string       `json:"error,omitempty"`
+	Epoch             int64        `json:"epoch"`
 }
 type MonitorObjectInput struct {
 	PluginID    string `json:"plugin_id"`
@@ -95,9 +98,10 @@ type MonitorObjectInput struct {
 	Revision    int64  `json:"revision"`
 }
 type MonitorHello struct {
-	BootID     string             `json:"boot_id"`
-	Modules    []string           `json:"modules"`
-	Components []MonitorComponent `json:"components"`
+	MinInterval int                `json:"min_interval_seconds,omitempty"`
+	BootID      string             `json:"boot_id"`
+	Modules     []string           `json:"modules"`
+	Components  []MonitorComponent `json:"components"`
 }
 type MonitorAssignment struct {
 	ID                   string `json:"id"`
@@ -207,6 +211,9 @@ func (s *Store) SetMonitoringPlugin(ctx context.Context, member, group, id strin
 	}
 	if !plugins.Supported(id) || !settings.Valid() || revision < 0 {
 		return ErrInvalid
+	}
+	if settings.HistorySeconds == 0 {
+		settings.HistorySeconds = 10
 	}
 	raw, _ := json.Marshal(settings)
 	return s.monitorTransaction(ctx, func(tx pgx.Tx) error {
@@ -349,8 +356,8 @@ func (s *Store) MonitorObjects(ctx context.Context, member, group string) ([]Mon
 	if err := s.RequireGroupAccess(ctx, member, group); err != nil {
 		return nil, err
 	}
-	rows, err := s.pool.Query(ctx, `SELECT o.id,o.plugin_id,o.collector_id,o.component_address,o.name,o.location,o.enabled,o.revision,coalesce(l.stored_eu::text,''),coalesce(l.capacity_eu::text,''),l.observed_at,coalesce(l.error,''),coalesce(l.epoch,1),l.flow,coalesce(l.flow_error,''),CASE WHEN NOT p.enabled OR NOT o.enabled THEN 'paused' WHEN c.revoked THEN 'revoked' WHEN c.last_seen IS NULL THEN 'waiting_collector' WHEN c.last_seen<now()-((p.settings->>'offline_seconds')::int)*interval '1 second' THEN 'offline' WHEN NOT (c.modules ? o.plugin_id) THEN 'upgrade_required' WHEN l.object_id IS NULL THEN 'waiting_sample' WHEN l.error<>'' THEN 'read_error' WHEN l.observed_at IS NULL OR l.observed_at<now()-((p.settings->>'offline_seconds')::int)*interval '1 second' THEN 'stale' ELSE 'online' END
- FROM plugin_objects o JOIN plugin_installations p USING(server_group,plugin_id) JOIN monitor_collectors c ON c.id=o.collector_id LEFT JOIN monitor_latest l ON l.object_id=o.id WHERE o.server_group=$1 ORDER BY o.created_at,o.id`, group)
+	rows, err := s.pool.Query(ctx, `SELECT o.id,o.plugin_id,o.collector_id,o.component_address,o.name,o.location,o.enabled,o.revision,coalesce(l.stored_eu::text,''),coalesce(l.capacity_eu::text,''),l.observed_at,coalesce(l.error,''),coalesce(l.epoch,1),l.flow,coalesce(l.flow_error,''),CASE WHEN NOT p.enabled OR NOT o.enabled THEN 'paused' WHEN c.revoked THEN 'revoked' WHEN c.last_seen IS NULL THEN 'waiting_collector' WHEN c.last_seen<now()-((p.settings->>'offline_seconds')::int)*interval '1 second' THEN 'offline' WHEN NOT (c.modules ? o.plugin_id) THEN 'upgrade_required' WHEN l.object_id IS NULL THEN 'waiting_sample' WHEN l.error<>'' THEN 'read_error' WHEN l.observed_at IS NULL OR l.observed_at<now()-((p.settings->>'offline_seconds')::int)*interval '1 second' THEN 'stale' ELSE 'online' END,greatest((p.settings->>'interval_seconds')::int,coalesce(b.min_interval_seconds,10)),(p.settings->>'interval_seconds')::int,greatest(coalesce((p.settings->>'history_interval_seconds')::int,10),(p.settings->>'interval_seconds')::int)
+ FROM plugin_objects o JOIN plugin_installations p USING(server_group,plugin_id) JOIN monitor_collectors c ON c.id=o.collector_id LEFT JOIN monitor_sessions b ON b.id=c.current_session LEFT JOIN monitor_latest l ON l.object_id=o.id WHERE o.server_group=$1 ORDER BY o.created_at,o.id`, group)
 	if err != nil {
 		return nil, err
 	}
@@ -359,7 +366,7 @@ func (s *Store) MonitorObjects(ctx context.Context, member, group string) ([]Mon
 	for rows.Next() {
 		var o MonitorObject
 		var flow []byte
-		if err = rows.Scan(&o.ID, &o.PluginID, &o.CollectorID, &o.Address, &o.Name, &o.Location, &o.Enabled, &o.Revision, &o.Stored, &o.Capacity, &o.ObservedAt, &o.Error, &o.Epoch, &flow, &o.FlowError, &o.Status); err != nil {
+		if err = rows.Scan(&o.ID, &o.PluginID, &o.CollectorID, &o.Address, &o.Name, &o.Location, &o.Enabled, &o.Revision, &o.Stored, &o.Capacity, &o.ObservedAt, &o.Error, &o.Epoch, &flow, &o.FlowError, &o.Status, &o.SamplingInterval, &o.RequestedInterval, &o.HistoryInterval); err != nil {
 			return nil, err
 		}
 		if len(flow) > 0 {

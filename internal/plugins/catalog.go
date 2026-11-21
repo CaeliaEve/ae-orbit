@@ -22,7 +22,7 @@ type Manifest struct {
 }
 
 func Catalog() []Manifest {
-	return []Manifest{{LSC, "蓝波顿超级电容库", "1.0.0", "储能、容量、长期趋势与站内告警；支持多座电容库和独立监控 OC。", true, "LSC", []string{"getStoredEUString", "getEUCapacityString"}, 10}}
+	return []Manifest{{LSC, "蓝波顿超级电容库", "1.1.0", "储能、容量、长期趋势与站内告警；支持每秒实时采集与独立历史间隔。", true, "LSC", []string{"getStoredEUString", "getEUCapacityString"}, 10}}
 }
 func Supported(id string) bool { return id == LSC }
 
@@ -66,6 +66,7 @@ func Percent(stored, capacity string) string {
 
 type Settings struct {
 	IntervalSeconds    int  `json:"interval_seconds"`
+	HistorySeconds     int  `json:"history_interval_seconds"`
 	LowPercent         int  `json:"low_percent"`
 	RecoverPercent     int  `json:"recover_percent"`
 	LowDurationSeconds int  `json:"low_duration_seconds"`
@@ -75,7 +76,21 @@ type Settings struct {
 	Alerts             bool `json:"alerts"`
 }
 
-func Defaults() Settings { return Settings{10, 20, 25, 30, 60, 15, 30, true} }
+func Defaults() Settings {
+	return Settings{IntervalSeconds: 10, HistorySeconds: 10, LowPercent: 20, RecoverPercent: 25, LowDurationSeconds: 30, OfflineSeconds: 60, FallingMinutes: 15, RawRetentionDays: 30, Alerts: true}
+}
+
+// Omitted by pre-1.1 clients: preserve the ten-second history cadence.
+func (s Settings) HistoryCadence() int {
+	n := s.HistorySeconds
+	if n == 0 {
+		n = 10
+	}
+	if n < s.IntervalSeconds {
+		n = s.IntervalSeconds
+	}
+	return n
+}
 func (s Settings) Valid() bool {
-	return s.IntervalSeconds >= 10 && s.IntervalSeconds <= 3600 && s.LowPercent >= 1 && s.LowPercent <= 95 && s.RecoverPercent > s.LowPercent && s.RecoverPercent <= 100 && s.LowDurationSeconds >= 10 && s.LowDurationSeconds <= 3600 && s.OfflineSeconds >= s.IntervalSeconds*3 && s.OfflineSeconds <= 10800 && s.FallingMinutes >= 0 && s.FallingMinutes <= 1440 && (s.RawRetentionDays == 0 || s.RawRetentionDays >= 7 && s.RawRetentionDays <= 3650)
+	return s.IntervalSeconds >= 1 && s.IntervalSeconds <= 3600 && (s.HistorySeconds == 0 || s.HistorySeconds >= 5 && s.HistorySeconds <= 3600) && s.LowPercent >= 1 && s.LowPercent <= 95 && s.RecoverPercent > s.LowPercent && s.RecoverPercent <= 100 && s.LowDurationSeconds >= 10 && s.LowDurationSeconds <= 3600 && s.OfflineSeconds >= max(30, s.IntervalSeconds*3) && s.OfflineSeconds <= 10800 && s.FallingMinutes >= 0 && s.FallingMinutes <= 1440 && (s.RawRetentionDays == 0 || s.RawRetentionDays >= 7 && s.RawRetentionDays <= 3650)
 }

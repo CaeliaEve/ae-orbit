@@ -39,3 +39,10 @@ test('compact energy and huge signed net values remain exact',()=>{
  const m=lscConsoleModel({...object,flow:{...flow,input_eut:String(huge)}},points,now);
  assert.equal(m.flow.net,huge-155790541n-70174n);
 });
+test('live region rendering avoids history and explains the effective acquisition cadence',()=>{
+ const html=lscConsoleHTML({...object,sample_interval_seconds:1,history_interval_seconds:10},{now,liveOnly:true});
+ assert.match(html,/当前每 1 秒采集 · 历史每 10 秒保存/);
+ assert.doesNotMatch(html,/lsc-timeline|energy-table|data-energy-hours|polyline/);
+ const legacy=lscConsoleHTML({...object,sample_interval_seconds:10,requested_interval_seconds:1,history_interval_seconds:10},{now,liveOnly:true});
+ assert.match(legacy,/更新监控 OC 后启用每秒采集/);
+});

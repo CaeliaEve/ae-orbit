@@ -96,7 +96,7 @@ local function validWelcome(w)
  if type(w)~='table' or type(w.session_id)~='string' or not w.session_id:match('^[a-f0-9]+$') or #w.session_id~=32 or type(w.sequence)~='number' or w.sequence%1~=0 or w.sequence<0 or w.sequence>1000000000 or type(w.objects)~='table' or #w.objects>16 then return false end
  local seen={}
  for _,o in ipairs(w.objects) do
-  if type(o)~='table' or o.plugin_id~='gtnh.lsc' or type(o.id)~='string' or #o.id~=32 or not o.id:match('^[a-f0-9]+$') or seen[o.id] or type(o.component_address)~='string' or #o.component_address~=36 or not o.component_address:match('^[a-f0-9%-]+$') or type(o.interval_seconds)~='number' or o.interval_seconds<10 or o.interval_seconds>3600 or type(o.revision)~='number' or o.revision%1~=0 or o.revision<1 or type(o.installation_revision)~='number' or o.installation_revision%1~=0 or o.installation_revision<1 then return false end
+  if type(o)~='table' or o.plugin_id~='gtnh.lsc' or type(o.id)~='string' or #o.id~=32 or not o.id:match('^[a-f0-9]+$') or seen[o.id] or type(o.component_address)~='string' or #o.component_address~=36 or not o.component_address:match('^[a-f0-9%-]+$') or type(o.interval_seconds)~='number' or o.interval_seconds<1 or o.interval_seconds%1~=0 or o.interval_seconds>3600 or type(o.revision)~='number' or o.revision%1~=0 or o.revision<1 or type(o.installation_revision)~='number' or o.installation_revision%1~=0 or o.installation_revision<1 then return false end
   seen[o.id]=true
  end
  return true
@@ -108,7 +108,7 @@ function M.new(config,deps)
  hash:update((deps.address or 'monitor')..':'..tostring(deps.now())..':'..tostring(math.random())..':'..tostring(os.time()))
  local boot=hash:finish():sub(1,32)
  function self:start()
-  local w=deps.client:send('/bridge/monitor/hello',json.encode({boot_id=boot,modules=json.array({'gtnh.lsc'}),components=components},8192))
+  local w=deps.client:send('/bridge/monitor/hello',json.encode({boot_id=boot,min_interval_seconds=1,modules=json.array({'gtnh.lsc'}),components=components},8192))
   assert(validWelcome(w),'invalid monitor welcome')
   self.session,self.sequence,self.objects=w.session_id,w.sequence,w.objects
  end
@@ -168,7 +168,11 @@ function M.run(context,path,report,mode)
   retry(function()bridge:start()end);publish('running')
   if foreground then print('AE Orbit monitor connected. No ME connection required.') end
   while true do
-   retry(function()bridge:tick()end);publish('running');context.sleep(5)
+   local started=computer.uptime()
+   local w=retry(function()return bridge:tick()end);publish('running')
+   local delay=type(w.poll_seconds)=='number' and w.poll_seconds>=1 and w.poll_seconds<=5 and w.poll_seconds%1==0 and w.poll_seconds or 5
+   -- Avoid accumulating callback/HTTP time onto every one-second period.
+   context.sleep(math.max(0.05,delay-(computer.uptime()-started)))
   end
  end,function(e)return e end)
  if ok or cancel.is_stop(err) then return {kind='stopped',code='interrupted'} end

@@ -1722,8 +1722,14 @@ components:
       properties:
         interval_seconds:
           type: integer
-          minimum: 10
+          minimum: 1
           maximum: 3600
+        history_interval_seconds:
+          type: integer
+          minimum: 5
+          maximum: 3600
+          default: 10
+          description: Separate history cadence; omitted by older clients defaults to ten seconds.
         low_percent:
           type: integer
           minimum: 1
@@ -1758,6 +1764,7 @@ components:
       - modules
       - components
       properties:
+        min_interval_seconds: {type: integer, enum: [1, 10], default: 10, description: New boot negotiates one-second collector support.}
         boot_id: &id001
           type: string
           pattern: ^[a-f0-9]{32}$

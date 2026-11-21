@@ -2652,3 +2652,4 @@ body { padding: 0; background: #0a0a0b; }
  .cpu-process-column ul { max-height:260px; }
  .cpu-process-column header p { min-height:0; }
 }
+.lsc-observation>span { display:block; margin-top:5px; line-height:1.6; }

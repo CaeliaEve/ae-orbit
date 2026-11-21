@@ -95,6 +95,9 @@ cases += [("MonitorSample",monitor_sample,True),("MonitorSample",{**monitor_samp
  ("MonitorSample",{**monitor_sample,"flow":{**flow,"input_eut":100}},False),
  ("MonitorSample",{**monitor_sample,"flow":flow,"flow_error":"unsupported"},False),
  ("MonitorSample",{"object_id":"a"*32,"revision":1,"installation_revision":1,"sample_millis":1000,"error":"controller_mismatch"},True)]
+cases += [('MonitorHello',{'boot_id':'a'*32,'modules':['gtnh.lsc'],'components':[],'min_interval_seconds':1},True),
+          ('MonitorHello',{'boot_id':'a'*32,'modules':['gtnh.lsc'],'components':[],'min_interval_seconds':0},False),
+          ('MonitorSettings',{'interval_seconds':1,'history_interval_seconds':10,'low_percent':20,'recover_percent':25,'low_duration_seconds':30,'offline_seconds':60,'falling_minutes':15,'raw_retention_days':30,'alerts':True},True)]
 for name, value, expected in cases:
     schema = {"$ref": f"#/components/schemas/{name}", "components": document["components"]}
     valid = Draft202012Validator(schema).is_valid(value)

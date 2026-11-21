@@ -32,7 +32,7 @@ func lockMonitor(ctx context.Context, tx pgx.Tx, a MonitorAuth) error {
 	return err
 }
 func monitorAssignments(ctx context.Context, tx pgx.Tx, a MonitorAuth) ([]MonitorAssignment, error) {
-	rows, err := tx.Query(ctx, `SELECT o.id,o.plugin_id,o.component_address,o.revision,p.revision,(p.settings->>'interval_seconds')::int FROM plugin_objects o JOIN plugin_installations p USING(server_group,plugin_id) JOIN monitor_collectors c ON c.id=o.collector_id WHERE o.collector_id=$1 AND o.enabled AND p.enabled AND c.modules ? o.plugin_id ORDER BY o.id LIMIT 16`, a.ID)
+	rows, err := tx.Query(ctx, `SELECT o.id,o.plugin_id,o.component_address,o.revision,p.revision,greatest((p.settings->>'interval_seconds')::int,coalesce(b.min_interval_seconds,10)) FROM plugin_objects o JOIN plugin_installations p USING(server_group,plugin_id) JOIN monitor_collectors c ON c.id=o.collector_id LEFT JOIN monitor_sessions b ON b.id=c.current_session WHERE o.collector_id=$1 AND o.enabled AND p.enabled AND c.modules ? o.plugin_id ORDER BY o.id LIMIT 16`, a.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -47,10 +47,20 @@ func monitorAssignments(ctx context.Context, tx pgx.Tx, a MonitorAuth) ([]Monito
 	}
 	return out, rows.Err()
 }
+func monitorPollSeconds(objects []MonitorAssignment) int {
+	seconds := 5
+	for _, o := range objects {
+		seconds = min(seconds, o.Interval)
+	}
+	return max(1, seconds)
+}
 func (s *Store) MonitorHello(ctx context.Context, a MonitorAuth, h MonitorHello) (MonitorWelcome, error) {
 	var w MonitorWelcome
-	if !monitorID.MatchString(h.BootID) || len(h.Modules) > 8 || !validMonitorComponents(h.Components) {
+	if !monitorID.MatchString(h.BootID) || len(h.Modules) > 8 || !validMonitorComponents(h.Components) || h.MinInterval != 0 && h.MinInterval != 1 && h.MinInterval != 10 {
 		return w, ErrInvalid
+	}
+	if h.MinInterval == 0 {
+		h.MinInterval = 10
 	}
 	seen := map[string]bool{}
 	for _, m := range h.Modules {
@@ -84,7 +94,7 @@ func (s *Store) MonitorHello(ctx context.Context, a MonitorAuth, h MonitorHello)
 			if _, err = tx.Exec(ctx, `UPDATE monitor_sessions SET retired=true WHERE collector_id=$1 AND NOT retired`, a.ID); err != nil {
 				return err
 			}
-			if _, err = tx.Exec(ctx, `INSERT INTO monitor_sessions(id,collector_id,boot_id) VALUES($1,$2,$3)`, w.Session, a.ID, h.BootID); err != nil {
+			if _, err = tx.Exec(ctx, `INSERT INTO monitor_sessions(id,collector_id,boot_id,min_interval_seconds) VALUES($1,$2,$3,$4)`, w.Session, a.ID, h.BootID, h.MinInterval); err != nil {
 				return err
 			}
 		} else {
@@ -95,8 +105,8 @@ func (s *Store) MonitorHello(ctx context.Context, a MonitorAuth, h MonitorHello)
 		if _, err = tx.Exec(ctx, `UPDATE monitor_collectors SET current_session=$2,modules=$3,components=$4,last_seen=now() WHERE id=$1`, a.ID, w.Session, modules, components); err != nil {
 			return err
 		}
-		w.PollSeconds = 5
 		w.Objects, err = monitorAssignments(ctx, tx, a)
+		w.PollSeconds = monitorPollSeconds(w.Objects)
 		return err
 	})
 	return w, err
@@ -203,11 +213,11 @@ func (s *Store) MonitorPoll(ctx context.Context, a MonitorAuth, p MonitorPoll) (
 		}
 		w.Session = p.Session
 		w.Sequence = p.Sequence
-		w.PollSeconds = 5
 		w.Objects, err = monitorAssignments(ctx, tx, a)
 		if err != nil {
 			return err
 		}
+		w.PollSeconds = monitorPollSeconds(w.Objects)
 		body, _ := json.Marshal(w)
 		_, err = tx.Exec(ctx, `UPDATE monitor_sessions SET sequence=$2,receipt_hash=$3,receipt=$4,last_sample_millis=$5,last_sample_at=CASE WHEN $5>last_sample_millis THEN $6 ELSE last_sample_at END WHERE id=$1`, p.Session, p.Sequence, hash[:], body, latestMillis, serverNow)
 		return err
@@ -219,7 +229,8 @@ func acceptMonitorSample(ctx context.Context, tx pgx.Tx, session string, v Monit
 	var sample, epoch int64
 	var reported time.Time
 	var observed *time.Time
-	err := tx.QueryRow(ctx, `SELECT session_id,sample_millis,coalesce(stored_eu::text,''),coalesce(capacity_eu::text,''),epoch,reported_at,observed_at,error FROM monitor_latest WHERE object_id=$1 FOR UPDATE`, v.ObjectID).Scan(&priorSession, &sample, &priorStored, &priorCapacity, &epoch, &reported, &observed, &priorError)
+	var recorded *time.Time
+	err := tx.QueryRow(ctx, `SELECT session_id,sample_millis,coalesce(stored_eu::text,''),coalesce(capacity_eu::text,''),epoch,reported_at,observed_at,error,last_recorded_at FROM monitor_latest WHERE object_id=$1 FOR UPDATE`, v.ObjectID).Scan(&priorSession, &sample, &priorStored, &priorCapacity, &epoch, &reported, &observed, &priorError, &recorded)
 	if err != nil && err != pgx.ErrNoRows {
 		return err
 	}
@@ -231,7 +242,7 @@ func acceptMonitorSample(ctx context.Context, tx pgx.Tx, session string, v Monit
 	if err = tx.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&now); err != nil {
 		return err
 	}
-	if exists && now.Sub(reported) < time.Duration(settings.IntervalSeconds)*time.Second*8/10 {
+	if exists && priorSession == session && now.Sub(reported) < time.Duration(settings.IntervalSeconds)*time.Second*8/10 {
 		return nil
 	}
 	if epoch == 0 {
@@ -256,8 +267,16 @@ func acceptMonitorSample(ctx context.Context, tx pgx.Tx, session string, v Monit
 	if err != nil {
 		return err
 	}
+	// Live values update at acquisition speed; retain history at a separate cadence.
+	// A new epoch is always captured, including restart, capacity change or recovery.
+	if !reset && recorded != nil && now.Sub(*recorded) < time.Duration(settings.HistoryCadence())*time.Second {
+		return nil
+	}
 	_, err = tx.Exec(ctx, `INSERT INTO monitor_energy_records(object_id,epoch,session_id,stored_eu,capacity_eu,observed_at,flow,flow_error) VALUES($1,$2,$3,$4::numeric,$5::numeric,$6,$7,$8)`, v.ObjectID, epoch, session, v.Stored, v.Capacity, now, flow, v.FlowError)
 	if err != nil {
+		return err
+	}
+	if _, err = tx.Exec(ctx, `UPDATE monitor_latest SET last_recorded_at=$2 WHERE object_id=$1`, v.ObjectID, now); err != nil {
 		return err
 	}
 	for _, g := range []string{"hour", "day"} {

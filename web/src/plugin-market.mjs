@@ -1,4 +1,4 @@
-import { lscConsoleHTML } from "./lsc-console.mjs";
+import { lscConsoleHTML, patchLSCLive } from "./lsc-console.mjs";
 const esc = v => String(v ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 export const energyValue = s => /^(0|[1-9][0-9]{0,127})$/.test(String(s)) ? BigInt(s) : null;
 export function energyText(s) { const n=energyValue(s);return n===null?'—':n.toLocaleString('zh-CN'); }
@@ -24,7 +24,7 @@ export function energyTrend(points=[]){
 }
 export function createPluginMarket({root,runtimeRoot,widget,request,member,network,showView,toast,onPluginsChanged=()=>{},storage=localStorage}){
  const state={group:'',groups:[],installations:[],collectors:[],objects:[],alerts:[],tab:'monitor',managementTab:'market',selected:'',history:null,liveHistory:null,historyError:'',metric:'storage',historyGeneration:0,hours:1,from:'',to:'',loading:false,error:'',generation:0,busy:false};
- let owner='',timer=null,lastRender=new Map();
+ let owner='',timer=null,lastRender=new Map(),liveLoading=false,lastMetadata=0,lastHistory=0;
  const path=s=>`/api/v1/monitoring/groups/${encodeURIComponent(state.group)}${s}`;
  const isAdmin=()=>!!member()?.admin;
  const pinKey=()=>`ae-orbit:monitor-pins:${member()?.id}:${state.group}`;
@@ -38,7 +38,7 @@ export function createPluginMarket({root,runtimeRoot,widget,request,member,netwo
   if(!target)return;
   const active=state.alerts.filter(a=>a.state==='active'),installation=state.installations[0];const aggregate=energyAggregate(state.objects);
   let content='';
-  if(tab==='market') content=state.installations.map(v=>`<article class="market-plugin"><div class="market-plugin-symbol">EU</div><div><span class="plugin-kicker">官方 · 只读 · v${esc(v.plugin.version)}</span><h2>${esc(v.plugin.name)}</h2><p>${esc(v.plugin.description)}</p><div class="plugin-facts"><span>独立监控 OC</span><span>默认每 ${v.settings.interval_seconds} 秒采集</span><span>${state.objects.length} 座已绑定</span></div><p class="muted">需要因特网卡和适配器，适配器连接超级电容库控制器。最多监控 16 座，按队列轮询；超过 8 座时实际更新间隔可能高于 10 秒。</p><p>${!v.enabled?'尚未启用':!state.collectors.some(c=>c.online)?'已启用 · 等待监控 OC 连接':!state.objects.length?'已启用 · 等待绑定电容库':'已启用 · 在监控页查看采集状态'}</p><div class="energy-actions">${isAdmin()?`<button class="primary" data-toggle-plugin>${v.enabled?'停用插件':'启用插件'}</button>`:'<span class="muted">由管理员启用和配置</span>'}<button class="secondary" data-tab="collectors">连接监控 OC</button>${v.enabled?'<button class="secondary" data-open-monitor>打开储能监控</button>':''}</div></div></article>${isAdmin()?settingsHTML(v):''}`).join('');
+  if(tab==='market') content=state.installations.map(v=>`<article class="market-plugin"><div class="market-plugin-symbol">EU</div><div><span class="plugin-kicker">官方 · 只读 · v${esc(v.plugin.version)}</span><h2>${esc(v.plugin.name)}</h2><p>${esc(v.plugin.description)}</p><div class="plugin-facts"><span>独立监控 OC</span><span>默认每 ${v.settings.interval_seconds} 秒采集</span><span>${state.objects.length} 座已绑定</span></div><p class="muted">需要因特网卡和适配器，适配器连接超级电容库控制器。最多监控 16 座，按队列轮询；每轮最多读取 4 座，多台设备会按队列轮转；旧监控 OC 更新后支持每秒采集。</p><p>${!v.enabled?'尚未启用':!state.collectors.some(c=>c.online)?'已启用 · 等待监控 OC 连接':!state.objects.length?'已启用 · 等待绑定电容库':'已启用 · 在监控页查看采集状态'}</p><div class="energy-actions">${isAdmin()?`<button class="primary" data-toggle-plugin>${v.enabled?'停用插件':'启用插件'}</button>`:'<span class="muted">由管理员启用和配置</span>'}<button class="secondary" data-tab="collectors">连接监控 OC</button>${v.enabled?'<button class="secondary" data-open-monitor>打开储能监控</button>':''}</div></div></article>${isAdmin()?settingsHTML(v):''}`).join('');
   if(tab==='collectors')content=`<div class="plugin-section-heading"><div><h2>独立监控采集器</h2><p class="muted">每台 OC 使用自己的监控令牌，无需 ME 连接。</p></div>${isAdmin()?'<button class="primary" data-create-collector>新增监控 OC</button>':''}</div>${state.collectors.map(c=>`<article class="collector-row"><div><strong>${esc(c.name)}</strong><small>${c.revoked?'已撤销':c.online?'在线':'等待连接／离线'} · ${esc(dt(c.last_seen))} · 空闲 ${Math.round(c.free_memory/1024)} KiB</small><small>${c.components.length} 个 LSC 组件 · ${c.modules.includes('gtnh.lsc')?'支持蓝波顿插件':'等待新版监控程序'}</small></div>${isAdmin()&&!c.revoked?`<div class="energy-actions"><button class="text-button" data-bind="${esc(c.id)}" ${!c.components.some(x=>x.supported)?'disabled':''}>绑定电容库</button><button class="text-button" data-rotate="${esc(c.id)}">更换令牌</button><button class="text-button" data-revoke="${esc(c.id)}">撤销</button></div>`:''}</article>`).join('')||'<div class="empty">尚无监控 OC。管理员创建后，在新 OC 安装并填写独立令牌。</div>'}`;
   if(tab==='monitor') content=lscConsoleHTML(state.objects.find(o=>o.id===state.selected),{history:state.history,livePoints:state.liveHistory?.points||[],objects:state.objects,collectors:state.collectors,alerts:state.alerts,admin:isAdmin(),pinned:pins().includes(state.selected),metric:state.metric,chartWidth:target.clientWidth-64,hours:state.hours,from:state.from,to:state.to,historyError:state.historyError,staleSeconds:installation?.settings.offline_seconds||60});
   if(tab==='alerts')content=`<div class="plugin-section-heading"><div><h2>站内告警</h2><p class="muted">服务端持续判断 · 确认表示已读，恢复由实际观测决定 · 显示最近 200 条</p></div></div>${state.alerts.map(a=>`<article class="monitor-alert" data-state="${esc(a.state)}"><div><strong>${esc(a.object_name)} · ${esc(alertLabels[a.kind]||a.kind)}</strong><p>${esc(a.detail)}</p><small>触发 ${esc(dt(a.triggered_at))}${a.resolved_at?` · 结束 ${esc(dt(a.resolved_at))}`:''}${a.acknowledged_at?` · ${esc(a.acknowledged_by)} 已确认`:''}</small></div><span>${a.state==='active'?'当前告警':a.resolve_reason==='monitoring_disabled'?'监控已停用':a.resolve_reason==='observation_unavailable'?'监控中断':a.resolve_reason==='acknowledged'?'已确认':'已恢复'}</span>${!a.acknowledged_at?`<button class="secondary" data-ack="${esc(a.id)}">确认已读</button>`:''}</article>`).join('')||'<div class="empty">暂无告警</div>'}`;
@@ -56,9 +56,9 @@ export function createPluginMarket({root,runtimeRoot,widget,request,member,netwo
   target.scrollTop=scroll;
  }
 
- function settingsHTML(v){const s=v.settings;return `<details class="plugin-settings"><summary>采集、告警与历史设置</summary><form data-plugin-settings><div class="plugin-form-grid">${[['interval_seconds','采集间隔（秒）',10,3600],['low_percent','低电量阈值（%）',1,95],['recover_percent','恢复阈值（%）',2,100],['low_duration_seconds','低电量持续时间（秒）',10,3600],['offline_seconds','离线／过期阈值（秒）',30,10800],['falling_minutes','持续下降告警（分钟，0 关闭）',0,1440],['raw_retention_days','原始记录天数（0 永久保留）',0,3650]].map(([k,label,min,max])=>`<label>${label}<input type="number" name="${k}" min="${min}" max="${max}" value="${s[k]}" required></label>`).join('')}<label><span>站内告警</span><input type="checkbox" name="alerts" ${s.alerts?'checked':''}></label></div><p class="muted">默认原始记录保留 30 天，小时／日汇总长期保留。选择 0 保留全部原始记录。此设置仅影响机器监控历史。</p><button class="primary" type="submit">保存设置</button></form></details>`;}
+ function settingsHTML(v){const s=v.settings;return `<details class="plugin-settings"><summary>采集、告警与历史设置</summary><form data-plugin-settings><div class="plugin-form-grid">${[['interval_seconds','实时采集间隔（秒）',1,3600],['history_interval_seconds','历史保存间隔（秒）',5,3600],['low_percent','低电量阈值（%）',1,95],['recover_percent','恢复阈值（%）',2,100],['low_duration_seconds','低电量持续时间（秒）',10,3600],['offline_seconds','离线／过期阈值（秒）',30,10800],['falling_minutes','持续下降告警（分钟，0 关闭）',0,1440],['raw_retention_days','原始记录天数（0 永久保留）',0,3650]].map(([k,label,min,max])=>`<label>${label}<input type="number" name="${k}" min="${min}" max="${max}" value="${s[k]??10}" required></label>`).join('')}<label><span>站内告警</span><input type="checkbox" name="alerts" ${s.alerts?'checked':''}></label></div><p class="muted">实时数值与历史分开处理，默认每 10 秒保存历史。原始记录默认保留 30 天，小时／日汇总长期保留。选择 0 保留全部原始记录。此设置仅影响机器监控历史。</p><button class="primary" type="submit">保存设置</button></form></details>`;}
  async function loadHistory(){
-  if(!state.selected)return;
+  if(!state.selected)return;lastHistory=Date.now();
   const generation=state.generation,requestGeneration=++state.historyGeneration,id=state.selected;
   const now=new Date(),to=state.to?new Date(state.to):now,from=state.from?new Date(state.from):new Date(to.getTime()-state.hours*3600000);
   if(!Number.isFinite(from.getTime())||!Number.isFinite(to.getTime())||from>=to)throw Error('请选择有效的开始和结束时间。');
@@ -72,18 +72,37 @@ export function createPluginMarket({root,runtimeRoot,widget,request,member,netwo
 
  async function refresh(){
   if(!member()){reset();render();return;}if(state.loading)return;
-  const generation=state.generation,identity=member().id;state.loading=true;
+  const generation=state.generation,identity=member().id;state.loading=true;lastMetadata=Date.now();
   try{
    const groups=await request('/api/v1/monitoring/groups');if(generation!==state.generation||member()?.id!==identity)return;state.groups=groups;
    if(!groups.includes(state.group))state.group=groups.includes(network()?.server_group)?network().server_group:groups[0]||'';
    if(!state.group){state.installations=[];state.collectors=[];state.objects=[];state.alerts=[];onPluginsChanged([]);render();return;}
    const [installations,collectors,objects,alerts]=await Promise.all([request(path('/plugins')),request(path('/collectors')),request(path('/objects')),request(path('/alerts'))]);
    if(generation!==state.generation||member()?.id!==identity)return;
-   Object.assign(state,{installations:installations.filter(v=>v.plugin?.id==='gtnh.lsc'),collectors,objects,alerts,error:''});if(!objects.some(o=>o.id===state.selected)){state.selected=objects[0]?.id||'';state.history=null;state.liveHistory=null;}onPluginsChanged(state.installations);render();if(state.selected&&runtimeRoot&&!runtimeRoot.hidden&&state.tab==='monitor')await loadHistory();
+   Object.assign(state,{installations:installations.filter(v=>v.plugin?.id==='gtnh.lsc'),collectors,objects,alerts,error:''});if(!objects.some(o=>o.id===state.selected)){state.selected=objects[0]?.id||'';state.history=null;state.liveHistory=null;}onPluginsChanged(state.installations);render();if(state.selected&&runtimeRoot&&!runtimeRoot.hidden&&state.tab==='monitor'&&Date.now()-lastHistory>=10000)await loadHistory();
   }catch(e){if(generation===state.generation){state.error=e.message;render();}}
   finally{if(generation===state.generation)state.loading=false;}
  }
- function reset(){state.generation++;state.group='';state.groups=[];state.installations=[];state.collectors=[];state.objects=[];state.alerts=[];state.selected='';state.history=null;state.liveHistory=null;state.historyError='';state.historyGeneration++;state.error='';state.loading=false;lastRender.clear();onPluginsChanged([]);document.querySelector('#plugin-dialog')?.close();render();}
+ async function refreshLive(){
+  if(liveLoading||state.loading||!member()||!state.group)return;
+  liveLoading=true;const generation=state.generation,identity=member().id;
+  try{
+   const objects=await request(path('/objects'));
+   if(generation!==state.generation||member()?.id!==identity)return;
+   const same=objects.some(o=>o.id===state.selected);state.objects=objects;
+   if(!same){state.selected=objects[0]?.id||'';state.history=null;state.liveHistory=null;render();}
+   else {
+    const current=objects.find(o=>o.id===state.selected);
+    const installation=state.installations[0];
+    const patched=runtimeRoot&&!runtimeRoot.hidden&&state.tab==='monitor'&&patchLSCLive(runtimeRoot,current,{objects,collectors:state.collectors,alerts:state.alerts,admin:isAdmin(),pinned:pins().includes(state.selected),livePoints:state.liveHistory?.points||[],staleSeconds:installation?.settings.offline_seconds||60});
+    if(!patched&&runtimeRoot&&!runtimeRoot.hidden)render();
+    renderWidget();
+   }
+   if(state.selected&&runtimeRoot&&!runtimeRoot.hidden&&state.tab==='monitor'&&Date.now()-lastHistory>=10000)await loadHistory();
+  }catch(e){if(generation===state.generation){state.error=e.message;render();}}
+  finally{liveLoading=false;}
+ }
+ function reset(){lastMetadata=0;lastHistory=0;state.generation++;state.group='';state.groups=[];state.installations=[];state.collectors=[];state.objects=[];state.alerts=[];state.selected='';state.history=null;state.liveHistory=null;state.historyError='';state.historyGeneration++;state.error='';state.loading=false;lastRender.clear();onPluginsChanged([]);document.querySelector('#plugin-dialog')?.close();render();}
  function sessionChanged(){const id=member()?.id||'';if(id!==owner){owner=id;reset();}void refresh();}
  async function mutate(fn){if(state.busy)return;state.busy=true;try{await fn();await refresh();}catch(e){toast(e.message,true);}finally{state.busy=false;render();}}
  function dialog(title,html){let d=document.querySelector('#plugin-dialog');if(!d){d=document.createElement('dialog');d.id='plugin-dialog';document.body.append(d);}d.innerHTML=`<div class="dialog-heading"><h2>${esc(title)}</h2><button class="icon-button" data-plugin-close aria-label="关闭">×</button></div>${html}`;d.querySelector('[data-plugin-close]').onclick=()=>d.close();d.showModal();return d;}
@@ -111,7 +130,7 @@ export function createPluginMarket({root,runtimeRoot,widget,request,member,netwo
  });
  }
  widget?.addEventListener('click',e=>{const b=e.target.closest('[data-monitor-open]');if(b){state.tab='monitor';state.selected=b.dataset.monitorOpen;showView('plugin-lsc');void loadHistory().catch(e=>toast(e.message,true));}});
- timer=setInterval(()=>{if(member()&&document.visibilityState==='visible'&&(!root.hidden||runtimeRoot&&!runtimeRoot.hidden||widget&&!widget.hidden&&!widget.closest('.view')?.hidden))void refresh();},10000);
+ timer=setInterval(()=>{if(member()&&document.visibilityState==='visible'&&(!root.hidden||runtimeRoot&&!runtimeRoot.hidden||widget&&!widget.hidden&&!widget.closest('.view')?.hidden)){if(!state.group||Date.now()-lastMetadata>=15000)void refresh();else if(runtimeRoot&&!runtimeRoot.hidden&&state.tab==='monitor'||widget&&!widget.hidden&&!widget.closest('.view')?.hidden)void refreshLive();}},1000);
  window.addEventListener('resize',render);
  render();return{refresh,sessionChanged,reset,show:()=>{render();void refresh();},showPlugin:()=>{render();if(state.selected)void loadHistory();void refresh();},state,destroy:()=>{clearInterval(timer);window.removeEventListener('resize',render);}};
 }

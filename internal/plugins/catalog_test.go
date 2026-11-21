@@ -20,3 +20,30 @@ func TestEnergyPreservesBeyondInt64(t *testing.T) {
 		t.Fatal("invalid default settings")
 	}
 }
+func TestFastSamplingKeepsIndependentHistoryCadence(t *testing.T) {
+	s := Defaults()
+	s.IntervalSeconds = 1
+	if !s.Valid() || s.HistoryCadence() != 10 {
+		t.Fatal(s)
+	}
+	s.HistorySeconds = 5
+	if !s.Valid() || s.HistoryCadence() != 5 {
+		t.Fatal(s)
+	}
+	s.HistorySeconds = 1
+	if s.Valid() {
+		t.Fatal("one-second raw persistence enabled")
+	}
+	s.HistorySeconds = 0
+	if !s.Valid() || s.HistoryCadence() != 10 {
+		t.Fatal("old configuration incompatible")
+	}
+	s.IntervalSeconds = 30
+	if s.HistoryCadence() != 30 {
+		t.Fatal("history faster than acquisition")
+	}
+	s.IntervalSeconds = 0
+	if s.Valid() {
+		t.Fatal("invalid interval")
+	}
+}
