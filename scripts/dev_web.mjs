@@ -6,7 +6,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const defaultRoot = fileURLToPath(new URL("../web/static/", import.meta.url));
-const csp = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
+const csp = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; "
   + "connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
 const security = {
   "Content-Security-Policy": csp,

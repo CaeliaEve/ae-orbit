@@ -96,7 +96,7 @@ const state = {
   taskMode: "jobs", jobFilter: "unsettled", jobStorageError: false,
   crafting: { search: "", sort: "newest", owner: "all", orderSearch: "" },
   settings: loadSettings(), settingsSection: "display", session: null, loginMode: "player", teamMembers: [], teamInvitations: [],
-  texturePackStatus: texturePack.status(), texturePackLoading: false, texturePackError: "",
+  texturePackStatus: texturePack.status(), texturePackLoading: false, texturePackError: "", texturePackWarning: "",
   connectionTest: { status: "idle", checkedAt: "", message: "" },
   networkLoading: false, networkError: "", networkErrorKind: "", networkSnapshotReady: false, networkCreateBusy: false,
 };
@@ -238,6 +238,7 @@ async function applyTexturePackURL(url, notify = true) {
   if (!normalized) throw new Error("请输入纹理包 URL。");
   state.texturePackLoading = true;
   state.texturePackError = "";
+  state.texturePackWarning = "";
   renderSettings();
   try {
     const bytes = await loadTexturePackURL(normalized);
@@ -265,16 +266,23 @@ async function applyTexturePackFile(file) {
   if (!file) return;
   state.texturePackLoading = true;
   state.texturePackError = "";
+  state.texturePackWarning = "";
   renderSettings();
   try {
     const bytes = await file.arrayBuffer();
     await texturePack.loadArchive(bytes, file.name);
-    await saveCachedTexturePack(bytes);
+    try {
+      const saved=await saveCachedTexturePack(bytes);
+      if(!saved)state.texturePackWarning="纹理已应用，本浏览器无法保存；刷新后需要重新导入。";
+    } catch {
+      // A full disk or private browsing mode must not discard a valid import.
+      state.texturePackWarning="纹理已应用，但浏览器保存失败；刷新后需要重新导入。";
+    }
     state.settings = saveSettings(localStorage, {
       ...state.settings, textureSource: "local", texturePackURL: "",
     });
     refreshTexturePackState();
-    toast(`本地纹理包已加载：${file.name}`);
+    toast(state.texturePackWarning || `本地纹理包已加载并保存：${file.name}`);
   } catch (error) {
     state.texturePackError = error?.message || "纹理包加载失败。";
     texturePack.clear();
@@ -290,7 +298,7 @@ function textureSettingsHTML() {
   const status = state.texturePackLoading
     ? "正在读取纹理包…"
     : state.texturePackStatus.loaded
-      ? `${state.texturePackStatus.label} · ${state.texturePackStatus.assetCount.toLocaleString("zh-CN")} 个资源`
+      ? `${state.texturePackStatus.label} · ${state.texturePackStatus.assetCount.toLocaleString("zh-CN")} 个资源${state.texturePackWarning ? " · "+state.texturePackWarning : ""}`
       : state.texturePackError || "当前使用服务器按需纹理";
   return `<div class="setting-field"><span><strong>纹理来源</strong><small>默认按需读取；纹理包会缓存在当前浏览器，减少重复下载。</small></span><select data-setting="textureSource" aria-label="纹理来源"><option value="server" ${state.settings.textureSource === "server" ? "selected" : ""}>服务器按需加载</option><option value="url" ${state.settings.textureSource === "url" ? "selected" : ""}>指定纹理包 URL</option><option value="local" ${state.settings.textureSource === "local" ? "selected" : ""}>本地已导入纹理包</option></select></div>
     <div class="texture-pack-controls" ${state.settings.textureSource === "url" ? "" : "hidden"}><label class="setting-input"><span>纹理包地址</span><input id="texture-pack-url" type="url" value="${esc(state.settings.texturePackURL)}" placeholder="https://example.com/ae-orbit-textures.zip" autocomplete="off"></label><div class="setting-actions"><button type="button" class="secondary" data-texture-pack-action="load-url" ${state.texturePackLoading ? "disabled" : ""}>${icon("download")}加载并应用</button></div></div>
@@ -2634,6 +2642,9 @@ $("#settings-detail").addEventListener("change", async event => {
       applyTexturePackURL(state.settings.texturePackURL, false).catch(() => {});
     } else if (input.value === "local") {
       try {
+        if(texturePack.status().loaded){
+          state.texturePackError="";refreshTexturePackState();renderSettings();return;
+        }
         const bytes = await loadCachedTexturePack();
         if (!bytes) throw new Error("未找到已保存的本地纹理包。");
         await texturePack.loadArchive(bytes, "本地纹理包");
@@ -2671,6 +2682,7 @@ $("#settings-detail").addEventListener("click", async event => {
     texturePack.clear();
     clearCachedTexturePack().catch(() => {});
     state.texturePackError = "";
+    state.texturePackWarning = "";
     state.settings = saveSettings(localStorage, { ...state.settings, textureSource: "server", texturePackURL: "" });
     refreshTexturePackState();
     renderSettings();

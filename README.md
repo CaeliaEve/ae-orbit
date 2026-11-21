@@ -87,7 +87,7 @@ python scripts/build_texture_pack.py `
   --output ".local\catalog\ae-orbit-textures.zip"
 ```
 
-将生成的 ZIP 放到静态文件服务或 CDN 后，在网页的“设置 → 纹理资源”中选择“指定纹理包 URL”并加载；也可以直接选择“导入本地 ZIP”。本地导入会保存到当前浏览器的 Cache Storage，刷新后仍可使用。纹理包只包含 PNG 和清单，不包含库存数量、访问令牌或 OC 数据。
+将生成的 ZIP 放到静态文件服务或 CDN 后，在网页的“设置 → 纹理资源”中选择“指定纹理包 URL”并加载；也可以直接选择“导入本地 ZIP”。本地导入会保存在当前浏览器：HTTP 使用 IndexedDB，支持 Cache Storage 的环境也可使用该缓存，刷新后自动恢复。浏览器空间不足或隐私模式拒绝保存时，本次导入仍生效，并明确提示刷新后需要重新导入。纹理包只包含 PNG 和清单，不包含库存数量、访问令牌或 OC 数据。
 
 使用 Compose 时也可以把 ZIP 挂载到后端，由设置页的“加载服务器纹理包”按钮提供下载：
 

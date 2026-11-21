@@ -1,4 +1,5 @@
 import { unzipSync } from "fflate";
+import { createTextureArchiveCache } from "./texture-cache.mjs";
 
 export const TEXTURE_PACK_FORMAT = "ae-orbit.texture-pack";
 export const TEXTURE_PACK_VERSION = 1;
@@ -8,8 +9,6 @@ export const defaultTexturePackSettings = Object.freeze({
 });
 
 const sourceValues = new Set(["server", "url", "local"]);
-const TEXTURE_PACK_CACHE = "ae-orbit-texture-packs-v1";
-const LOCAL_TEXTURE_PACK_URL = "/__ae-orbit/local-texture-pack.zip";
 const MAX_ARCHIVE_BYTES = 512 * 1024 * 1024;
 const MAX_ASSET_BYTES = 2 * 1024 * 1024;
 const MAX_ASSETS = 200_000;
@@ -49,26 +48,15 @@ export function normalizeTexturePackSettings(value) {
 }
 
 export async function saveCachedTexturePack(input) {
-  if (!globalThis.caches) return false;
-  const cache = await globalThis.caches.open(TEXTURE_PACK_CACHE);
-  await cache.put(
-    new Request(LOCAL_TEXTURE_PACK_URL),
-    new Response(toBytes(input), { headers: { "Content-Type": "application/zip" } }),
-  );
-  return true;
+  return createTextureArchiveCache().save(toBytes(input));
 }
 
 export async function loadCachedTexturePack() {
-  if (!globalThis.caches) return null;
-  const cache = await globalThis.caches.open(TEXTURE_PACK_CACHE);
-  const response = await cache.match(new Request(LOCAL_TEXTURE_PACK_URL));
-  return response ? response.arrayBuffer() : null;
+  return createTextureArchiveCache().load();
 }
 
 export async function clearCachedTexturePack() {
-  if (!globalThis.caches) return false;
-  const cache = await globalThis.caches.open(TEXTURE_PACK_CACHE);
-  return cache.delete(new Request(LOCAL_TEXTURE_PACK_URL));
+  return createTextureArchiveCache().clear();
 }
 
 export function validateTexturePackManifest(value) {
