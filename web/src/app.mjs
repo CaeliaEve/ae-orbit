@@ -6,6 +6,8 @@ import {
   WifiOff, PanelLeftClose, UserRound, Puzzle, Ellipsis, BatteryCharging, ArrowUp, ArrowDown, GripVertical,
 } from "lucide";
 import { createAPI } from "./api.mjs";
+import { createCPUDetails, cpuDetailColumnsHTML } from "./cpu-details.mjs";
+import { cpuOutputText } from "./cpu-ui.mjs";
 import { createPluginMarket } from "./plugin-market.mjs";
 import { coreNavigation, pluginNavigation, availableNavigation, orderedNavigation, partitionNavigation, navigationKey, loadNavigation, saveNavigation, moveNavigation, placeNavigation, normalizeNavigation } from "./navigation.mjs";
 import { createInventoryWheel, inventoryKeyboardDirection } from "./inventory-paging.mjs";
@@ -80,6 +82,7 @@ const paint = () => {
   for (const element of $$('[data-icon-pending]')) element.removeAttribute("data-icon-pending");
 };
 const api = createAPI();
+const cpuDetails = createCPUDetails({request:(...args)=>api.request(...args),changed:()=>renderCPUProcess()});
 const texturePack = createTexturePackStore();
 const state = {
   member: null, network: null, networks: [], view: "dashboard", items: [], itemCache: new Map(),
@@ -315,6 +318,7 @@ function refreshTexturePackState() {
   renderDetail();
   patchDraftAppearance();
   renderCPUList();
+  if(cpuDetails.current)renderCPUProcess();
   hideInventoryHover();
 }
 
@@ -599,7 +603,8 @@ function animateSpriteImages(timestamp) {
   for (const element of elements) {
     const spriteID = element.dataset.spriteItem;
     const cpu = spriteID?.startsWith("cpu:") ? state.cpus.cpus?.find(cpu => `cpu:${cpu.id}` === spriteID) : null;
-    const item = cpu ? cpu.output : itemFor(spriteID);
+    const detailItem=spriteID?.startsWith("process:") ? cpuDetails.current?.data?.parts?.flatMap(part=>part.items || []).find(item=>`process:${item.row_id}`===spriteID) : null;
+    const item = cpu ? cpu.output : detailItem || itemFor(spriteID);
     const animation = catalogAnimation(item);
     if (!animation) continue;
     const selected = animationFrameAt(animation, timestamp);
@@ -822,6 +827,7 @@ function refreshHeader() {
 }
 
 function showView(view) {
+  if(view!=="cpus" && $("#cpu-process-dialog").open) $("#cpu-process-dialog").close();
   hideInventoryHover();
   if (![...coreNavigation,...pluginNavigation,{id:'settings'}].some(entry=>entry.id===view)) return;
   state.view = view;
@@ -1399,6 +1405,17 @@ function renderCPUList(model = cpuMonitorModel(state.cpus.cpus || [], state.cpuM
   list.scrollTop = scroll;
   if (activeKey) $$(".cpu-monitor-row", list).find(row => row.dataset.cpuKey === activeKey)?.querySelector("summary")?.focus({ preventScroll: true });
   $("#cpu-monitor-count").textContent = model.total ? `${model.visible.length} / ${model.total} 台` : "";
+  paint();
+}
+function renderCPUProcess() {
+  const target=cpuDetails.current;if(!target)return;
+  $("#cpu-process-title").textContent=`${target.name} · 合成过程`;
+  $("#cpu-process-goal").textContent=cpuOutputText(target.data?.cpu || target.cpu);
+  $("#cpu-process-status").textContent=target.error || (target.data?.status==="ready" ? "持续更新 · 各栏读取时间如下" : "正在等待主 OC 分栏采集，首次集齐约需 30 秒");
+  const columns=$("#cpu-process-columns");
+  const scroll=new Map($$("[data-cpu-process-scroll]",columns).map(node=>[node.dataset.cpuProcessScroll,node.scrollTop]));
+  columns.innerHTML=cpuDetailColumnsHTML(target.data,{search:$("#cpu-process-search").value,age,image:item=>itemImage({...item,id:`process:${item.row_id}`,kind:item.has_tag===false&&Number.isInteger(item.damage)?item.kind:"unknown"})});
+  $$("[data-cpu-process-scroll]",columns).forEach(node=>{node.scrollTop=scroll.get(node.dataset.cpuProcessScroll)||0;});
   paint();
 }
 async function refreshCPUs() {
@@ -2306,6 +2323,8 @@ function connectStream() {
 }
 
 async function switchNetwork(id) {
+  $("#cpu-process-dialog").close();
+  void cpuDetails.close();
   if (state.busy || state.preparing) { $("#network").value = state.network?.id || ""; toast("请等待本轮提交结束。"); return; }
   clearTimeout(historySearchTimer);clearTimeout(historyWheelTimer);inventoryHistory.reset();
   state.context++;
@@ -2392,6 +2411,7 @@ async function switchNetwork(id) {
 }
 
 function showLogin() {
+  $("#cpu-process-dialog").close();void cpuDetails.close();
   if (!$("#auth-dialog").open) $("#auth-dialog").showModal();
 }
 
@@ -2656,6 +2676,16 @@ $("#refresh-order-detail").addEventListener("click", () => refreshOrderDetail())
 $("#order-dialog").addEventListener("cancel", () => invalidateOrderDetail());
 $("#order-dialog").addEventListener("close", () => { if (!$("#order-dialog").open) invalidateOrderDetail(); });
 $("#refresh-cpus").addEventListener("click", () => refreshCPUs());
+$("#cpu-list").addEventListener("click",event=>{
+  const button=event.target.closest("[data-cpu-process]");if(!button)return;
+  const index=(state.cpus.cpus||[]).findIndex(cpu=>cpu.id===button.dataset.cpuProcess);
+  const cpu=state.cpus.cpus?.[index];if(!cpu||!state.network)return;
+  $("#cpu-process-search").value="";
+  $("#cpu-process-dialog").showModal();
+  cpuDetails.open({network:state.network.id,session:state.cpus.session_id||state.network.session_id,cpu,name:cpu.name?.trim()||`未命名 CPU ${index+1}`});
+});
+$("#cpu-process-search").addEventListener("input",renderCPUProcess);
+$("#cpu-process-dialog").addEventListener("close",()=>cpuDetails.close());
 $("#cpu-monitor-search").addEventListener("input", event => {
   state.cpuMonitor.search = event.target.value;
   $("#cpu-list").scrollTop = 0;
@@ -3120,6 +3150,7 @@ window.addEventListener("resize", () => {
   inventoryResizeTimer = setTimeout(() => refreshInventoryCapacity(), 120);
 });
 document.addEventListener("visibilitychange", () => {
+  if(document.visibilityState!=="visible"){$("#cpu-process-dialog").close();cpuDetails.close();}
   if (document.visibilityState !== "visible") hideInventoryHover();
   if (document.visibilityState === "visible" && state.member && state.network) { refreshNetwork(); refreshInventoryObservation(); refreshOrders(false); refreshJobs(); }
 });

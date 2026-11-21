@@ -58,6 +58,7 @@ function M.new(config,deps)
     attempts=cache.new(64,16384),
     grants=cache.new(64,16384),
     task_bytes=task_bytes,scan_memory_floor=scan_floor,scan_memory_blocked=false,batch_delay=batch_delay,
+    cpu_detail_seen=cache.new(32,8192),next_cpu_detail=0,
     statistics={batches=0,updates=0,bytes=0,credits_used=0,collect_millis=0},
     inventory_seq="0",poll_seq="0",observation="0",credits=0,poll_delay=1,
     uploaded=0,next_scan=0,next_cpu=0,next_recipe_check=0,task_turn=true,read_opportunity=1}
@@ -260,6 +261,15 @@ function M.new(config,deps)
         read_slots=ready and math.max(0,self.limits.read_slots-self.tasks.count-self.candidates.count) or 0,read_bytes=ready and remaining or 0}
       local hints={}
       if primary then
+        if self.pending_cpu_detail then
+          body.cpu_detail=self.pending_cpu_detail
+          -- Bound the combined control packet before optional CPU/report fields.
+          if not pcall(json.encode,body,self.client.request_bytes-256) then
+            local detail=self.pending_cpu_detail
+            self.pending_cpu_detail={assignment_id=detail.assignment_id,cpu_id=detail.cpu_id,kind=detail.kind,total=0,truncated=false,error="packet_budget"}
+            body.cpu_detail=self.pending_cpu_detail
+          end
+        end
         body.reports=json.array({})
         for _,report in ipairs(self.tracker:reports()) do
           body.reports[#body.reports+1]=report
@@ -290,7 +300,7 @@ function M.new(config,deps)
         if #samples==0 then body.health.read_failures=nil;diagnostic_token=nil end
       end
       self.pending_poll={body=json.encode(body,self.client.request_bytes),sequence=body.sequence,
-        reports=body.reports,hints=hints,diagnostic_token=diagnostic_token}
+        reports=body.reports,hints=hints,diagnostic_token=diagnostic_token,cpu_detail=body.cpu_detail}
     end
     local pending=self.pending_poll
     local started=deps.now()
@@ -304,6 +314,10 @@ function M.new(config,deps)
       not list(ack.reads,16) or ack.verify~=nil or ack.refresh~=nil or
       not integer(ack.scan_budget,0,512) or not integer(ack.poll_millis,1,30000) or
       (not no_grant and not valid_grant) or (not primary and #ack.commands>0) then fatal("invalid_poll_confirmation") end
+    local detail=ack.cpu_detail
+    if detail~=nil then
+      if not primary or type(detail)~="table" or not token(detail.assignment_id) or type(detail.cpu_id)~="string" or #detail.cpu_id<1 or #detail.cpu_id>128 or (detail.kind~="active" and detail.kind~="pending" and detail.kind~="stored") or not integer(detail.ttl_millis,1,8000) or no_grant then fatal("invalid_cpu_detail_assignment") end
+    end
     local raw={}
     for index,read in ipairs(ack.reads) do raw[index]=self:_validate_read(read) end
     if primary then
@@ -326,9 +340,33 @@ function M.new(config,deps)
         self.grant_deadline=math.min(self.grant_deadline,started+ack.grant_ttl_millis/1000)
       end
     end
+    if pending.cpu_detail==self.pending_cpu_detail then self.pending_cpu_detail=nil end
+    if detail and not self.cpu_detail_seen:get(detail.assignment_id) then
+      self.cpu_detail_seen:put(detail.assignment_id,true,128)
+      self.cpu_detail_assignment={value=detail,deadline=started+detail.ttl_millis/1000}
+    end
     self.poll_seq=ack.ack;self.pending_poll=nil;self.poll_delay=ack.poll_millis/1000
     if pending.diagnostic_token then self.read_diagnostics:ack(pending.diagnostic_token) end
     return started
+  end
+  function self:_cpu_detail()
+    local task=self.cpu_detail_assignment
+    if not task or self.pending_cpu_detail then return end
+    local detail=task.value
+    if deps.now()>=task.deadline then self.cpu_detail_assignment=nil;return end
+    if deps.now()<self.next_cpu_detail or self:_available()<1 then return end
+    self.cpu_detail_assignment=nil;self.next_cpu_detail=deps.now()+10
+    local result
+    if deps.free_memory()<524288 then
+      result={assignment_id=detail.assignment_id,cpu_id=detail.cpu_id,kind=detail.kind,total=0,truncated=false,error="memory_low"}
+    else
+      self.credits=self.credits-1
+      local ok,value=pcall(self.adapter.cpu_detail,self.adapter,detail,deps.check)
+      if not ok then require("aeorbit.cancel").rethrow(value) end
+      if ok then result=value else result={assignment_id=detail.assignment_id,cpu_id=detail.cpu_id,kind=detail.kind,total=0,truncated=false,error="read_failed"} end
+    end
+    if deps.now()<task.deadline then self.pending_cpu_detail=result end
+    if deps.yield then deps.yield() end
   end
   function self:_available()
     if not self.grant_deadline or deps.now()>=self.grant_deadline then self.credits=0 end
@@ -573,6 +611,7 @@ function M.new(config,deps)
     local control_ok,result=pcall(self._control,self)
     if not control_ok and not transient(result) then error(result,0) end
     if control_ok then started=result else self:diagnose("control_transport_failed") end
+    if control_ok then self:_cpu_detail() end
     local completed=deps.now()
     local inventory_ok,more=pcall(self._inventory,self)
     if not inventory_ok and not transient(more) then error(more,0) end

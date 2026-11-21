@@ -1297,6 +1297,41 @@ paths:
           content:
             text/csv: {schema: {type: string}}
         default: {$ref: '#/components/responses/Error'}
+  /api/v1/networks/{network}/cpu-details:
+    parameters: [{$ref: '#/components/parameters/NetworkID'}]
+    post:
+      operationId: requestCPUDetails
+      tags: [Inventory]
+      description: Renew a 15-second viewer lease on one anchored CPU per network. Main OC rotates category reads at least ten seconds apart. See contracts/cpu-details.md.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CPUDetailInput'}
+      responses:
+        '200': {description: Cached independent category observations., content: {application/json: {schema: {$ref: '#/components/schemas/CPUDetailView'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/networks/{network}/cpu-details/{viewer}:
+    parameters:
+      - {$ref: '#/components/parameters/NetworkID'}
+      - {name: viewer, in: path, required: true, schema: {$ref: '#/components/schemas/AssignmentID'}}
+    delete:
+      operationId: closeCPUDetails
+      tags: [Inventory]
+      responses:
+        '204': {description: Own viewer lease removed.}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/networks/{network}/catalog/cpu-details/{asset}/image:
+    parameters:
+      - {$ref: '#/components/parameters/NetworkID'}
+      - {name: asset, in: path, required: true, schema: {type: string}}
+      - {name: v, in: query, required: true, schema: {type: string}}
+    get:
+      operationId: getCPUDetailImage
+      tags: [Inventory]
+      responses:
+        '200': {description: Verified image from a current-boot recent CPU detail observation., content: {image/png: {schema: {type: string, format: binary}}}}
+        default: {$ref: '#/components/responses/Error'}
   /api/v1/networks/{network}/cpus:
     parameters: [{$ref: '#/components/parameters/NetworkID'}]
     get:
@@ -2323,6 +2358,7 @@ components:
         essentia: {type: boolean, description: Supports getEssentiaInNetwork with an explicit aspect-name descriptor.}
         craft: {type: boolean}
         cpu_output: {type: boolean}
+        cpu_details: {type: boolean, description: Primary v2 supports on-demand CPU-local task lists.}
         cpu_selection: {type: boolean, description: 'The primary OC supports strict named CPU selection when true. Targets must be unique; duplicate, missing, or busy targets never fall back to automatic assignment.'}
         exact_quantities: {type: boolean}
         exact_nbt: {type: boolean}
@@ -2501,6 +2537,70 @@ components:
         coprocessors: {type: integer, minimum: 0}
         output: {$ref: '#/components/schemas/Stack'}
         output_unavailable: {type: string, maxLength: 256}
+    CPUDetailInput:
+      type: object
+      additionalProperties: false
+      required: [session_id, cpu_id, viewer_id]
+      properties:
+        session_id: {$ref: '#/components/schemas/ID'}
+        cpu_id: {$ref: '#/components/schemas/ID'}
+        viewer_id: {$ref: '#/components/schemas/AssignmentID'}
+    CPUDetailAssignment:
+      type: object
+      additionalProperties: false
+      required: [assignment_id, cpu_id, kind, ttl_millis]
+      properties:
+        assignment_id: {$ref: '#/components/schemas/AssignmentID'}
+        cpu_id: {$ref: '#/components/schemas/ID'}
+        kind: {type: string, enum: [active, pending, stored]}
+        ttl_millis: {type: integer, minimum: 1, maximum: 8000}
+    CPUDetailItem:
+      type: object
+      additionalProperties: false
+      required: [row_id, kind, name, label, quantity]
+      properties:
+        row_id: {$ref: '#/components/schemas/ID'}
+        kind: {type: string, enum: [item, fluid, essentia]}
+        name: {type: string, minLength: 1, maxLength: 256}
+        label: {type: string, maxLength: 512}
+        damage: {type: integer, minimum: 0, maximum: 2147483647}
+        has_tag: {type: boolean}
+        variant_hash: {type: string, pattern: '^[0-9a-f]{64}$'}
+        quantity: {$ref: '#/components/schemas/Quantity'}
+        catalog: {$ref: '#/components/schemas/CatalogItem'}
+    CPUDetailResult:
+      type: object
+      additionalProperties: false
+      required: [assignment_id, cpu_id, kind, total, truncated]
+      properties:
+        assignment_id: {$ref: '#/components/schemas/AssignmentID'}
+        cpu_id: {$ref: '#/components/schemas/ID'}
+        kind: {type: string, enum: [active, pending, stored]}
+        total: {type: integer, minimum: 0, maximum: 1000000}
+        truncated: {type: boolean}
+        items: {type: array, maxItems: 64, items: {$ref: '#/components/schemas/CPUDetailItem'}}
+        error: {type: string, enum: [unsupported, target_expired, target_changed, read_failed, memory_low, invalid_items, packet_budget]}
+    CPUDetailPart:
+      type: object
+      required: [kind, items, total, truncated]
+      properties:
+        kind: {type: string, enum: [active, pending, stored]}
+        items: {type: array, maxItems: 64, items: {$ref: '#/components/schemas/CPUDetailItem'}}
+        total: {type: integer, minimum: 0, maximum: 1000000}
+        truncated: {type: boolean}
+        error: {type: string}
+        observed_at: {type: string, format: date-time}
+        reported_at: {type: string, format: date-time}
+    CPUDetailView:
+      type: object
+      required: [session_id, cpu_id, cpu, parts, status, refresh_seconds]
+      properties:
+        session_id: {$ref: '#/components/schemas/ID'}
+        cpu_id: {$ref: '#/components/schemas/ID'}
+        cpu: {$ref: '#/components/schemas/CPU'}
+        parts: {type: array, maxItems: 3, items: {$ref: '#/components/schemas/CPUDetailPart'}}
+        status: {type: string, enum: [collecting, ready, stale, target_changed]}
+        refresh_seconds: {type: integer, const: 30}
     CPUView:
       type: object
       description: Returns the latest accepted snapshot, including its IDs, order and observation time, even when unchanged visible state produced no CPU event.
@@ -2886,6 +2986,7 @@ components:
       additionalProperties: false
       required: [session_id, sequence]
       properties:
+        cpu_detail: {$ref: '#/components/schemas/CPUDetailResult'}
         session_id: {$ref: '#/components/schemas/ID'}
         sequence: {$ref: '#/components/schemas/PositiveQuantity'}
         reports: {type: array, maxItems: 16, items: {$ref: '#/components/schemas/Report'}}
@@ -2900,6 +3001,7 @@ components:
       additionalProperties: false
       required: [ack, commands, reads, poll_millis, scan_budget]
       properties:
+        cpu_detail: {$ref: '#/components/schemas/CPUDetailAssignment'}
         ack: {$ref: '#/components/schemas/PositiveQuantity'}
         commands: {type: array, maxItems: 16, items: {$ref: '#/components/schemas/Command'}}
         poll_millis: {type: integer, minimum: 1, maximum: 30000}

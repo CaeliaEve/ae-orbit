@@ -2617,3 +2617,38 @@ body { padding: 0; background: #0a0a0b; }
 #view-plugin-lsc .lsc-reservoir-track { background:#718fb915; }
 #view-plugin-lsc .lsc-reservoir-track>i { background:var(--bg,#0b0d10); }
 @media(max-width:900px) { #view-plugin-lsc .lsc-footer { grid-template-columns:minmax(0,1fr); } }
+
+/* CPU process uses open columns and independent scrolling; the shell remains compact. */
+#cpu-process-dialog { width:min(1160px,94vw); max-width:1160px; max-height:90dvh; padding:26px; }
+#cpu-process-dialog .dialog-heading { align-items:flex-start; }
+#cpu-process-goal { margin:9px 0 0; font-size:13px; line-height:1.5; }
+.cpu-process-toolbar { display:flex; align-items:center; justify-content:space-between; gap:20px; margin:24px 0 8px; }
+.cpu-process-toolbar .search-field { max-width:330px; margin:0; }
+.cpu-process-toolbar>span,.cpu-process-footnote { color:var(--muted); font-size:12px; line-height:1.6; }
+.cpu-process-status { font-size:12px; color:var(--muted); min-height:20px; margin:8px 0 22px; }
+.cpu-process-columns { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:28px; }
+.cpu-process-column { min-width:0; }
+.cpu-process-column h3 { margin:0 0 10px; font-size:16px; }
+.cpu-process-column header p { font-size:12px; line-height:1.6; margin:0 0 10px; color:var(--muted); min-height:38px; }
+.cpu-process-column header>span { font-size:11px; color:var(--muted); }
+.cpu-process-note { min-height:32px; font-size:12px; line-height:1.6; color:var(--muted); }
+.cpu-process-note.has-error { color:var(--warning,#f4b96b); }
+.cpu-process-column ul { list-style:none; margin:0; padding:0; max-height:44dvh; overflow:auto; scrollbar-gutter:stable; }
+.cpu-process-item { display:grid; grid-template-columns:32px minmax(0,1fr) auto; gap:10px; align-items:center; padding:9px 2px; }
+.cpu-process-media { width:32px; height:32px; display:grid; place-items:center; }
+.cpu-process-media .item-image { width:28px; height:28px; object-fit:contain; image-rendering:pixelated; }
+.cpu-process-label { min-width:0; display:flex; flex-direction:column; gap:4px; }
+.cpu-process-label strong { font-size:13px; font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.cpu-process-label small { font-size:10px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.cpu-process-quantity { font-size:13px; text-align:right; overflow-wrap:anywhere; max-width:145px; }
+.cpu-process-quantity small { display:block; color:var(--muted); font-size:10px; }
+.cpu-process-empty { text-align:center; padding:42px 0; color:var(--muted); font-size:12px; }
+.cpu-process-footnote { margin:22px 0 0; }
+.cpu-process-open { margin:6px 0 10px; }
+@media(max-width:760px) {
+ #cpu-process-dialog { padding:20px; width:94vw; }
+ .cpu-process-toolbar { align-items:flex-start; flex-direction:column; gap:10px; }
+ .cpu-process-columns { grid-template-columns:minmax(0,1fr); gap:28px; }
+ .cpu-process-column ul { max-height:260px; }
+ .cpu-process-column header p { min-height:0; }
+}

@@ -21,7 +21,7 @@ DESTINATIONS = {
     **{f"lib/aeorbit/{name}.lua": f"/lib/aeorbit/{name}.lua" for name in (
         "quantity", "json", "base64", "cache", "bitops", "sha256", "gzip", "nbt",
         "journal", "client", "adapter", "tracker", "runner", "cooperative", "read_diagnostics", "latency",
-        "cancel", "cpu_packet", "runtime", "monitor", "service")},
+        "cancel", "cpu_packet", "cpu_details", "runtime", "monitor", "service")},
     "bin/ae-orbit.lua": "/bin/ae-orbit.lua",
     "bin/ae-orbit-register.lua": "/bin/ae-orbit-register.lua",
     "bin/ae-orbit-monitor-setup.lua": "/bin/ae-orbit-monitor-setup.lua",

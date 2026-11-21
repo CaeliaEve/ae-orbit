@@ -60,6 +60,7 @@ type Capabilities struct {
 	Inventory          bool     `json:"inventory"`
 	QuantityRefresh    bool     `json:"quantity_refresh,omitempty"`
 	Craft              bool     `json:"craft"`
+	CPUDetails         bool     `json:"cpu_details,omitempty"`
 	CPUOutput          bool     `json:"cpu_output"`
 	CPUSelection       bool     `json:"cpu_selection"`
 	ExactQuantities    bool     `json:"exact_quantities"`
@@ -360,19 +361,20 @@ type InventoryTelemetry struct {
 }
 
 type Poll struct {
-	SessionID        string     `json:"session_id"`
-	Sequence         Quantity   `json:"sequence"`
-	Reports          []Report   `json:"reports"`
-	CPUs             *[]CPU     `json:"cpus,omitempty"`
-	CPUsTruncated    bool       `json:"cpus_truncated,omitempty"`
-	Health           *Health    `json:"health,omitempty"`
-	RecheckSlots     *int       `json:"recheck_slots,omitempty"`
-	RecheckBytes     *int       `json:"recheck_bytes,omitempty"`
-	RefreshSlots     *int       `json:"refresh_slots,omitempty"`
-	RefreshBytes     *int       `json:"refresh_bytes,omitempty"`
-	ReadSlots        *int       `json:"read_slots,omitempty"`
-	ReadBytes        *int       `json:"read_bytes,omitempty"`
-	Hints            []ReadHint `json:"hints,omitempty"`
+	CPUDetail        *CPUDetailResult `json:"cpu_detail,omitempty"`
+	SessionID        string           `json:"session_id"`
+	Sequence         Quantity         `json:"sequence"`
+	Reports          []Report         `json:"reports"`
+	CPUs             *[]CPU           `json:"cpus,omitempty"`
+	CPUsTruncated    bool             `json:"cpus_truncated,omitempty"`
+	Health           *Health          `json:"health,omitempty"`
+	RecheckSlots     *int             `json:"recheck_slots,omitempty"`
+	RecheckBytes     *int             `json:"recheck_bytes,omitempty"`
+	RefreshSlots     *int             `json:"refresh_slots,omitempty"`
+	RefreshBytes     *int             `json:"refresh_bytes,omitempty"`
+	ReadSlots        *int             `json:"read_slots,omitempty"`
+	ReadBytes        *int             `json:"read_bytes,omitempty"`
+	Hints            []ReadHint       `json:"hints,omitempty"`
 	legacyReadFields bool
 	v2ReadFields     bool
 }
@@ -394,7 +396,7 @@ func (p *Poll) UnmarshalJSON(data []byte) error {
 			wire.legacyReadFields = true
 		}
 	}
-	for _, key := range []string{"read_slots", "read_bytes", "hints"} {
+	for _, key := range []string{"read_slots", "read_bytes", "hints", "cpu_detail"} {
 		if _, ok := fields[key]; ok {
 			wire.v2ReadFields = true
 		}
@@ -436,15 +438,16 @@ type Verification struct {
 }
 
 type PollAck struct {
-	Ack            Quantity          `json:"ack"`
-	Commands       []Command         `json:"commands"`
-	Verify         []Verification    `json:"verify"`
-	PollMillis     int               `json:"poll_millis"`
-	ScanBudget     int               `json:"scan_budget"`
-	Refresh        []QuantityRefresh `json:"refresh,omitempty"`
-	Reads          []ReadAssignment  `json:"reads,omitempty"`
-	GrantID        string            `json:"grant_id,omitempty"`
-	GrantTTLMillis int               `json:"grant_ttl_millis,omitempty"`
+	CPUDetail      *CPUDetailAssignment `json:"cpu_detail,omitempty"`
+	Ack            Quantity             `json:"ack"`
+	Commands       []Command            `json:"commands"`
+	Verify         []Verification       `json:"verify"`
+	PollMillis     int                  `json:"poll_millis"`
+	ScanBudget     int                  `json:"scan_budget"`
+	Refresh        []QuantityRefresh    `json:"refresh,omitempty"`
+	Reads          []ReadAssignment     `json:"reads,omitempty"`
+	GrantID        string               `json:"grant_id,omitempty"`
+	GrantTTLMillis int                  `json:"grant_ttl_millis,omitempty"`
 }
 
 func (p PollAck) MarshalJSON() ([]byte, error) {
@@ -458,14 +461,15 @@ func (p PollAck) MarshalJSON() ([]byte, error) {
 		commands = []Command{}
 	}
 	return json.Marshal(struct {
-		Ack            Quantity         `json:"ack"`
-		Commands       []Command        `json:"commands"`
-		PollMillis     int              `json:"poll_millis"`
-		ScanBudget     int              `json:"scan_budget"`
-		Reads          []ReadAssignment `json:"reads"`
-		GrantID        string           `json:"grant_id,omitempty"`
-		GrantTTLMillis int              `json:"grant_ttl_millis,omitempty"`
-	}{p.Ack, commands, p.PollMillis, p.ScanBudget, p.Reads, p.GrantID, p.GrantTTLMillis})
+		CPUDetail      *CPUDetailAssignment `json:"cpu_detail,omitempty"`
+		Ack            Quantity             `json:"ack"`
+		Commands       []Command            `json:"commands"`
+		PollMillis     int                  `json:"poll_millis"`
+		ScanBudget     int                  `json:"scan_budget"`
+		Reads          []ReadAssignment     `json:"reads"`
+		GrantID        string               `json:"grant_id,omitempty"`
+		GrantTTLMillis int                  `json:"grant_ttl_millis,omitempty"`
+	}{p.CPUDetail, p.Ack, commands, p.PollMillis, p.ScanBudget, p.Reads, p.GrantID, p.GrantTTLMillis})
 }
 
 type QuantityRefresh struct {

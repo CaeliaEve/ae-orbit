@@ -133,7 +133,7 @@ func (h Hello) validate(version int) error {
 }
 
 func (p Poll) Validate(maxCPUs, maxReports int) error {
-	if p.v2ReadFields || p.ReadSlots != nil || p.ReadBytes != nil || p.Hints != nil {
+	if p.CPUDetail != nil || p.v2ReadFields || p.ReadSlots != nil || p.ReadBytes != nil || p.Hints != nil {
 		return fmt.Errorf("v2 fields require protocol 2")
 	}
 	return p.validate(maxCPUs, maxReports)
@@ -155,6 +155,11 @@ func (p Poll) ValidateV2(maxCPUs, maxReports int) error {
 			if err := hint.Item.Validate(); err != nil {
 				return err
 			}
+		}
+	}
+	if p.CPUDetail != nil {
+		if err := p.CPUDetail.Validate(); err != nil {
+			return err
 		}
 	}
 	return p.validate(maxCPUs, maxReports)

@@ -24,7 +24,7 @@ function M.new(me,config)
   assert(M.has_method(me,"getItemInNetwork"),"adapter: missing getItemInNetwork; requires OC 1.12.47-GTNH+ (table/NBT API)")
   local cpu_limit=config.cpu_limit or 64
   assert(type(cpu_limit)=="number" and cpu_limit%1==0 and cpu_limit>=1 and cpu_limit<=64,"adapter: CPU limit must be 1..64")
-  local adapter={me=me,identity_bytes=config.identity_bytes or 4096,cpu_limit=cpu_limit,cpu_generation="0",
+  local adapter={me=me,identity_bytes=config.identity_bytes or 4096,cpu_limit=cpu_limit,cpu_generation="0",cpu_detail_targets=cache.new(128,32768),
     nbt_cache=cache.new(64,32768)}
   local function cpu_name(raw)
     return tostring(raw and raw.name or ""):sub(1,256)
@@ -51,7 +51,7 @@ function M.new(me,config)
     if worker then
       return {inventory=true,craft=false,cpu_output=false,cpu_selection=false,exact_quantities=true,quantity_refresh=true,fluids=fluids,essentia=essentia,exact_nbt=true,max_nbt_bytes=self.identity_bytes}
     end
-    return {inventory=true,craft=M.has_method(me,"getCraftable"),cpu_output=M.has_method(me,"getCpus"),
+    return {inventory=true,cpu_details=M.has_method(me,"getCpus"),craft=M.has_method(me,"getCraftable"),cpu_output=M.has_method(me,"getCpus"),
       cpu_selection=M.has_method(me,"getCraftable") and M.has_method(me,"getCpus"),
       exact_quantities=true,quantity_refresh=true,fluids=fluids,essentia=essentia,craft_fluids=fluids and M.has_method(me,"getCraftable"),max_craft_quantity=quantity.maximum(),exact_nbt=true,max_nbt_bytes=self.identity_bytes,
       enumeration=exact_only and "exact_only" or "volatile_iterator"}
@@ -271,10 +271,12 @@ function M.new(me,config)
       local raw=values[index]
       local cpu={id=self.cpu_generation..":"..index,name=tostring(raw.name or ""):sub(1,256),busy=raw.busy==true,
         storage=quantity.from_number(raw.storage or 0),coprocessors=raw.coprocessors or 0}
+      if raw.cpu then self.cpu_detail_targets:put(cpu.id,{cpu=raw.cpu,output=nil},200) end
       if cpu.busy and raw.cpu then
         local ok,output,reason=pcall(function() return raw.cpu.finalOutput() end)
         if not ok then cancel.rethrow(output) end
         if ok and type(output)=="table" then
+          local target=self.cpu_detail_targets:get(cpu.id);if target then target.output_signature=require("aeorbit.cpu_details").signature(output) end
           local precise,count=pcall(self.count,self,{size=output.size or output.amount})
           if not precise then cancel.rethrow(count) end
           if precise then
@@ -299,6 +301,14 @@ function M.new(me,config)
       result[#result+1]=cpu
     end
     return result,#values>self.cpu_limit
+  end
+  function adapter:cpu_detail(assignment,check)
+    local target=self.cpu_detail_target
+    if not target or target.id~=assignment.cpu_id then
+      target={id=assignment.cpu_id,value=self.cpu_detail_targets:get(assignment.cpu_id)}
+      self.cpu_detail_target=target
+    end
+    return require("aeorbit.cpu_details").read(target.value,assignment,check)
   end
   return adapter
 end

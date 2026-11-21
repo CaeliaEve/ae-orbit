@@ -35,6 +35,7 @@ local files = {
   {"lib/aeorbit/cancel.lua", "/lib/aeorbit/cancel.lua"},
   {"lib/aeorbit/client.lua", "/lib/aeorbit/client.lua"},
   {"lib/aeorbit/adapter.lua", "/lib/aeorbit/adapter.lua"},
+  {"lib/aeorbit/cpu_details.lua", "/lib/aeorbit/cpu_details.lua"},
   {"lib/aeorbit/cpu_packet.lua", "/lib/aeorbit/cpu_packet.lua"},
   {"lib/aeorbit/tracker.lua", "/lib/aeorbit/tracker.lua"},
   {"lib/aeorbit/runner.lua", "/lib/aeorbit/runner.lua"},

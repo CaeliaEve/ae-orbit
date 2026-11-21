@@ -199,6 +199,13 @@
   <dialog id="cpu-dialog" aria-labelledby="cpu-title">
     <div class="dialog-heading"><h2 id="cpu-title">选择合成 CPU</h2><button class="icon-button" data-close="cpu-dialog" title="关闭" aria-label="关闭 CPU 选择"><i data-lucide="x"></i></button></div><div id="cpu-options"></div><p id="cpu-choice-error" class="error" role="alert"></p>
   </dialog>
+  <dialog id="cpu-process-dialog" aria-labelledby="cpu-process-title">
+    <div class="dialog-heading"><div><h2 id="cpu-process-title">合成过程</h2><p id="cpu-process-goal" class="muted"></p></div><button class="icon-button" data-close="cpu-process-dialog" title="关闭" aria-label="关闭合成过程"><i data-lucide="x"></i></button></div>
+    <div class="cpu-process-toolbar"><label class="search-field"><i data-lucide="search" aria-hidden="true"></i><input id="cpu-process-search" type="search" placeholder="筛选本次清单" aria-label="筛选合成过程物品"></label><span>每次读取一栏 · 三栏约 30 秒一轮</span></div>
+    <p id="cpu-process-status" class="cpu-process-status" role="status"></p>
+    <div id="cpu-process-columns" class="cpu-process-columns"></div>
+    <p class="cpu-process-footnote">三栏来自各自时刻的观测；“等待返回”不代表机器正在运行。关闭面板后停止后续采集。</p>
+  </dialog>
   <dialog id="order-dialog" aria-labelledby="order-title">
     <div class="dialog-heading"><h2 id="order-title">任务详情</h2><div class="dialog-tools"><button class="icon-button" id="refresh-order-detail" title="刷新任务详情" aria-label="刷新任务详情"><i data-lucide="refresh-cw"></i></button><button class="icon-button" data-close="order-dialog" title="关闭" aria-label="关闭任务详情"><i data-lucide="x"></i></button></div></div><p id="order-detail-status" class="detail-status" role="status" hidden></p><div id="order-detail"></div>
   </dialog>

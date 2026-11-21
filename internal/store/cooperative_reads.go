@@ -27,7 +27,7 @@ func (s *Store) PollV2(ctx context.Context, d Device, p protocol.Poll) (protocol
 		if err != nil {
 			return err
 		}
-		if d.Role != "primary" && (p.CPUs != nil || len(p.Reports) > 0 || len(p.Hints) > 0 || p.CPUsTruncated) {
+		if d.Role != "primary" && (p.CPUDetail != nil || p.CPUs != nil || len(p.Reports) > 0 || len(p.Hints) > 0 || p.CPUsTruncated) {
 			return ErrForbidden
 		}
 		var last protocol.Quantity
@@ -80,6 +80,12 @@ func (s *Store) PollV2(ctx context.Context, d Device, p protocol.Poll) (protocol
 		}
 		ready := !plain || (caps.NativeScanDisabled && caps.EventsDisabled && caps.ExactQuantities)
 		if d.Role == "primary" {
+			if p.CPUDetail != nil && !caps.CPUDetails {
+				return ErrCapability
+			}
+			if err = s.acceptCPUDetail(ctx, tx, d, p.SessionID, p.CPUDetail); err != nil {
+				return err
+			}
 			if err = s.acceptReports(ctx, tx, d.NetworkID, p); err != nil {
 				return err
 			}
@@ -111,6 +117,16 @@ func (s *Store) PollV2(ctx context.Context, d Device, p protocol.Poll) (protocol
 		ack.ScanBudget, ack.GrantID, ack.GrantTTLMillis, err = s.acquisitionGrant(ctx, tx, d, p.SessionID, group, slots, queueBytes, 2)
 		if err != nil {
 			return err
+		}
+		if d.Role == "primary" && ready && caps.CPUDetails && ack.ScanBudget > 0 {
+			ack.CPUDetail, err = s.cpuDetailAssignment(ctx, tx, d, p.SessionID)
+			if err != nil {
+				return err
+			}
+			encoded, _ := json.Marshal(ack)
+			if len(encoded) > responseBytes {
+				ack.CPUDetail = nil
+			}
 		}
 		if caps.ExactQuantities && ack.ScanBudget > 0 && slots > 0 && queueBytes > 0 {
 			if err = s.cooperativeReads(ctx, tx, d, p.SessionID, responseBytes, slots, queueBytes, plain, &ack); err != nil {
@@ -182,6 +198,7 @@ func (s *Store) acceptReadHints(ctx context.Context, tx pgx.Tx, network string, 
 }
 
 func (s *Store) filterCooperativeReplay(ctx context.Context, tx pgx.Tx, d Device, session string, ack *protocol.PollAck) error {
+	ack.CPUDetail = nil // Replay never grants another native list invocation.
 	commands := []protocol.Command{}
 	for _, c := range ack.Commands {
 		var live bool
