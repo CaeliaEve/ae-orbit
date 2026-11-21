@@ -25,6 +25,48 @@ function M.sample(proxy)
  if not energy(a) or not energy(b) or b=='0' or compare(a,b)>0 then return nil,nil,'invalid_energy' end
  return a,b
 end
+local flowKeys={
+ eu_in='input_eut',eu_out='output_eut',passive_loss='loss_eut',
+ ['avg_eu_in.sec']='avg_input_eut',['avg_eu_out.sec']='avg_output_eut',
+}
+function M.parseFlow(lines)
+ if type(lines)~='table' or #lines>64 then return nil,'invalid_format' end
+ local flow={source='lsc_sensor_v1',window_seconds=5}
+ local prefix='kekztech.infodata.lapotronic_super_capacitor.'
+ local bytes=0
+ for _,line in ipairs(lines) do
+  if type(line)~='string' then return nil,'invalid_format' end
+  bytes=bytes+#line;if bytes>16384 then return nil,'invalid_format' end
+  if line:sub(1,#prefix)==prefix then
+   local key,args=line:sub(#prefix+1):match('^(.-)\\\\(.*)$')
+   local field=flowKeys[key]
+   if field then
+    if flow[field] then return nil,'invalid_format' end
+    local value,window=args:match('^(.-)\\\\(.*)$')
+    value=value or args
+    if value:find(',',1,true) and not value:match('^%d%d?%d?,%d%d%d') then return nil,'invalid_format' end
+    if value:find(',',1,true) then
+     local first,rest=value:match('^(%d%d?%d?)(,.*)$')
+     if not first or rest:gsub(',%d%d%d','')~='' then return nil,'invalid_format' end
+    end
+    value=value:gsub(',','')
+    if not energy(value) then return nil,'invalid_format' end
+    if key=='avg_eu_in.sec' or key=='avg_eu_out.sec' then
+     if window~='5' then return nil,'invalid_format' end
+    elseif window then return nil,'invalid_format' end
+    flow[field]=value
+   end
+  end
+ end
+ for _,field in pairs(flowKeys) do if not flow[field] then return nil,'invalid_format' end end
+ return flow
+end
+function M.flow(proxy)
+ if not proxy or not proxy.getSensorInformation then return nil,'unsupported' end
+ local ok,lines=pcall(function()return proxy.getSensorInformation()end)
+ if not ok then cancel.rethrow(lines);return nil,'read_failed' end
+ return M.parseFlow(lines)
+end
 function M.discover(component,check,yield)
  local out=json.array({})
  local seen,inspected={},0
@@ -82,10 +124,10 @@ function M.new(config,deps)
     local o=self.objects[index]
     if now>=(self.due[o.id] or 0) then
      if deps.check then deps.check() end
-     local a,b,err
+     local a,b,err,flow,flowError
      if body.free_memory<262144 then err='memory_low'
-     else local ok,p=pcall(deps.component.proxy,o.component_address);if not ok then cancel.rethrow(p);p=nil end;a,b,err=M.sample(p) end
-     body.samples[#body.samples+1]={object_id=o.id,revision=o.revision,installation_revision=o.installation_revision,sample_millis=math.floor(deps.now()*1000),stored_eu=a,capacity_eu=b,error=err}
+     else local ok,p=pcall(deps.component.proxy,o.component_address);if not ok then cancel.rethrow(p);p=nil end;a,b,err=M.sample(p);if not err then flow,flowError=M.flow(p) end end
+     body.samples[#body.samples+1]={object_id=o.id,revision=o.revision,installation_revision=o.installation_revision,sample_millis=math.floor(deps.now()*1000),stored_eu=a,capacity_eu=b,error=err,flow=flow,flow_error=flowError}
      self.due[o.id]=now+o.interval_seconds
      self.next_cursor=index%n+1
      if deps.yield then deps.yield() end

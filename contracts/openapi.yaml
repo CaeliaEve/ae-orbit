@@ -1738,6 +1738,18 @@ components:
           items:
             $ref: '#/components/schemas/MonitorComponent'
           maxItems: 32
+    MonitorFlow:
+      type: object
+      additionalProperties: false
+      required: [input_eut, output_eut, loss_eut, avg_input_eut, avg_output_eut, window_seconds, source]
+      properties:
+        input_eut: {$ref: '#/components/schemas/MonitorEnergy'}
+        output_eut: {$ref: '#/components/schemas/MonitorEnergy'}
+        loss_eut: {$ref: '#/components/schemas/MonitorEnergy'}
+        avg_input_eut: {$ref: '#/components/schemas/MonitorEnergy'}
+        avg_output_eut: {$ref: '#/components/schemas/MonitorEnergy'}
+        window_seconds: {type: integer, const: 5}
+        source: {type: string, const: lsc_sensor_v1}
     MonitorSample:
       type: object
       additionalProperties: false
@@ -1762,6 +1774,11 @@ components:
           $ref: '#/components/schemas/MonitorEnergy'
         capacity_eu:
           $ref: '#/components/schemas/MonitorEnergy'
+        flow:
+          $ref: '#/components/schemas/MonitorFlow'
+        flow_error:
+          type: string
+          enum: [unsupported, read_failed, invalid_format]
         error:
           type: string
           enum:
@@ -1770,6 +1787,17 @@ components:
           - read_failed
           - invalid_energy
           - memory_low
+          - controller_mismatch
+      allOf:
+      - not:
+          required: [flow, flow_error]
+      - if:
+          required: [error]
+        then:
+          not:
+            anyOf:
+            - required: [flow]
+            - required: [flow_error]
       oneOf:
       - required:
         - stored_eu

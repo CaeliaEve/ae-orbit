@@ -102,7 +102,7 @@ func (s *Store) MonitorHello(ctx context.Context, a MonitorAuth, h MonitorHello)
 	return w, err
 }
 
-var sampleErrors = map[string]bool{"component_missing": true, "interface_unsupported": true, "read_failed": true, "invalid_energy": true, "memory_low": true}
+var sampleErrors = map[string]bool{"component_missing": true, "interface_unsupported": true, "read_failed": true, "invalid_energy": true, "memory_low": true, "controller_mismatch": true}
 
 func (s *Store) MonitorPoll(ctx context.Context, a MonitorAuth, p MonitorPoll) (MonitorWelcome, error) {
 	var w MonitorWelcome
@@ -115,8 +115,11 @@ func (s *Store) MonitorPoll(ctx context.Context, a MonitorAuth, p MonitorPoll) (
 			return w, ErrInvalid
 		}
 		seen[v.ObjectID] = true
+		if !v.Flow.valid() || v.Flow != nil && v.FlowError != "" || v.FlowError != "" && v.FlowError != "unsupported" && v.FlowError != "read_failed" && v.FlowError != "invalid_format" {
+			return w, ErrInvalid
+		}
 		if v.Error != "" {
-			if !sampleErrors[v.Error] || v.Stored != "" || v.Capacity != "" {
+			if !sampleErrors[v.Error] || v.Stored != "" || v.Capacity != "" || v.Flow != nil || v.FlowError != "" {
 				return w, ErrInvalid
 			}
 		} else if plugins.ValidateEnergy(v.Stored, v.Capacity) != nil {
@@ -245,16 +248,20 @@ func acceptMonitorSample(ctx context.Context, tx pgx.Tx, session string, v Monit
 		_, err = tx.Exec(ctx, `INSERT INTO monitor_latest(object_id,session_id,sample_millis,epoch,error,reported_at) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(object_id) DO UPDATE SET session_id=excluded.session_id,sample_millis=excluded.sample_millis,epoch=excluded.epoch,error=excluded.error,reported_at=excluded.reported_at`, v.ObjectID, session, v.SampleMillis, epoch, v.Error, now)
 		return err
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO monitor_latest(object_id,session_id,sample_millis,stored_eu,capacity_eu,epoch,observed_at,reported_at,error) VALUES($1,$2,$3,$4::numeric,$5::numeric,$6,$7,$7,'') ON CONFLICT(object_id) DO UPDATE SET session_id=excluded.session_id,sample_millis=excluded.sample_millis,stored_eu=excluded.stored_eu,capacity_eu=excluded.capacity_eu,epoch=excluded.epoch,observed_at=excluded.observed_at,reported_at=excluded.reported_at,error=''`, v.ObjectID, session, v.SampleMillis, v.Stored, v.Capacity, epoch, now)
+	var flow []byte
+	if v.Flow != nil {
+		flow, _ = json.Marshal(v.Flow)
+	}
+	_, err = tx.Exec(ctx, `INSERT INTO monitor_latest(object_id,session_id,sample_millis,stored_eu,capacity_eu,epoch,observed_at,reported_at,error,flow,flow_error) VALUES($1,$2,$3,$4::numeric,$5::numeric,$6,$7,$7,'',$8,$9) ON CONFLICT(object_id) DO UPDATE SET session_id=excluded.session_id,sample_millis=excluded.sample_millis,stored_eu=excluded.stored_eu,capacity_eu=excluded.capacity_eu,epoch=excluded.epoch,observed_at=excluded.observed_at,reported_at=excluded.reported_at,error='',flow=excluded.flow,flow_error=excluded.flow_error`, v.ObjectID, session, v.SampleMillis, v.Stored, v.Capacity, epoch, now, flow, v.FlowError)
 	if err != nil {
 		return err
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO monitor_energy_records(object_id,epoch,session_id,stored_eu,capacity_eu,observed_at) VALUES($1,$2,$3,$4::numeric,$5::numeric,$6)`, v.ObjectID, epoch, session, v.Stored, v.Capacity, now)
+	_, err = tx.Exec(ctx, `INSERT INTO monitor_energy_records(object_id,epoch,session_id,stored_eu,capacity_eu,observed_at,flow,flow_error) VALUES($1,$2,$3,$4::numeric,$5::numeric,$6,$7,$8)`, v.ObjectID, epoch, session, v.Stored, v.Capacity, now, flow, v.FlowError)
 	if err != nil {
 		return err
 	}
 	for _, g := range []string{"hour", "day"} {
-		_, err = tx.Exec(ctx, `INSERT INTO monitor_energy_rollups(object_id,epoch,granularity,bucket,capacity_eu,first_eu,last_eu,min_eu,max_eu,first_at,last_at) VALUES($1,$2,$3,date_trunc($3,$6::timestamptz AT TIME ZONE 'UTC') AT TIME ZONE 'UTC',$5::numeric,$4::numeric,$4::numeric,$4::numeric,$4::numeric,$6,$6) ON CONFLICT(object_id,granularity,bucket,epoch) DO UPDATE SET last_eu=excluded.last_eu,min_eu=least(monitor_energy_rollups.min_eu,excluded.min_eu),max_eu=greatest(monitor_energy_rollups.max_eu,excluded.max_eu),last_at=excluded.last_at,samples=monitor_energy_rollups.samples+1`, v.ObjectID, epoch, g, v.Stored, v.Capacity, now)
+		_, err = tx.Exec(ctx, `INSERT INTO monitor_energy_rollups(object_id,epoch,granularity,bucket,capacity_eu,first_eu,last_eu,min_eu,max_eu,first_at,last_at,flow,flow_error) VALUES($1,$2,$3,date_trunc($3,$6::timestamptz AT TIME ZONE 'UTC') AT TIME ZONE 'UTC',$5::numeric,$4::numeric,$4::numeric,$4::numeric,$4::numeric,$6,$6,$7,$8) ON CONFLICT(object_id,granularity,bucket,epoch) DO UPDATE SET last_eu=excluded.last_eu,min_eu=least(monitor_energy_rollups.min_eu,excluded.min_eu),max_eu=greatest(monitor_energy_rollups.max_eu,excluded.max_eu),last_at=excluded.last_at,samples=monitor_energy_rollups.samples+1,flow=excluded.flow,flow_error=excluded.flow_error`, v.ObjectID, epoch, g, v.Stored, v.Capacity, now, flow, v.FlowError)
 		if err != nil {
 			return err
 		}

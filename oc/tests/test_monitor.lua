@@ -8,7 +8,7 @@ assert(select(3,monitor.sample({getStoredEU=function()error('must not use numeri
 local now=10
 local addr='11111111-1111-1111-1111-111111111111'
 local component={list=function(tp,exact)assert((tp=='lsc' or tp=='LSC' or tp=='gt_machine') and exact);local done=false;return function()if tp=='gt_machine' and not done then done=true;return addr end end end,
- proxy=function(address)assert(address==addr);return {type='gt_machine',getName=function()return 'multimachine.supercapacitor'end,getStoredEUString=function()return '10'end,getEUCapacityString=function()return '100'end}end}
+ proxy=function(address)assert(address==addr);return {type='gt_machine',getName=function()return 'multimachine.supercapacitor'end,getStoredEUString=function()return '10'end,getEUCapacityString=function()return '100'end,getSensorInformation=function()local prefix='kekztech.infodata.lapotronic_super_capacitor.';local sep=string.rep(string.char(92),2);return {prefix..'eu_in'..sep..'1,000',prefix..'eu_out'..sep..'100',prefix..'passive_loss'..sep..'5',prefix..'avg_eu_in.sec'..sep..'999'..sep..'5',prefix..'avg_eu_out.sec'..sep..'99'..sep..'5'}end}end}
 local attempts,payload=0,nil
 local assignment={id=string.rep('a',32),plugin_id='gtnh.lsc',component_address=addr,revision=1,installation_revision=1,interval_seconds=10}
 local client={send=function(_,path,body)
@@ -16,7 +16,7 @@ local client={send=function(_,path,body)
  if path=='/bridge/monitor/hello' then assert(#value.components==1 and value.modules[1]=='gtnh.lsc');return{session_id=string.rep('b',32),sequence=0,objects={assignment}} end
  assert(path=='/bridge/monitor/poll');attempts=attempts+1
  if attempts==1 then payload=body;error({fatal=false,code='timeout'})end
- if attempts==2 then assert(body==payload and value.samples[1].stored_eu=='10') end
+ if attempts==2 then assert(body==payload and value.samples[1].stored_eu=='10' and value.samples[1].flow.input_eut=='1000' and value.samples[1].flow.window_seconds==5) end
  return {session_id=string.rep('b',32),sequence=value.sequence,objects={assignment}}
 end}
 local bridge=monitor.new({role='monitor'},{component=component,client=client,now=function()return now end,free_memory=function()return 1048576 end,address='oc'})

@@ -59,7 +59,7 @@ func TestMonitorPluginIndependentLifecycleAndAuthorization(t *testing.T) {
 	}
 	huge := "1234567890123456789012345678901234567890"
 	cap := "12345678901234567890123456789012345678900"
-	sample := store.MonitorSample{ObjectID: id, Revision: 1, InstallationRevision: 1, SampleMillis: 10000, Stored: huge, Capacity: cap}
+	sample := store.MonitorSample{ObjectID: id, Revision: 1, InstallationRevision: 1, SampleMillis: 10000, Stored: huge, Capacity: cap, Flow: &store.MonitorFlow{Input: huge, Output: "0", Loss: "30", AverageInput: "100", AverageOutput: "80", WindowSeconds: 5, Source: "lsc_sensor_v1"}}
 	poll := store.MonitorPoll{Session: welcome.Session, Sequence: 1, FreeMemory: 1048576, Samples: []store.MonitorSample{sample}}
 	receipt := decode[store.MonitorWelcome](t, send(t, f, "POST", "/bridge/monitor/poll", created.Token, wire(t, poll)), 200)
 	if len(receipt.Objects) != 1 {
@@ -71,7 +71,7 @@ func TestMonitorPluginIndependentLifecycleAndAuthorization(t *testing.T) {
 		t.Fatal("receipt replay duplicated history", count, err)
 	}
 	objects := decode[[]store.MonitorObject](t, send(t, f, "GET", base+"/objects", adminToken, ""), 200)
-	if len(objects) != 1 || objects[0].Stored != huge || objects[0].Percent != "10.00" {
+	if len(objects) != 1 || objects[0].Stored != huge || objects[0].Percent != "10.00" || objects[0].Flow == nil || objects[0].Flow.Input != huge {
 		t.Fatal(objects)
 	}
 	if err = f.db.MaintainMonitoring(ctx); err != nil {
@@ -95,6 +95,8 @@ func TestMonitorPluginIndependentLifecycleAndAuthorization(t *testing.T) {
 	if _, err = f.db.Pool().Exec(ctx, `UPDATE monitor_latest SET reported_at=now()-interval '20 seconds' WHERE object_id=$1`, id); err != nil {
 		t.Fatal(err)
 	}
+	poll.Samples[0].Flow = nil
+	poll.Samples[0].FlowError = "unsupported"
 	poll.Sequence = 2
 	poll.Samples[0].SampleMillis = 20000
 	poll.Samples[0].Stored = "4000000000000000000000000000000000000000"
@@ -107,8 +109,12 @@ func TestMonitorPluginIndependentLifecycleAndAuthorization(t *testing.T) {
 		t.Fatal(alerts)
 	}
 	history := decode[store.MonitorHistory](t, send(t, f, "GET", base+"/objects/"+id+"/history", adminToken, ""), 200)
-	if len(history.Points) != 2 || history.Points[0].Stored != huge {
+	if len(history.Points) != 2 || history.Points[0].Stored != huge || history.Points[0].Flow == nil || history.Points[0].Flow.Input != huge || history.Points[1].Flow != nil || history.Points[1].FlowError != "unsupported" {
 		t.Fatal(history)
+	}
+	longHistory := decode[store.MonitorHistory](t, send(t, f, "GET", base+"/objects/"+id+"/history?from=2020-01-01T00:00:00Z&to=2030-01-01T00:00:00Z", adminToken, ""), 200)
+	if len(longHistory.Points) == 0 || longHistory.Resolution != "day" {
+		t.Fatal("flow rollup query failed", longHistory)
 	}
 	// Late delivery must be ACKed without becoming a fresh energy observation.
 	if _, err = f.db.Pool().Exec(ctx, `UPDATE monitor_sessions SET last_sample_at=now()-interval '5 minutes' WHERE id=$1`, welcome.Session); err != nil {
@@ -119,6 +125,22 @@ func TestMonitorPluginIndependentLifecycleAndAuthorization(t *testing.T) {
 	decode[store.MonitorWelcome](t, send(t, f, "POST", "/bridge/monitor/poll", created.Token, wire(t, poll)), 200)
 	if err = f.db.Pool().QueryRow(ctx, `SELECT count(*) FROM monitor_energy_records WHERE object_id=$1`, id).Scan(&count); err != nil || count != 2 {
 		t.Fatal("late sample became live", count, err)
+	}
+	validFlow := &store.MonitorFlow{Input: "1", Output: "0", Loss: "0", AverageInput: "1", AverageOutput: "0", WindowSeconds: 5, Source: "lsc_sensor_v1"}
+	invalidFlow := *validFlow
+	invalidFlow.Input = "1e30"
+	invalidPoll := poll
+	invalidPoll.Sequence = 4
+	invalidPoll.Samples = append([]store.MonitorSample(nil), poll.Samples...)
+	invalidPoll.Samples[0].FlowError = ""
+	invalidPoll.Samples[0].Flow = &invalidFlow
+	if send(t, f, "POST", "/bridge/monitor/poll", created.Token, wire(t, invalidPoll)).StatusCode != 400 {
+		t.Fatal("rounded flow accepted")
+	}
+	invalidPoll.Samples[0].Flow = validFlow
+	invalidPoll.Samples[0].FlowError = "unsupported"
+	if send(t, f, "POST", "/bridge/monitor/poll", created.Token, wire(t, invalidPoll)).StatusCode != 400 {
+		t.Fatal("conflicting flow state accepted")
 	}
 	// Inconsistent capacities fail without accepting a sequence or deleting data.
 	poll.Sequence = 4
@@ -134,6 +156,7 @@ func TestMonitorPluginIndependentLifecycleAndAuthorization(t *testing.T) {
 	poll.Samples[0].Stored = ""
 	poll.Samples[0].Capacity = ""
 	poll.Samples[0].Error = "component_missing"
+	poll.Samples[0].FlowError = ""
 	poll.Samples[0].SampleMillis = 30000
 	decode[store.MonitorWelcome](t, send(t, f, "POST", "/bridge/monitor/poll", created.Token, wire(t, poll)), 200)
 	objects = decode[[]store.MonitorObject](t, send(t, f, "GET", base+"/objects", adminToken, ""), 200)
