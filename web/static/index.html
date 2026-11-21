@@ -25,6 +25,7 @@
       <button data-view="orders" aria-label="合成中心" title="合成中心"><i data-lucide="list-checks"></i><span>合成中心</span><span id="order-count" class="nav-count"></span></button>
       <button data-view="cpus" aria-label="CPU 监控" title="CPU 监控"><i data-lucide="cpu"></i><span>CPU 监控</span></button>
       <button data-view="network" aria-label="网络管理" title="网络管理"><i data-lucide="radio-tower"></i><span>网络管理</span></button>
+      <button data-view="plugins" aria-label="插件市场" title="插件市场"><i data-lucide="puzzle"></i><span>插件市场</span></button>
       <div class="sidebar-secondary"><button data-view="github" aria-label="GitHub" title="GitHub"><i data-lucide="github"></i><span>GitHub</span></button></div>
       <button data-view="settings" aria-label="设置" title="设置"><i data-lucide="settings"></i><span>设置</span></button>
       <div id="sidebar-tools" class="sidebar-tools" aria-label="网络与页面操作"></div>
@@ -55,6 +56,7 @@
           <button class="dashboard-metric" data-view="orders"><span class="dashboard-metric-label"><i data-lucide="list-checks" aria-hidden="true"></i><span id="dashboard-job-label">未结束生产任务</span></span><strong id="dashboard-job-count">—</strong><span id="dashboard-job-meta">等待任务观测</span></button>
         </div>
         <div class="dashboard-workspace">
+          <section id="dashboard-energy-widgets" class="dashboard-energy-widgets" aria-label="已添加的储能监控" hidden></section>
           <section class="dashboard-trend-section" aria-labelledby="dashboard-trend-title"><div class="dashboard-section-heading"><div><h2 id="dashboard-trend-title">库存趋势 <button class="text-button" data-view="history" title="查看长期库存历史" aria-label="查看长期库存历史"><i data-lucide="arrow-up-right" aria-hidden="true"></i></button></h2><span id="dashboard-trend-change" class="dashboard-caption">正在积累时间采样</span></div><div class="dashboard-ranges" role="group" aria-label="库存趋势时间范围"><button data-trend-hours="1" aria-pressed="false">1 小时</button><button data-trend-hours="6" aria-pressed="false">6 小时</button><button data-trend-hours="24" aria-pressed="true">24 小时</button></div></div><div id="dashboard-trend" class="trend-chart" aria-label="库存总量时间趋势图"></div></section>
           <section class="dashboard-observations" aria-labelledby="dashboard-observations-title"><div class="dashboard-section-heading"><h2 id="dashboard-observations-title">同步观测</h2><button class="text-button" data-view="network">网络详情 <i data-lucide="arrow-up-right" aria-hidden="true"></i></button></div><div id="dashboard-observation-list"></div></section>
           <section class="dashboard-tasks" aria-labelledby="dashboard-tasks-title"><div class="dashboard-section-heading"><div><h2 id="dashboard-tasks-title">生产任务</h2><span id="dashboard-tasks-note" class="dashboard-caption">未结束任务 · 最近提交优先</span></div><button class="text-button" data-view="orders">合成中心 <i data-lucide="arrow-up-right" aria-hidden="true"></i></button></div><div id="dashboard-task-list"></div></section>
@@ -120,6 +122,7 @@
         </div>
         <div id="cpu-list" class="aux-list"></div>
       </section>
+      <section id="view-plugins" class="view plugin-view" hidden></section>
       <section id="view-network" class="view" hidden>
         <h1 class="sr-only">网络管理</h1>
         <div class="network-toolbar"><span>网络管理</span><button class="secondary" id="add-network" type="button"><i data-lucide="plus"></i>添加网络</button></div>

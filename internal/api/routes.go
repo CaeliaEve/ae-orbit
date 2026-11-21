@@ -24,6 +24,7 @@ func integerQuery(r *http.Request, key string) (int, error) {
 }
 
 func (s *Server) routes() {
+	s.monitoringRoutes()
 	s.mux.HandleFunc("POST /api/v1/networks/{network}/inventory-profile/resources", s.user(func(w http.ResponseWriter, r *http.Request, m protocol.Member) {
 		if err := s.db.EnableResourceCatalog(r.Context(), m.ID, r.PathValue("network")); err != nil {
 			fail(w, err)

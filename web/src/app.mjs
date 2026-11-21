@@ -3,9 +3,10 @@ import {
   Search, ListPlus, ChevronLeft, ChevronRight, ChevronDown, X, Plus, Minus, Package,
   Trash2, Check, Clock, CircleAlert, LogIn, ArrowUpRight, Server, Send, Pause, Play, Square,
   LayoutDashboard, Settings, Github, Bell, Activity, Monitor, SlidersHorizontal, Code2, FileText, CircleHelp, Copy,
-  WifiOff, PanelLeftClose, UserRound,
+  WifiOff, PanelLeftClose, UserRound, Puzzle,
 } from "lucide";
 import { createAPI } from "./api.mjs";
+import { createPluginMarket } from "./plugin-market.mjs";
 import { createInventoryWheel, inventoryKeyboardDirection } from "./inventory-paging.mjs";
 import { inventoryTooltipModel, paginateTooltipLines, splitTooltipLine, tooltipLineHTML, tooltipPosition } from "./inventory-tooltip.mjs";
 import { quantityKnown, craftingKindSupported, craftingQuantityLabel, stockText, stockFreshness, inventorySummary,resourceUnit,resourceLabel } from "./plain-inventory.mjs";
@@ -69,7 +70,7 @@ function inventoryIcon(name) {
   }
   return inventoryIconCache.get(name);
 }
-const icons = { Orbit, Network, LogOut, Boxes, ListChecks, Cpu, RadioTower, RefreshCw, Search, ListPlus, ChevronLeft, ChevronRight, ChevronDown, X, Plus, Minus, Package, Trash2, Check, Clock, CircleAlert, LogIn, ArrowUpRight, Server, Send, Pause, Play, Square, LayoutDashboard, Settings, Github, Bell, Activity, Monitor, SlidersHorizontal, Code2, FileText, CircleHelp, Copy, WifiOff, PanelLeftClose, UserRound };
+const icons = { Orbit, Network, LogOut, Boxes, ListChecks, Cpu, RadioTower, RefreshCw, Search, ListPlus, ChevronLeft, ChevronRight, ChevronDown, X, Plus, Minus, Package, Trash2, Check, Clock, CircleAlert, LogIn, ArrowUpRight, Server, Send, Pause, Play, Square, LayoutDashboard, Settings, Github, Bell, Activity, Monitor, SlidersHorizontal, Code2, FileText, CircleHelp, Copy, WifiOff, PanelLeftClose, UserRound, Puzzle };
 const paint = () => {
   const pending = $$('i[data-lucide]');
   if (!pending.length) return;
@@ -114,6 +115,7 @@ const jobs = createJobController({
     if (!$("#detail-panel").contains(document.activeElement)) renderDetail();
   },
 });
+const pluginMarket = createPluginMarket({root:$('#view-plugins'),widget:$('#dashboard-energy-widgets'),request:(path,options)=>api.request(path,options),member:()=>state.member,network:()=>state.network,showView,toast});
 const activeStates = new Set(["queued", "assigned", "computing", "running"]);
 const attentionStates = new Set(["failed", "needs_review"]);
 const inventoryHistory = createHistoryController({ request: (path,options) => api.request(networkPath(path),options), onChange: () => renderInventoryHistory() });
@@ -434,6 +436,7 @@ function errorText(error) {
   if (error?.code === "identity_changed") {
     api.setCSRF("");
     state.session = null;
+    pluginMarket.sessionChanged();
     clearSession(localStorage,sessionStorage);
     state.stream?.close();
     showLogin();
@@ -729,7 +732,7 @@ function showView(view) {
   let hasRefresh = false;
   $$("[data-refresh-view]").forEach(button => { button.hidden = button.dataset.refreshView !== view; if (!button.hidden) hasRefresh = true; });
   $(".page-refresh").hidden = !hasRefresh;
-  for (const name of ["dashboard", "inventory", "history", "orders", "cpus", "network", "github", "settings"]) $(`#view-${name}`).hidden = name !== view;
+  for (const name of ["dashboard", "inventory", "history", "orders", "cpus", "network", "plugins", "github", "settings"]) $(`#view-${name}`).hidden = name !== view;
   $$("[data-view]").forEach(button => {
     if (button.dataset.view === view) button.setAttribute("aria-current", "page");
     else button.removeAttribute("aria-current");
@@ -749,7 +752,8 @@ function showView(view) {
     if (state.network) refreshNetwork();
   }
   if (view === "inventory") refreshInventoryCapacity();
-  if (view === "dashboard") renderDashboard();
+  if (view === "dashboard") { renderDashboard(); void pluginMarket.refresh(); }
+  if (view === "plugins") pluginMarket.show();
   if (view === "history") { renderInventoryHistory(); if(state.network&&!inventoryHistory.state.series) void inventoryHistory.load(); }
 }
 
@@ -2385,6 +2389,7 @@ async function acceptSession(member, csrf, expiresAt = "", persist = true) {
   state.member = member;
   api.setMember(member.id);
   api.setCSRF(csrf);
+  pluginMarket.sessionChanged();
   state.session = { member: member.id, csrf, expiresAt };
   if (persist) {
     try { saveSession(localStorage, sessionStorage, state.session, state.settings.rememberSession); }
@@ -2434,6 +2439,7 @@ $("#logout").addEventListener("click", async () => {
     api.setCSRF(""); api.setMember(""); state.member = null; state.networks = [];
     clearSession(localStorage, sessionStorage);
     state.session = null;
+    pluginMarket.sessionChanged();
     $("#network").innerHTML = `<option value="">未连接</option>`;
     await switchNetwork("");
     showLogin();

@@ -24,6 +24,345 @@ tags:
   - {name: Jobs}
   - {name: Bridge}
 paths:
+  /api/v1/monitoring/groups:
+    get:
+      operationId: monitoringApiV1MonitoringGroups_get
+      tags:
+      - Monitoring
+      responses:
+        '200':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+  /api/v1/monitoring/groups/{group}/plugins:
+    get:
+      operationId: monitoringApiV1MonitoringGroupsGroupPlugins_get
+      tags:
+      - Monitoring
+      responses:
+        '200':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+      parameters:
+      - name: group
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/v1/monitoring/groups/{group}/plugins/{plugin}:
+    put:
+      operationId: monitoringApiV1MonitoringGroupsGroupPluginsPlugin_put
+      tags:
+      - Monitoring
+      responses:
+        '200':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+      parameters:
+      - name: group
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: plugin
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+              - enabled
+              - settings
+              - revision
+              properties:
+                enabled:
+                  type: boolean
+                settings:
+                  $ref: '#/components/schemas/MonitorSettings'
+                revision:
+                  type: integer
+                  minimum: 0
+  /api/v1/monitoring/groups/{group}/collectors:
+    get:
+      operationId: monitoringApiV1MonitoringGroupsGroupCollectors_get
+      tags:
+      - Monitoring
+      responses:
+        '200':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+      parameters:
+      - name: group
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      operationId: monitoringApiV1MonitoringGroupsGroupCollectors_post
+      tags:
+      - Monitoring
+      responses:
+        '201':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+      parameters:
+      - name: group
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+              - name
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 128
+  /api/v1/monitoring/groups/{group}/collectors/{collector}/token:
+    post:
+      operationId: monitoringApiV1MonitoringGroupsGroupCollectorsCollectorToken_post
+      tags:
+      - Monitoring
+      responses:
+        '200':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+      parameters:
+      - name: group
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: collector
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+  /api/v1/monitoring/groups/{group}/collectors/{collector}:
+    delete:
+      operationId: monitoringApiV1MonitoringGroupsGroupCollectorsCollector_delete
+      tags:
+      - Monitoring
+      responses:
+        '200':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+      parameters:
+      - name: group
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: collector
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/v1/monitoring/groups/{group}/objects:
+    get:
+      operationId: monitoringApiV1MonitoringGroupsGroupObjects_get
+      tags:
+      - Monitoring
+      responses:
+        '200':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+      parameters:
+      - name: group
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      operationId: monitoringApiV1MonitoringGroupsGroupObjects_post
+      tags:
+      - Monitoring
+      responses:
+        '200':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+      parameters:
+      - name: group
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MonitorObjectInput'
+  /api/v1/monitoring/groups/{group}/objects/{object}:
+    put:
+      operationId: monitoringApiV1MonitoringGroupsGroupObjectsObject_put
+      tags:
+      - Monitoring
+      responses:
+        '200':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+      parameters:
+      - name: group
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: object
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MonitorObjectInput'
+  /api/v1/monitoring/groups/{group}/objects/{object}/history:
+    get:
+      operationId: monitoringApiV1MonitoringGroupsGroupObjectsObjectHistory_get
+      tags:
+      - Monitoring
+      responses:
+        '200':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+      parameters:
+      - name: group
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: object
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: from
+        in: query
+        schema:
+          type: string
+          format: date-time
+      - name: to
+        in: query
+        schema:
+          type: string
+          format: date-time
+  /api/v1/monitoring/groups/{group}/alerts:
+    get:
+      operationId: monitoringApiV1MonitoringGroupsGroupAlerts_get
+      tags:
+      - Monitoring
+      responses:
+        '200':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+      parameters:
+      - name: group
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/v1/monitoring/groups/{group}/alerts/{alert}/acknowledge:
+    post:
+      operationId: monitoringApiV1MonitoringGroupsGroupAlertsAlertAcknowledge_post
+      tags:
+      - Monitoring
+      responses:
+        '204':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+      parameters:
+      - name: group
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: alert
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+  /bridge/monitor/hello:
+    post:
+      operationId: monitoringBridgeMonitorHello_post
+      tags:
+      - Monitoring
+      responses:
+        '200':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MonitorHello'
+      security:
+      - monitorBearer: []
+      description: Dedicated monitor credential; accepts no AE queries or machine control. Sequence retries return
+        the immutable receipt. EU strings preserve up to 128 digits. Server receive time is authoritative.
+  /bridge/monitor/poll:
+    post:
+      operationId: monitoringBridgeMonitorPoll_post
+      tags:
+      - Monitoring
+      responses:
+        '200':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MonitorPoll'
+      security:
+      - monitorBearer: []
+      description: Dedicated monitor credential; accepts no AE queries or machine control. Sequence retries return
+        the immutable receipt. EU strings preserve up to 128 digits. Server receive time is authoritative.
   /api/v1/players/register:
     post:
       operationId: registerPlayer
@@ -1261,6 +1600,10 @@ paths:
         default: {$ref: '#/components/responses/Error'}
 components:
   securitySchemes:
+    monitorBearer:
+      type: http
+      scheme: bearer
+      description: Independent ac_mon_ collector credential; never accepted by AE bridge endpoints.
     memberBearer: {type: http, scheme: bearer, description: 'Admin/member token, never an OC device token'}
     deviceBearer: {type: http, scheme: bearer, description: 'Independent device token, never a member token'}
     browserCookie: {type: apiKey, in: cookie, name: ac_session, description: Mutations also require matching Origin and X-CSRF-Token}
@@ -1310,6 +1653,196 @@ components:
                 required: [code, message]
                 properties: {code: {type: string}, message: {type: string}}
   schemas:
+    MonitorEnergy:
+      type: string
+      pattern: ^(0|[1-9][0-9]{0,127})$
+    MonitorComponent:
+      type: object
+      additionalProperties: false
+      required:
+      - address
+      - type
+      - supported
+      properties:
+        address:
+          type: string
+          pattern: ^[a-f0-9-]{36}$
+        type:
+          type: string
+          const: LSC
+        supported:
+          type: boolean
+    MonitorSettings:
+      type: object
+      additionalProperties: false
+      required:
+      - interval_seconds
+      - low_percent
+      - recover_percent
+      - low_duration_seconds
+      - offline_seconds
+      - falling_minutes
+      - raw_retention_days
+      - alerts
+      properties:
+        interval_seconds:
+          type: integer
+          minimum: 10
+          maximum: 3600
+        low_percent:
+          type: integer
+          minimum: 1
+          maximum: 95
+        recover_percent:
+          type: integer
+          minimum: 2
+          maximum: 100
+        low_duration_seconds:
+          type: integer
+          minimum: 10
+          maximum: 3600
+        offline_seconds:
+          type: integer
+          minimum: 30
+          maximum: 10800
+        falling_minutes:
+          type: integer
+          minimum: 0
+          maximum: 1440
+        raw_retention_days:
+          type: integer
+          minimum: 0
+          maximum: 3650
+        alerts:
+          type: boolean
+    MonitorHello:
+      type: object
+      additionalProperties: false
+      required:
+      - boot_id
+      - modules
+      - components
+      properties:
+        boot_id: &id001
+          type: string
+          pattern: ^[a-f0-9]{32}$
+        modules:
+          type: array
+          items:
+            type: string
+            enum:
+            - gtnh.lsc
+          maxItems: 8
+        components:
+          type: array
+          items:
+            $ref: '#/components/schemas/MonitorComponent'
+          maxItems: 32
+    MonitorSample:
+      type: object
+      additionalProperties: false
+      required:
+      - object_id
+      - revision
+      - installation_revision
+      - sample_millis
+      properties:
+        object_id: *id001
+        revision:
+          type: integer
+          minimum: 1
+        installation_revision:
+          type: integer
+          minimum: 1
+        sample_millis:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        stored_eu:
+          $ref: '#/components/schemas/MonitorEnergy'
+        capacity_eu:
+          $ref: '#/components/schemas/MonitorEnergy'
+        error:
+          type: string
+          enum:
+          - component_missing
+          - interface_unsupported
+          - read_failed
+          - invalid_energy
+          - memory_low
+      oneOf:
+      - required:
+        - stored_eu
+        - capacity_eu
+        not:
+          required:
+          - error
+      - required:
+        - error
+        not:
+          anyOf:
+          - required:
+            - stored_eu
+          - required:
+            - capacity_eu
+    MonitorPoll:
+      type: object
+      additionalProperties: false
+      required:
+      - session_id
+      - sequence
+      - free_memory
+      - samples
+      properties:
+        session_id: *id001
+        sequence:
+          type: integer
+          minimum: 1
+          maximum: 1000000000
+        free_memory:
+          type: integer
+          minimum: 0
+          maximum: 1099511627776
+        samples:
+          type: array
+          items:
+            $ref: '#/components/schemas/MonitorSample'
+          maxItems: 16
+        components:
+          type: array
+          items:
+            $ref: '#/components/schemas/MonitorComponent'
+          maxItems: 32
+    MonitorObjectInput:
+      type: object
+      additionalProperties: false
+      required:
+      - plugin_id
+      - collector_id
+      - component_address
+      - name
+      - enabled
+      - revision
+      properties:
+        plugin_id:
+          const: gtnh.lsc
+          type: string
+        collector_id: *id001
+        component_address:
+          type: string
+          pattern: ^[a-f0-9-]{36}$
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        location:
+          type: string
+          maxLength: 128
+        enabled:
+          type: boolean
+        revision:
+          type: integer
+          minimum: 0
     InventoryHistoryEpoch:
       type: object
       required: [id, scope, started_at]

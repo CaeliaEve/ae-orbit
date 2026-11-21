@@ -13,6 +13,10 @@ local function safe_code(err,fallback)
   return fallback
 end
 function M.run(context,config_path,report,mode)
+  local read_ok,initial=pcall(function()return assert(loadfile(config_path or "/etc/ae-orbit.cfg"))()end)
+  if read_ok and type(initial)=="table" and initial.role=="monitor" then
+    return require("aeorbit.monitor").run(context,config_path,report,mode)
+  end
   local event,me,bridge,changed
   local listener_owned,subscription_owned=false,false
   local phase="setup_failed"
