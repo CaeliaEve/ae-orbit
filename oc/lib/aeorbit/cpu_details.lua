@@ -8,7 +8,10 @@ local methods={active='activeItems',pending='pendingItems',stored='storedItems'}
 local function digest(value)local h=sha.new();h:update(value);return h:finish()end
 local function signature(output)
  if not output then return '' end
- return digest(json.encode(json.array({output.name,output.damage or 0,output.kind or 'item',output.hasTag==true or output.hasTag==1,output.label or ''})))
+ -- Compare bounded visual fields directly; do not hash every CPU each poll.
+ return json.encode({name=type(output.name)=='string' and output.name:sub(1,256) or '',damage=output.damage or 0,
+  kind=output.kind or 'item',has_tag=output.hasTag==true or output.hasTag==1,
+  label=type(output.label)=='string' and output.label:sub(1,512) or ''},8192)
 end
 M.signature=signature
 function M.read(target,assignment,check)
@@ -21,10 +24,10 @@ function M.read(target,assignment,check)
  if not ok then cancel.rethrow(busy) end
  if not ok or not busy then return failed('target_changed') end
  local before
- if target.output_signature then
+ if target.output_identity or target.output_signature then
   local success,value=pcall(function()return cpu.finalOutput()end)
   if not success then cancel.rethrow(value) end
-  if not success or type(value)~='table' or signature(value)~=target.output_signature then return failed('target_changed') end
+  if not success or type(value)~='table' or signature(value)~=(target.output_identity and signature(target.output_identity) or target.output_signature) then return failed('target_changed') end
   before=signature(value)
  end
  if check then check() end

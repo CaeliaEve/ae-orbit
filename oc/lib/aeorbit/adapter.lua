@@ -271,16 +271,23 @@ function M.new(me,config)
       local raw=values[index]
       local cpu={id=self.cpu_generation..":"..index,name=tostring(raw.name or ""):sub(1,256),busy=raw.busy==true,
         storage=quantity.from_number(raw.storage or 0),coprocessors=raw.coprocessors or 0}
-      if raw.cpu then self.cpu_detail_targets:put(cpu.id,{cpu=raw.cpu,output=nil},200) end
+      if raw.cpu then self.cpu_detail_targets:put(cpu.id,{cpu=raw.cpu},200) end
       if cpu.busy and raw.cpu then
         local ok,output,reason=pcall(function() return raw.cpu.finalOutput() end)
         if not ok then cancel.rethrow(output) end
         if ok and type(output)=="table" then
-          local target=self.cpu_detail_targets:get(cpu.id);if target then target.output_signature=require("aeorbit.cpu_details").signature(output) end
-          local precise,count=pcall(self.count,self,{size=output.size or output.amount})
+          local precise,count=pcall(function()
+            -- Optional visual metadata must never abort the basic CPU roster.
+            local target=self.cpu_detail_targets:get(cpu.id)
+            if target then target.output_identity={name=type(output.name)=="string" and output.name:sub(1,256) or "",
+              damage=output.damage,kind=output.kind,hasTag=output.hasTag,
+              label=type(output.label)=="string" and output.label:sub(1,512) or ""} end
+            return self:count({size=output.size or output.amount})
+          end)
           if not precise then cancel.rethrow(count) end
           if precise then
-            cpu.output={name=tostring(output.name or ""):sub(1,256),label=tostring(output.label or ""):sub(1,512),quantity=count}
+            local represented,visual=pcall(function()
+            local visual={name=tostring(output.name or ""):sub(1,256),label=tostring(output.label or ""):sub(1,512),quantity=count}
             -- finalOutput already supplies this descriptor; retain only small
             -- visual identity fields, never NBT payloads or another ME query.
             local kind=output.kind
@@ -289,12 +296,18 @@ function M.new(me,config)
               elseif output.amount~=nil and type(output.hasTag)=="boolean" then kind="fluid" end
             end
             if kind=="item" or kind=="fluid" or kind=="essentia" then
-              cpu.output.kind=kind
-              if kind=="item" and type(output.damage)=="number" and output.damage%1==0 and output.damage>=0 and output.damage<=2147483647 then cpu.output.damage=output.damage end
+              visual.kind=kind
+              if kind=="item" and type(output.damage)=="number" and output.damage%1==0 and output.damage>=0 and output.damage<=2147483647 then visual.damage=output.damage end
               local tag=output.hasTag
-              if tag==true or tag==1 or output.tag~=nil then cpu.output.has_tag=true
-              elseif tag==false or tag==0 then cpu.output.has_tag=false end
+              if tag==true or tag==1 or output.tag~=nil then visual.has_tag=true
+              elseif tag==false or tag==0 then visual.has_tag=false end
             end
+            assert(#visual.name>0,"CPU output registry unavailable")
+            json.encode(visual,8192)
+            return visual
+            end)
+            if not represented then cancel.rethrow(visual) end
+            if represented then cpu.output=visual else cpu.output_unavailable="output metadata unavailable" end
           else cpu.output_unavailable="quantity precision unavailable" end
         else cpu.output_unavailable=ok and tostring(reason or "output unavailable"):sub(1,256) or "monitor unavailable" end
       elseif cpu.busy then cpu.output_unavailable="monitor unavailable" end

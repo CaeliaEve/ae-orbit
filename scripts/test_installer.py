@@ -347,6 +347,18 @@ class InstallerTests(unittest.TestCase):
         updater("github", COMMIT)
         self.assertInstalled()
 
+    def test_fresh_backend_installer_repairs_module_omitted_by_old_manifest(self):
+        old_source = (ROOT / "oc/install.lua").read_text(encoding="utf-8").replace(
+            '  {"lib/aeorbit/cpu_details.lua", "/lib/aeorbit/cpu_details.lua"},\n', '')
+        self.assertNotIn('"lib/aeorbit/cpu_details.lua"', old_source)
+        # A previous locally saved installer cannot discover new manifest entries.
+        self.oc.lua.compile(old_source)(self.oc.service_origin)
+        self.assertTrue(self.oc.path('/lib/aeorbit/adapter.lua').exists())
+        self.assertFalse(self.oc.path('/lib/aeorbit/cpu_details.lua').exists())
+        self.oc.install(self.oc.service_origin)
+        self.assertInstalled()
+        self.assertTrue(self.oc.path('/lib/aeorbit/cpu_details.lua').exists())
+
     def test_http_error_does_not_replace_any_program_or_leave_staging_files(self):
         self.oc.seed_upgrade()
         before = self.oc.snapshot()
