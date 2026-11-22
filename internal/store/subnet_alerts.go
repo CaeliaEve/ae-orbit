@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"encoding/json"
 	"time"
 
 	"github.com/CaeliaEve/ae-orbit/internal/protocol"
@@ -55,21 +54,20 @@ func acceptSubnetSample(ctx context.Context, tx pgx.Tx, subnet, session string, 
 	return evaluateSubnetRules(ctx, tx, subnet, r.ItemID, *r.Quantity, now)
 }
 func evaluateSubnetRules(ctx context.Context, tx pgx.Tx, subnet, item string, quantity protocol.Quantity, now time.Time) error {
-	rows, err := tx.Query(ctx, `SELECT r.id,r.kind,r.threshold,r.recover,r.duration_seconds,r.since,r.notification,r.member_id FROM subnet_rules r JOIN members m ON m.id=r.member_id JOIN monitored_subnets n ON n.id=r.subnet_id WHERE r.subnet_id=$1 AND r.item_id=$2 AND r.enabled AND NOT m.revoked AND (m.is_admin OR EXISTS(SELECT 1 FROM networks net JOIN network_grants g ON g.network_id=net.id WHERE net.server_group=n.server_group AND g.member_id=m.id)) ORDER BY r.id FOR UPDATE OF r`, subnet, item)
+	rows, err := tx.Query(ctx, `SELECT r.id,r.kind,r.threshold,r.recover,r.duration_seconds,r.since FROM subnet_rules r JOIN members m ON m.id=r.member_id JOIN monitored_subnets n ON n.id=r.subnet_id WHERE r.subnet_id=$1 AND r.item_id=$2 AND r.enabled AND NOT m.revoked AND (m.is_admin OR EXISTS(SELECT 1 FROM networks net JOIN network_grants g ON g.network_id=net.id WHERE net.server_group=n.server_group AND g.member_id=m.id)) ORDER BY r.id FOR UPDATE OF r`, subnet, item)
 	if err != nil {
 		return err
 	}
 	type rule struct {
-		id, kind, member   string
+		id, kind           string
 		threshold, recover int64
 		duration           int
 		since              *time.Time
-		notification       []byte
 	}
 	rs := []rule{}
 	for rows.Next() {
 		var r rule
-		if err = rows.Scan(&r.id, &r.kind, &r.threshold, &r.recover, &r.duration, &r.since, &r.notification, &r.member); err != nil {
+		if err = rows.Scan(&r.id, &r.kind, &r.threshold, &r.recover, &r.duration, &r.since); err != nil {
 			rows.Close()
 			return err
 		}
@@ -101,21 +99,9 @@ func evaluateSubnetRules(ctx context.Context, tx pgx.Tx, subnet, item string, qu
 			continue
 		}
 		id := newID()
-		tag, err := tx.Exec(ctx, `INSERT INTO subnet_alerts(id,rule_id,quantity,state,triggered_at) VALUES($1,$2,$3,'active',$4) ON CONFLICT(rule_id) WHERE state='active' DO NOTHING`, id, r.id, int64(quantity), now)
+		_, err := tx.Exec(ctx, `INSERT INTO subnet_alerts(id,rule_id,quantity,state,triggered_at) VALUES($1,$2,$3,'active',$4) ON CONFLICT(rule_id) WHERE state='active' DO NOTHING`, id, r.id, int64(quantity), now)
 		if err != nil {
 			return err
-		}
-		if tag.RowsAffected() == 0 {
-			continue
-		}
-		var target *protocol.QQNotification
-		if len(r.notification) > 0 {
-			if err = json.Unmarshal(r.notification, &target); err != nil {
-				return err
-			}
-		}
-		if target == nil {
-			continue
 		}
 		// Notifications are queued together after all accepted samples in this poll.
 	}
@@ -134,7 +120,7 @@ func queueSubnetNotifications(ctx context.Context, tx pgx.Tx, subnet string) err
  SELECT server_group,subnet,member_id,notification,batch,md5(string_agg(id,',' ORDER BY id)) source,
  jsonb_agg(jsonb_build_object('item',label,'registry',registry,'quantity',quantity::text,'unit',CASE WHEN kind='fluid' THEN 'mB' ELSE '件' END,'rule',rule,'threshold',threshold::text) ORDER BY id) items
  FROM pending GROUP BY server_group,subnet,member_id,notification,batch
- ) SELECT qq_enqueue(server_group,NULL,member_id,'subnet-batch:'||source,'subnet',notification->>'group_id',coalesce(notification->>'recipient',''),coalesce((notification->>'private_copy')::boolean,false),jsonb_build_object('title','子网库存预警','subnet',subnet,'items',items)) FROM grouped`, subnet)
+ ) SELECT qq_enqueue(server_group,NULL,member_id,'subnet-batch:'||source,'subnet',notification->>'group_id',coalesce(notification->>'recipient',''),coalesce((notification->>'private_copy')::boolean,false),jsonb_build_object('title','子网库存预警','subnet',subnet,'items',items)||CASE WHEN notification ? 'recipients' THEN jsonb_build_object('recipients',notification->'recipients') ELSE '{}'::jsonb END) FROM grouped`, subnet)
 	if err != nil {
 		return err
 	}

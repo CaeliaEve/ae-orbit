@@ -50,11 +50,15 @@ func TestSubnetExactLifecycleAndAlerts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, item := range []string{first, second} {
+	for i, item := range []string{first, second} {
 		if err = s.AddSubnetItem(ctx, a.ID, n.ServerGroup, id, item); err != nil {
 			t.Fatal(err)
 		}
-		_, err = s.SetSubnetRule(ctx, a.ID, n.ServerGroup, id, "", store.SubnetRuleInput{ItemID: item, Kind: "low", Threshold: 100, Recover: 120, Enabled: true, Notification: &protocol.QQNotification{GroupID: "1081348823"}})
+		target := store.SubnetNotification{QQNotification: protocol.QQNotification{GroupID: "1081348823"}, Recipients: []string{"987654321", "123456789", "987654321"}}
+		if i == 1 {
+			target.Recipients = []string{"123456789", "987654321"}
+		}
+		_, err = s.SetSubnetRule(ctx, a.ID, n.ServerGroup, id, "", store.SubnetRuleInput{ItemID: item, Kind: "low", Threshold: 100, Recover: 120, Enabled: true, Notification: &target})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -99,10 +103,14 @@ func TestSubnetExactLifecycleAndAlerts(t *testing.T) {
 		t.Fatal("same poll not combined", deliveries, e)
 	}
 	var payload struct {
-		Items []json.RawMessage `json:"items"`
+		Items      []json.RawMessage `json:"items"`
+		Recipients []string          `json:"recipients"`
 	}
 	if e = json.Unmarshal(deliveries[0].Payload, &payload); e != nil || len(payload.Items) != 2 {
 		t.Fatal("batch values missing", e)
+	}
+	if strings.Join(payload.Recipients, ",") != "123456789,987654321" || deliveries[0].Recipient != "" {
+		t.Fatal("expected one delivery with distinct group mentions", deliveries[0], payload.Recipients)
 	}
 	replay, e := s.SubnetPoll(ctx, auth, poll)
 	if e != nil || len(replay.Reads) != 0 || replay.Budget != 0 {

@@ -1,3 +1,4 @@
+import {bindSubnetQQRecipients, subnetQQRecipientFields} from './subnet-qq-recipients.mjs';
 import {pluginCardHTML} from './plugin-ui.mjs';
 import {formatQuantity} from './model.mjs';
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -117,12 +118,98 @@ ae-orbit start</pre><p>启动后回到子网页面，选择实际 ME 组件，�
    await request(captured+'/items/'+itemID+'/keywords',{method:'PUT',body:{keywords}});d.close();await refresh();toast('QQ 关键词已保存');
   }catch(error){d.querySelector('[data-error]').textContent=error.message}finally{b.disabled=false}};
  }
- async function editRule(itemID){const item=view.items.find(i=>i.id===itemID),existing=view.rules.filter(r=>r.item_id===itemID&&r.member_id===member().id),captured=base()+'/'+selected;
-  const version=generation;const cfg=await request(`/api/v1/monitoring/groups/${encodeURIComponent(group)}/qq`),groups=cfg.groups.filter(g=>g.enabled),current=existing.find(r=>r.enabled)||existing[0];
-  if(version!==generation||captured!==base()+'/'+selected)return;const d=dialog('库存预警 · '+item.label,`<form class="qq-chooser"><input type="hidden" name="item_id" value="${itemID}"><label>规则<select name="kind">${Object.entries(rules).map(([k,v])=>`<option value="${k}"${current?.kind===k?' selected':''}>${v}</option>`).join('')}</select></label><label>触发数量（${item.kind==='fluid'?'mB':'件'}）<input name="threshold" inputmode="numeric" value="${current?.threshold||'1000'}" required></label><label>解除数量<input name="recover" inputmode="numeric" value="${current?.recover||'1500'}" required></label><label>持续秒数（0 立即）<input name="duration" type="number" min="0" max="3600" value="${current?.duration_seconds??3}"></label><label>QQ 通知群<select name="group"><option value="">仅站内预警</option>${groups.map(g=>`<option value="${g.group_id}"${current?.notification?.group_id===g.group_id?' selected':''}>${esc(g.name||g.group_id)}</option>`).join('')}</select></label><label>@ QQ（留空普通播报）<input name="recipient" inputmode="numeric" value="${esc(current?.notification?.recipient||'')}"></label><p class="muted">每次越界只预警一次，恢复不播报。失败或过期数据不会判为零。</p><p class="error" data-error></p><button class="primary">保存预警</button></form><div class="subnet-rule-list">${existing.filter(r=>r.enabled).map(r=>`<button class="text-button" data-remove-rule="${r.id}">关闭${rules[r.kind]}预警</button>`).join('')}</div>`);
-  d.querySelector('form').onsubmit=async e=>{e.preventDefault();try{const f=new FormData(e.target),body=subnetRuleValues(f),prior=existing.find(r=>r.kind===body.kind);body.revision=prior?.revision||0;body.notification=f.get('group')?{group_id:f.get('group'),recipient:String(f.get('recipient')).trim(),private_copy:false}:null;await request(captured+'/rules'+(prior?'/'+prior.id:''),{method:prior?'PUT':'POST',body});d.close();await refresh();toast('库存预警已保存')}catch(error){d.querySelector('[data-error]').textContent=error.message}};
-  d.querySelectorAll('[data-remove-rule]').forEach(b=>b.onclick=async()=>{try{await request(captured+'/rules/'+b.dataset.removeRule,{method:'DELETE'});d.close();await refresh()}catch(e){toast(e.message,true)}});
+ async function editRule(itemID) {
+  const item = view.items.find(i => i.id === itemID);
+  const existing = view.rules.filter(r => r.item_id === itemID && r.member_id === member().id);
+  const captured = base() + '/' + selected;
+  const version = generation;
+  const qqPath = `/api/v1/monitoring/groups/${encodeURIComponent(group)}/qq`;
+  const cfg = await request(qqPath);
+  if (version !== generation || captured !== base() + '/' + selected) return;
+
+  const groups = cfg.enabled && cfg.catalog_ready ? cfg.groups.filter(g => g.enabled) : [];
+  const current = existing.find(r => r.enabled) || existing[0];
+  const d = dialog('库存预警 · ' + item.label, `<form class="qq-chooser">
+    <input type="hidden" name="item_id" value="${esc(itemID)}">
+    <label>规则<select name="kind">${Object.entries(rules).map(([kind, label]) => `<option value="${kind}">${label}</option>`).join('')}</select></label>
+    <label>触发数量（${item.kind === 'fluid' ? 'mB' : '件'}）<input name="threshold" inputmode="numeric" required></label>
+    <label>解除数量<input name="recover" inputmode="numeric" required></label>
+    <label>持续秒数（0 立即）<input name="duration" type="number" min="0" max="3600"></label>
+    <label>QQ 通知群<select name="group"><option value="">仅站内预警</option>${groups.map(g => `<option value="${esc(g.group_id)}">${esc(g.name || g.group_id)}</option>`).join('')}</select></label>
+    <p class="muted" data-subnet-qq-unavailable hidden></p>
+    ${subnetQQRecipientFields()}
+    <p class="muted">每次越界只预警一次，恢复不播报。失败或过期数据不会判为零。</p>
+    <p class="error" data-error role="alert"></p><button class="primary" type="submit">保存预警</button>
+  </form><div class="subnet-rule-list">${existing.filter(r => r.enabled).map(r => `<button class="text-button" data-remove-rule="${esc(r.id)}">关闭${rules[r.kind]}预警</button>`).join('')}</div>`);
+
+  const form = d.querySelector('form');
+  const fields = form.elements;
+  const submit = form.querySelector('[type="submit"]');
+  const notice = form.querySelector('[data-subnet-qq-unavailable]');
+  const error = form.querySelector('[data-error]');
+  const picker = bindSubnetQQRecipients(d, (groupID, force) => request(
+    `${qqPath}/groups/${encodeURIComponent(groupID)}/members`,
+    force ? {method:'POST', body:{}} : undefined
+  ), fields.group);
+
+  function loadRule(kind) {
+    const prior = existing.find(r => r.kind === kind);
+    const target = prior?.notification;
+    const allowed = groups.some(g => g.group_id === target?.group_id);
+    fields.kind.value = kind;
+    fields.threshold.value = prior?.threshold ?? (kind === 'zero' ? '0' : '1000');
+    fields.threshold.disabled = kind === 'zero';
+    fields.recover.value = prior?.recover ?? (kind === 'high' ? '500' : kind === 'zero' ? '1' : '1500');
+    fields.duration.value = prior?.duration_seconds ?? 3;
+    fields.group.value = allowed ? target.group_id : '';
+    notice.hidden = groups.length > 0 && (!target || allowed);
+    notice.textContent = target && !allowed
+      ? '之前的通知群已不可用。保存前请重新选群，或选择仅站内预警。'
+      : '可在 MaiBot 中授权通知群，或直接保存站内预警。';
+    picker.reset(allowed ? [...(target.recipients || []), ...(target.recipient ? [target.recipient] : [])] : []);
+    error.textContent = '';
+  }
+  fields.kind.onchange = () => loadRule(fields.kind.value);
+  loadRule(current?.kind || 'low');
+
+  form.onsubmit = async event => {
+    event.preventDefault();
+    submit.disabled = true;
+    error.textContent = '';
+    try {
+      if (version !== generation || captured !== base() + '/' + selected) throw Error('子网已变化，请重新打开。');
+      const values = new FormData(form);
+      if (fields.threshold.disabled) values.set('threshold', '0');
+      const body = subnetRuleValues(values);
+      const prior = existing.find(r => r.kind === body.kind);
+      body.revision = prior?.revision || 0;
+      body.notification = picker.collect();
+      if (prior?.notification?.private_copy && body.notification && body.notification.recipient === prior.notification.recipient &&
+          body.notification.group_id === prior.notification.group_id && cfg.allow_private) {
+        body.notification.private_copy = true;
+      }
+      await request(captured + '/rules' + (prior ? '/' + prior.id : ''), {method: prior ? 'PUT' : 'POST', body});
+      d.close();
+      await refresh();
+      toast('库存预警已保存');
+    } catch (e) {
+      error.textContent = e.message;
+    } finally {
+      submit.disabled = false;
+    }
+  };
+  d.querySelectorAll('[data-remove-rule]').forEach(button => {
+    button.onclick = async () => {
+      try {
+        if (version !== generation || captured !== base() + '/' + selected) throw Error('子网已变化，请重新打开。');
+        await request(captured + '/rules/' + button.dataset.removeRule, {method:'DELETE'});
+        d.close();
+        await refresh();
+      } catch (e) { toast(e.message, true); }
+    };
+  });
  }
+
  root.addEventListener('input',e=>{if(e.target.matches('[data-monitor-search]')){itemSearch=e.target.value;render()}});
  root.addEventListener('change',e=>{if(e.target.matches('[data-subnet-switch]')){generation++;loading=false;selected=e.target.value;view=null;itemSearch='';itemFilter='all';void refresh()}});
  root.addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;if(b.dataset.itemSettings){itemSettings(b.dataset.itemSettings)}else if(b.dataset.subnetFilter){itemFilter=b.dataset.subnetFilter;render()}else if(b.dataset.subnetSelect){generation++;loading=false;selected=b.dataset.subnetSelect;view=null;void refresh()}else if(b.hasAttribute('data-subnet-create'))void openConfig(true);else if(b.hasAttribute('data-subnet-config'))void openConfig();else if(b.hasAttribute('data-subnet-add'))addItems();else if(b.dataset.removeItem){void request(base()+'/'+selected+'/items/'+b.dataset.removeItem,{method:'DELETE'}).then(refresh).catch(e=>toast(e.message,true))}else if(b.dataset.keywordsItem)void editKeywords(b.dataset.keywordsItem).catch(e=>toast(e.message,true));else if(b.dataset.ruleItem)void editRule(b.dataset.ruleItem).catch(e=>toast(e.message,true));else if(b.dataset.historyItem){const captured=base()+'/'+selected,item=view.items.find(i=>i.id===b.dataset.historyItem);void request(captured+'/history/'+item.id).then(xs=>dialog('库存趋势 · '+item.label,subnetHistoryHTML(xs))).catch(e=>toast(e.message,true))}});

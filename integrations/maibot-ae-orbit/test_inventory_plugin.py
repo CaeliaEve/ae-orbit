@@ -18,6 +18,7 @@ except ImportError:
         setattr(sdk, name, decorator)
     for name in ["MaiBotPlugin", "PluginConfigBase", "ConfigWidget", "ConfigWidgetState"]:
         setattr(sdk, name, type(name, (), {"__init__": lambda self, **kwargs: None}))
+    sdk.MaiBotPlugin.ctx = property(lambda self: self._ctx)
     sdk.Field = lambda **kwargs: None
     sys.modules["maibot_sdk"] = sdk
     types_sdk = types.ModuleType("maibot_sdk.types")
@@ -105,6 +106,43 @@ class InventoryPluginTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.plugin.inventory_message(self.message))["action"],"continue")
         self.message["raw_message"]=[{"type": "image", "data": "燃料"}]
         self.assertEqual((await self.plugin.inventory_message(self.message))["action"],"continue")
+
+    async def test_subnet_alert_sends_one_group_message_with_confirmed_mentions(self):
+        group_id = "1081348823"
+        confirmed = ["11111111", "22222222"]
+        unconfirmed = "33333333"
+        messages, receipts = [], []
+
+        async def lookup(name, *, version, group_id, user_id, no_cache):
+            self.assertEqual(name, "adapter.snowluma.group.get_group_member_info")
+            return {"user_id": int(user_id), "group_id": int(group_id) if user_id in confirmed else 99999999}
+
+        async def send(action, params):
+            messages.append((action, params))
+            return {"message_id": 123}
+
+        async def flush():
+            pass
+
+        self.plugin._ctx = types.SimpleNamespace(api=types.SimpleNamespace(call=lookup))
+        self.plugin._journal = types.SimpleNamespace(
+            started=lambda delivery: None,
+            completed=lambda delivery_id, receipt: receipts.append((delivery_id, receipt)),
+        )
+        self.plugin._flush_receipts = flush
+        self.plugin._qq = send
+        self.plugin._available_groups = [{"group_id": group_id}]
+        delivery = {
+            "id": "delivery", "attempt_id": "attempt", "channel": "group", "group_id": group_id,
+            "recipient": "", "kind": "subnet", "payload": {"recipients": [*confirmed, unconfirmed, confirmed[0]]},
+        }
+        await self.plugin._deliver(delivery)
+        self.assertEqual(len(messages), 1)
+        action, params = messages[0]
+        self.assertEqual((action, params["message_type"], params["group_id"]), ("send_msg", "group", group_id))
+        self.assertEqual([s["data"]["qq"] for s in params["message"] if s["type"] == "at"], confirmed)
+        self.assertEqual(receipts[0][1]["state"], "confirmed")
+        self.assertIn("1 位", receipts[0][1]["detail"])
 
 if __name__ == "__main__":
     unittest.main()

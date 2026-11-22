@@ -2,6 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {subnetItemsHTML,subnetRuleValues,subnetHistoryHTML,subnetDiscoveryStatusHTML,subnetKeywordValues} from '../src/subnet-monitor.mjs';
 import {availableNavigation,partitionNavigation} from '../src/navigation.mjs';
+import {subnetQQRecipients} from '../src/subnet-qq-recipients.mjs';
+
+test('subnet mentions accept selected and manual QQ numbers without duplicates',()=>{
+ assert.deepEqual(subnetQQRecipients(['123456789','987654321','123456789']),['123456789','987654321']);
+ assert.throws(()=>subnetQQRecipients(['123456789','all']),/有效 QQ 号/);
+ assert.throws(()=>subnetQQRecipients(Array.from({length:11},(_,i)=>String(123450+i))),/最多 @ 10/);
+});
 
 test('zero remains known, failed and stale observations retain unknown state',()=>{
  const item={id:'x',label:'水',name:'water',kind:'fluid',quantity:'0',known:true};

@@ -44,7 +44,7 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(len(text.splitlines()), 3)
         self.assertIn("钢板：0 件（归零）", text)
         self.assertIn("硫酸：9007199254740993 mB", text)
-        self.assertEqual(bridge.message_segments(delivery, True)[0]["type"], "at")
+        self.assertEqual(bridge.message_segments(delivery, [delivery["recipient"]])[0]["type"], "at")
 
     def test_channel_policy_persists_and_rejects_invalid_targets(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -74,11 +74,11 @@ class BridgeTests(unittest.TestCase):
     def test_mention_uses_structured_segment_and_keeps_quantity(self):
         delivery = {"id": "abcd1234", "channel": "group", "recipient": "12345678",
                     "payload": {"title": "合成完成", "item": "流体", "quantity": "9007199254740993", "unit": "mB"}}
-        segments = bridge.message_segments(delivery, True)
+        segments = bridge.message_segments(delivery, [delivery["recipient"]])
         self.assertEqual(segments[0], {"type": "at", "data": {"qq": "12345678"}})
         self.assertIn("9007199254740993", segments[-1]["data"]["text"])
         delivery["channel"] = "private"
-        self.assertEqual(bridge.message_segments(delivery, True)[0]["type"], "text")
+        self.assertEqual(bridge.message_segments(delivery, [delivery["recipient"]])[0]["type"], "text")
 
     def test_power_formats_exact_eu_and_stale_observation(self):
         energy={"status":"online","stored_eu":"9007199254740993","capacity_eu":"18014398509481986","percent":"50.00","observed_at":"2026-11-21T14:00:00Z","flow":{"input_eut":"1000","output_eut":"2000","loss_eut":"10"}}

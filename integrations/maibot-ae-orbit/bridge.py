@@ -241,10 +241,25 @@ def notification_text(delivery: Dict[str, Any]) -> str:
     return "\n".join(lines)[:1600]
 
 
-def message_segments(delivery: Dict[str, Any], mention: bool) -> List[Dict[str, Any]]:
+def delivery_recipients(delivery: Dict[str, Any]) -> List[str]:
+    if delivery["channel"] != "group":
+        return []
+    candidates = [delivery.get("recipient")]
+    if delivery.get("kind") == "subnet":
+        extra = delivery["payload"].get("recipients")
+        if isinstance(extra, list):
+            candidates.extend(extra[:10])
+    return list(dict.fromkeys(qq for qq in candidates if isinstance(qq, str) and re.fullmatch(r"[1-9][0-9]{4,14}", qq)))[:10]
+
+
+def message_segments(delivery: Dict[str, Any], mentions: Iterable[str]) -> List[Dict[str, Any]]:
     segments = []
-    if mention and delivery.get("recipient") and delivery["channel"] == "group":
-        segments.append({"type": "at", "data": {"qq": delivery["recipient"]}})
+    if delivery["channel"] == "group":
+        for qq in mentions:
+            if segments:
+                segments.append({"type": "text", "data": {"text": " "}})
+            segments.append({"type": "at", "data": {"qq": qq}})
+    if segments:
         segments.append({"type": "text", "data": {"text": "\n"}})
     segments.append({"type": "text", "data": {"text": notification_text(delivery)}})
     return segments

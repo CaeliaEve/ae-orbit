@@ -20,7 +20,7 @@ from maibot_sdk import API, Command, HookHandler, ConfigWidget, ConfigWidgetStat
 
 from maibot_sdk.types import HookMode, HookOrder
 
-from .bridge import BridgeClient, ChannelPolicy, ReceiptJournal, message_segments, normalize_channels, notification_text, matching_inventory_keywords
+from .bridge import BridgeClient, ChannelPolicy, ReceiptJournal, delivery_recipients, message_segments, normalize_channels, notification_text, matching_inventory_keywords
 
 
 class ConnectorSettings(PluginConfigBase):
@@ -280,16 +280,18 @@ class AEOrbitPlugin(MaiBotPlugin):
         await self._http(f"/bridge/qq/v1/deliveries/{delivery['id']}/begin", {"attempt_id": delivery["attempt_id"]})
         receipt = {"attempt_id": delivery["attempt_id"], "state": "uncertain", "external_id": "", "detail": ""}
         try:
-            mention = False
-            note = ""
-            if delivery["recipient"] and delivery["channel"] == "group":
+            recipients = delivery_recipients(delivery)
+            confirmed = []
+            for recipient in recipients:
                 try:
-                    info = await self.ctx.api.call("adapter.snowluma.group.get_group_member_info", version="1", group_id=delivery["group_id"], user_id=delivery["recipient"], no_cache=True)
-                    mention = isinstance(info, dict) and str(info.get("user_id")) == delivery["recipient"] and str(info.get("group_id")) == delivery["group_id"]
-                    if not mention: note = "接收人群身份未确认，改为普通播报"
+                    info = await self.ctx.api.call("adapter.snowluma.group.get_group_member_info", version="1", group_id=delivery["group_id"], user_id=recipient, no_cache=True)
+                    if isinstance(info, dict) and str(info.get("user_id")) == recipient and str(info.get("group_id")) == delivery["group_id"]:
+                        confirmed.append(recipient)
                 except Exception:
-                    note = "接收人群身份查询失败，改为普通播报"
-            params = {"message_type": delivery["channel"], "message": message_segments(delivery, mention)}
+                    continue
+            skipped = len(recipients) - len(confirmed)
+            note = f"{skipped} 位接收人的群身份未确认，已跳过 @" if skipped else ""
+            params = {"message_type": delivery["channel"], "message": message_segments(delivery, confirmed)}
             params["group_id" if delivery["channel"] == "group" else "user_id"] = delivery["group_id"] if delivery["channel"] == "group" else delivery["recipient"]
             # SnowLuma's adapter validates the real group message sequence.
             data = await self._qq("send_msg", params)

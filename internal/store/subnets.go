@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -63,15 +64,52 @@ type SubnetItem struct {
 	Keywords []string           `json:"keywords"`
 }
 type SubnetRuleInput struct {
-	ItemID       string                   `json:"item_id"`
-	Kind         string                   `json:"kind"`
-	Threshold    protocol.Quantity        `json:"threshold"`
-	Recover      protocol.Quantity        `json:"recover"`
-	Duration     int                      `json:"duration_seconds"`
-	Enabled      bool                     `json:"enabled"`
-	Revision     int64                    `json:"revision"`
-	Notification *protocol.QQNotification `json:"notification"`
+	ItemID       string              `json:"item_id"`
+	Kind         string              `json:"kind"`
+	Threshold    protocol.Quantity   `json:"threshold"`
+	Recover      protocol.Quantity   `json:"recover"`
+	Duration     int                 `json:"duration_seconds"`
+	Enabled      bool                `json:"enabled"`
+	Revision     int64               `json:"revision"`
+	Notification *SubnetNotification `json:"notification"`
 }
+
+// SubnetNotification accepts the original single-recipient format and an
+// optional list of group mentions. Order is normalized for alert batching.
+type SubnetNotification struct {
+	protocol.QQNotification
+	Recipients []string `json:"recipients,omitempty"`
+}
+
+func normalizeSubnetNotification(in SubnetNotification) (SubnetNotification, error) {
+	if in.QQNotification.Validate() != nil || len(in.Recipients) > 10 {
+		return in, ErrInvalid
+	}
+	recipients := make([]string, 0, len(in.Recipients)+1)
+	if in.Recipient != "" {
+		recipients = append(recipients, in.Recipient)
+	}
+	for _, recipient := range in.Recipients {
+		if !protocol.QQNumberValid(recipient) {
+			return in, ErrInvalid
+		}
+		recipients = append(recipients, recipient)
+	}
+	slices.Sort(recipients)
+	recipients = slices.Compact(recipients)
+	if len(recipients) > 10 || (in.PrivateCopy && len(recipients) != 1) {
+		return in, ErrInvalid
+	}
+	in.Recipients = nil
+	if len(recipients) > 1 {
+		in.Recipient = ""
+		in.Recipients = recipients
+	} else if len(recipients) == 1 {
+		in.Recipient = recipients[0]
+	}
+	return in, nil
+}
+
 type SubnetRule struct {
 	SubnetRuleInput
 	ID       string `json:"id"`
@@ -515,9 +553,11 @@ func (s *Store) SetSubnetRule(ctx context.Context, member, group, subnet, id str
 			return ErrNotFound
 		}
 		if in.Notification != nil {
-			if in.Notification.Validate() != nil {
-				return ErrInvalid
+			notification, err := normalizeSubnetNotification(*in.Notification)
+			if err != nil {
+				return err
 			}
+			in.Notification = &notification
 			if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM qq_connectors c JOIN qq_groups g ON g.server_group=c.server_group WHERE c.server_group=$1 AND c.enabled AND c.catalog_ready AND g.enabled AND g.group_id=$2 AND (NOT $3 OR c.allow_private))`, group, in.Notification.GroupID, in.Notification.PrivateCopy).Scan(&exists); err != nil {
 				return err
 			}
