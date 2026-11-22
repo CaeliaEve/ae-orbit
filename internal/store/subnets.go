@@ -20,31 +20,33 @@ type SubnetPlugin struct {
 	Plugin   plugins.Manifest `json:"plugin"`
 }
 type SubnetInput struct {
-	Name     string `json:"name"`
-	Address  string `json:"component_address"`
-	Location string `json:"location"`
-	Enabled  bool   `json:"enabled"`
-	Interval int    `json:"interval_seconds"`
-	History  int    `json:"history_seconds"`
-	Stale    int    `json:"stale_seconds"`
-	Revision int64  `json:"revision"`
+	Name          string `json:"name"`
+	Address       string `json:"component_address"`
+	Location      string `json:"location"`
+	Enabled       bool   `json:"enabled"`
+	Interval      int    `json:"interval_seconds"`
+	History       int    `json:"history_seconds"`
+	Stale         int    `json:"stale_seconds"`
+	Revision      int64  `json:"revision"`
+	DiscoveryMode string `json:"discovery_mode"`
 }
 type Subnet struct {
-	ID          string             `json:"id"`
-	Collector   string             `json:"collector_id"`
-	Name        string             `json:"name"`
-	Address     string             `json:"component_address"`
-	Location    string             `json:"location"`
-	Enabled     bool               `json:"enabled"`
-	Interval    int                `json:"interval_seconds"`
-	History     int                `json:"history_seconds"`
-	Stale       int                `json:"stale_seconds"`
-	Revision    int64              `json:"revision"`
-	Online      bool               `json:"online"`
-	Seen        *time.Time         `json:"last_seen,omitempty"`
-	Components  []MonitorComponent `json:"components"`
-	Count       int                `json:"item_count"`
-	CycleMillis int64              `json:"cycle_millis"`
+	ID            string             `json:"id"`
+	Collector     string             `json:"collector_id"`
+	Name          string             `json:"name"`
+	Address       string             `json:"component_address"`
+	Location      string             `json:"location"`
+	Enabled       bool               `json:"enabled"`
+	Interval      int                `json:"interval_seconds"`
+	History       int                `json:"history_seconds"`
+	Stale         int                `json:"stale_seconds"`
+	Revision      int64              `json:"revision"`
+	Online        bool               `json:"online"`
+	Seen          *time.Time         `json:"last_seen,omitempty"`
+	Components    []MonitorComponent `json:"components"`
+	Count         int                `json:"item_count"`
+	CycleMillis   int64              `json:"cycle_millis"`
+	DiscoveryMode string             `json:"discovery_mode"`
 }
 type SubnetCatalogItem struct {
 	ID string `json:"id"`
@@ -251,7 +253,7 @@ func (s *Store) subnetCatalogMeta(v *SubnetCatalogItem) {
 	v.Catalog = &p
 }
 func validSubnet(in SubnetInput) bool {
-	return strings.TrimSpace(in.Name) != "" && monitorText(in.Name, 128) && monitorText(in.Location, 128) && (in.Address == "" || componentAddress.MatchString(in.Address)) && in.Interval >= 1 && in.Interval <= 3600 && in.History >= 5 && in.History <= 3600 && in.Stale >= max(10, in.Interval*3) && in.Stale <= 10800 && in.Revision >= 0
+	return (in.DiscoveryMode == "" || in.DiscoveryMode == "exact" || in.DiscoveryMode == "native") && strings.TrimSpace(in.Name) != "" && monitorText(in.Name, 128) && monitorText(in.Location, 128) && (in.Address == "" || componentAddress.MatchString(in.Address)) && in.Interval >= 1 && in.Interval <= 3600 && in.History >= 5 && in.History <= 3600 && in.Stale >= max(10, in.Interval*3) && in.Stale <= 10800 && in.Revision >= 0
 }
 func (s *Store) CreateSubnet(ctx context.Context, member, group string, in SubnetInput) (string, string, error) {
 	if err := s.RequireAdmin(ctx, member); err != nil {
@@ -265,6 +267,10 @@ func (s *Store) CreateSubnet(ctx context.Context, member, group string, in Subne
 	}
 	id, collector, token := newID(), newID(), newToken("ac_sub_")
 	h := hashToken(token)
+	mode := in.DiscoveryMode
+	if mode == "" {
+		mode = "exact"
+	}
 	err := s.monitorTransaction(ctx, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `SELECT name FROM server_groups WHERE name=$1 FOR UPDATE`, group); err != nil {
 			return err
@@ -286,7 +292,7 @@ func (s *Store) CreateSubnet(ctx context.Context, member, group string, in Subne
 		if _, err := tx.Exec(ctx, `INSERT INTO monitor_collectors(id,server_group,name,token_hash,purpose) VALUES($1,$2,$3,$4,'subnet')`, collector, group, in.Name, h[:]); err != nil {
 			return err
 		}
-		_, err := tx.Exec(ctx, `INSERT INTO monitored_subnets(id,server_group,collector_id,name,component_address,location,enabled,interval_seconds,history_seconds,stale_seconds) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, id, group, collector, in.Name, in.Address, in.Location, in.Enabled, in.Interval, in.History, in.Stale)
+		_, err := tx.Exec(ctx, `INSERT INTO monitored_subnets(id,server_group,collector_id,name,component_address,location,enabled,interval_seconds,history_seconds,stale_seconds,discovery_mode) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, id, group, collector, in.Name, in.Address, in.Location, in.Enabled, in.Interval, in.History, in.Stale, mode)
 		return err
 	})
 	return id, token, err
@@ -298,7 +304,7 @@ func (s *Store) Subnets(ctx context.Context, member, group string) ([]Subnet, er
 	return s.subnets(ctx, group)
 }
 func (s *Store) subnets(ctx context.Context, group string) ([]Subnet, error) {
-	rows, err := s.pool.Query(ctx, `SELECT n.id,n.collector_id,n.name,n.component_address,n.location,n.enabled,n.interval_seconds,n.history_seconds,n.stale_seconds,n.revision,coalesce(c.last_seen>now()-n.stale_seconds*interval '1 second' AND NOT c.revoked,false),c.last_seen,c.components,(SELECT count(*) FROM subnet_items i WHERE i.subnet_id=n.id AND i.enabled),n.cycle_millis FROM monitored_subnets n JOIN monitor_collectors c ON c.id=n.collector_id WHERE n.server_group=$1 ORDER BY n.created_at,n.id`, group)
+	rows, err := s.pool.Query(ctx, `SELECT n.id,n.collector_id,n.name,n.component_address,n.location,n.enabled,n.interval_seconds,n.history_seconds,n.stale_seconds,n.revision,coalesce(c.last_seen>now()-n.stale_seconds*interval '1 second' AND NOT c.revoked,false),c.last_seen,c.components,(SELECT count(*) FROM subnet_items i WHERE i.subnet_id=n.id AND i.enabled),n.cycle_millis,n.discovery_mode FROM monitored_subnets n JOIN monitor_collectors c ON c.id=n.collector_id WHERE n.server_group=$1 ORDER BY n.created_at,n.id`, group)
 	if err != nil {
 		return nil, err
 	}
@@ -307,7 +313,7 @@ func (s *Store) subnets(ctx context.Context, group string) ([]Subnet, error) {
 	for rows.Next() {
 		var v Subnet
 		var raw []byte
-		if err = rows.Scan(&v.ID, &v.Collector, &v.Name, &v.Address, &v.Location, &v.Enabled, &v.Interval, &v.History, &v.Stale, &v.Revision, &v.Online, &v.Seen, &raw, &v.Count, &v.CycleMillis); err != nil {
+		if err = rows.Scan(&v.ID, &v.Collector, &v.Name, &v.Address, &v.Location, &v.Enabled, &v.Interval, &v.History, &v.Stale, &v.Revision, &v.Online, &v.Seen, &raw, &v.Count, &v.CycleMillis, &v.DiscoveryMode); err != nil {
 			return nil, err
 		}
 		if err = json.Unmarshal(raw, &v.Components); err != nil {
@@ -328,7 +334,7 @@ func (s *Store) UpdateSubnet(ctx context.Context, member, group, id string, in S
 		return ErrInvalid
 	}
 	return s.monitorTransaction(ctx, func(tx pgx.Tx) error {
-		tag, err := tx.Exec(ctx, `UPDATE monitored_subnets SET name=$3,component_address=$4,location=$5,enabled=$6,interval_seconds=$7,history_seconds=$8,stale_seconds=$9,revision=revision+1 WHERE id=$1 AND server_group=$2 AND revision=$10`, id, group, in.Name, in.Address, in.Location, in.Enabled, in.Interval, in.History, in.Stale, in.Revision)
+		tag, err := tx.Exec(ctx, `UPDATE monitored_subnets SET name=$3,component_address=$4,location=$5,enabled=$6,interval_seconds=$7,history_seconds=$8,stale_seconds=$9,discovery_mode=CASE WHEN $11='' THEN discovery_mode ELSE $11 END,revision=revision+1 WHERE id=$1 AND server_group=$2 AND revision=$10`, id, group, in.Name, in.Address, in.Location, in.Enabled, in.Interval, in.History, in.Stale, in.Revision, in.DiscoveryMode)
 		if err != nil {
 			return err
 		}

@@ -173,7 +173,7 @@ func (s *Server) subnetRoutes() {
 	}))
 	s.mux.HandleFunc("POST /bridge/subnet/poll", s.monitorDevice(func(w http.ResponseWriter, r *http.Request, a store.MonitorAuth) {
 		var in store.SubnetPoll
-		if e := readJSON(w, r, &in, 16384); e != nil {
+		if e := readJSON(w, r, &in, 65536); e != nil {
 			fail(w, e)
 			return
 		}

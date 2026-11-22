@@ -115,7 +115,7 @@ func (s *Store) allocateAcquisitionRound(ctx context.Context, tx pgx.Tx, group s
 	}
 	subnetIDs := map[string]string{}
 	rows, err = tx.Query(ctx, `SELECT n.id,n.collector_id FROM subnet_read_intents a JOIN monitored_subnets n ON n.id=a.subnet_id JOIN subnet_plugins p ON p.server_group=n.server_group JOIN monitor_collectors c ON c.id=n.collector_id WHERE n.server_group=$1 AND n.enabled AND p.enabled AND NOT c.revoked AND n.component_address<>'' AND a.session_id=c.current_session AND a.last_intent_at>now()-interval '2 seconds' AND (EXISTS(SELECT 1 FROM subnet_items i WHERE i.subnet_id=n.id AND i.enabled AND i.next_read_at<=now() AND (i.assignment_until IS NULL OR i.assignment_until<=now() OR i.assignment_session<>c.current_session OR i.assignment_revision<>n.revision))
- OR EXISTS(SELECT 1 FROM monitor_sessions b WHERE b.id=c.current_session AND b.subnet_discovery_capable AND (
+ OR EXISTS(SELECT 1 FROM monitor_sessions b WHERE b.id=c.current_session AND b.subnet_discovery_capable AND n.discovery_mode='exact' AND (
   NOT EXISTS(SELECT 1 FROM subnet_discovery x WHERE x.subnet_id=n.id AND x.revision=n.revision AND x.completed_at>now()-interval '1 hour')
   OR EXISTS(SELECT 1 FROM subnet_discovery_reads r WHERE r.subnet_id=n.id AND (r.assignment_until IS NULL OR r.assignment_until<=now() OR r.assignment_session<>c.current_session))
   OR EXISTS(SELECT 1 FROM subnet_discovered d WHERE d.subnet_id=n.id AND d.quantity>0 AND d.next_read_at<=now() AND NOT EXISTS(SELECT 1 FROM subnet_items i WHERE i.subnet_id=n.id AND i.item_id=d.item_id AND i.enabled))))) ORDER BY n.id`, group)

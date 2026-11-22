@@ -28,3 +28,9 @@ test('connection, selected rows, and inventory discovery have distinct meanings'
  assert.match(html,/已发现 2 种/);assert.match(html,/12\/120/);assert.match(html,/10.0%/);assert.match(html,/失败 1 项/);
  assert.match(subnetDiscoveryStatusHTML({capable:true},{component_address:'x',online:false}),/离线/);
 });
+test('small subnet mode shows list cadence and failures instead of catalog scan progress',()=>{
+ const n={component_address:'x',online:true};
+ const html=subnetDiscoveryStatusHTML({mode:'native',capable:true,found:23,progress_at:'2026-11-22T12:00:00Z'},n);
+ assert.match(html,/每 30 秒/);assert.match(html,/已发现 23 种/);assert.doesNotMatch(html,/72210|正在发现/);
+ const failed=subnetDiscoveryStatusHTML({mode:'native',capable:true,error:'item:too_many_items'},n);assert.match(failed,/超过 128 种/);
+});

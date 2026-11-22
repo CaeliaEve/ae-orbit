@@ -14,6 +14,7 @@ type SubnetHello struct {
 	BootID           string             `json:"boot_id"`
 	Components       []MonitorComponent `json:"components"`
 	DiscoveryCapable bool               `json:"inventory_discovery,omitempty"`
+	SnapshotCapable  bool               `json:"inventory_snapshot,omitempty"`
 }
 type SubnetRead struct {
 	ItemID       string              `json:"item_id"`
@@ -24,18 +25,19 @@ type SubnetRead struct {
 	Purpose      string              `json:"purpose,omitempty"`
 }
 type SubnetWelcome struct {
-	Session    string       `json:"session_id"`
-	Sequence   int64        `json:"sequence"`
-	SubnetID   string       `json:"subnet_id"`
-	Address    string       `json:"component_address"`
-	Revision   int64        `json:"revision"`
-	Interval   int          `json:"interval_seconds"`
-	PollMillis int          `json:"poll_millis"`
-	Budget     int          `json:"budget"`
-	TTL        int          `json:"grant_ttl_millis"`
-	GrantID    string       `json:"grant_id"`
-	Reads      []SubnetRead `json:"reads"`
-	ItemCount  int          `json:"item_count"`
+	Session    string                    `json:"session_id"`
+	Sequence   int64                     `json:"sequence"`
+	SubnetID   string                    `json:"subnet_id"`
+	Address    string                    `json:"component_address"`
+	Revision   int64                     `json:"revision"`
+	Interval   int                       `json:"interval_seconds"`
+	PollMillis int                       `json:"poll_millis"`
+	Budget     int                       `json:"budget"`
+	TTL        int                       `json:"grant_ttl_millis"`
+	GrantID    string                    `json:"grant_id"`
+	Reads      []SubnetRead              `json:"reads"`
+	ItemCount  int                       `json:"item_count"`
+	Snapshot   *SubnetSnapshotAssignment `json:"snapshot,omitempty"`
 }
 type SubnetResult struct {
 	ItemID       string             `json:"item_id"`
@@ -46,12 +48,13 @@ type SubnetResult struct {
 	Error        string             `json:"error,omitempty"`
 }
 type SubnetPoll struct {
-	Session     string              `json:"session_id"`
-	Sequence    int64               `json:"sequence"`
-	FreeMemory  int64               `json:"free_memory"`
-	Samples     []SubnetResult      `json:"samples"`
-	Components  *[]MonitorComponent `json:"components,omitempty"`
-	CycleMillis int64               `json:"cycle_millis,omitempty"`
+	Session     string                `json:"session_id"`
+	Sequence    int64                 `json:"sequence"`
+	FreeMemory  int64                 `json:"free_memory"`
+	Samples     []SubnetResult        `json:"samples"`
+	Components  *[]MonitorComponent   `json:"components,omitempty"`
+	CycleMillis int64                 `json:"cycle_millis,omitempty"`
+	Snapshot    *SubnetSnapshotResult `json:"snapshot,omitempty"`
 }
 
 func validSubnetComponents(cs []MonitorComponent) bool {
@@ -114,7 +117,7 @@ func (s *Store) SubnetHello(ctx context.Context, a MonitorAuth, h SubnetHello) (
 		if _, err = tx.Exec(ctx, `UPDATE monitor_collectors SET current_session=$2,components=$3,modules='["aeorbit.subnet"]',last_seen=now() WHERE id=$1`, a.ID, w.Session, raw); err != nil {
 			return err
 		}
-		if _, err = tx.Exec(ctx, `UPDATE monitor_sessions SET subnet_discovery_capable=$2 WHERE id=$1`, w.Session, h.DiscoveryCapable); err != nil {
+		if _, err = tx.Exec(ctx, `UPDATE monitor_sessions SET subnet_discovery_capable=$2,subnet_snapshot_capable=$3 WHERE id=$1`, w.Session, h.DiscoveryCapable, h.SnapshotCapable); err != nil {
 			return err
 		}
 		return subnetWelcome(ctx, tx, a, &w)
@@ -124,6 +127,9 @@ func (s *Store) SubnetHello(ctx context.Context, a MonitorAuth, h SubnetHello) (
 func (s *Store) SubnetPoll(ctx context.Context, a MonitorAuth, p SubnetPoll) (SubnetWelcome, error) {
 	var w SubnetWelcome
 	if a.Purpose != "subnet" || !monitorID.MatchString(p.Session) || p.Sequence < 1 || p.Sequence > 1000000000 || p.FreeMemory < 0 || p.FreeMemory > 1<<40 || len(p.Samples) > 16 || p.CycleMillis < 0 || p.CycleMillis > 86400000 || p.Components != nil && !validSubnetComponents(*p.Components) {
+		return w, ErrInvalid
+	}
+	if p.Snapshot != nil && !validSubnetSnapshot(*p.Snapshot) {
 		return w, ErrInvalid
 	}
 	seen := map[string]bool{}
@@ -164,6 +170,7 @@ func (s *Store) SubnetPoll(ctx context.Context, a MonitorAuth, p SubnetPoll) (Su
 				return err
 			}
 			w.Reads = []SubnetRead{}
+			w.Snapshot = nil
 			w.Budget = 0
 			w.GrantID = ""
 			w.TTL = 0
@@ -197,6 +204,11 @@ func (s *Store) SubnetPoll(ctx context.Context, a MonitorAuth, p SubnetPoll) (Su
 		}
 		if p.CycleMillis > 0 {
 			if _, err = tx.Exec(ctx, `UPDATE monitored_subnets SET cycle_millis=$2 WHERE id=$1`, w.SubnetID, p.CycleMillis); err != nil {
+				return err
+			}
+		}
+		if p.Snapshot != nil && enabled {
+			if err = s.acceptNativeSubnetSnapshot(ctx, tx, &w, *p.Snapshot, now); err != nil {
 				return err
 			}
 		}
@@ -247,7 +259,7 @@ func (s *Store) SubnetPoll(ctx context.Context, a MonitorAuth, p SubnetPoll) (Su
 					return err
 				}
 				var discovery bool
-				if err = tx.QueryRow(ctx, `SELECT subnet_discovery_capable FROM monitor_sessions WHERE id=$1`, w.Session).Scan(&discovery); err != nil {
+				if err = tx.QueryRow(ctx, `SELECT b.subnet_discovery_capable AND n.discovery_mode='exact' FROM monitor_sessions b JOIN monitored_subnets n ON n.collector_id=b.collector_id WHERE b.id=$1`, w.Session).Scan(&discovery); err != nil {
 					return err
 				}
 				if discovery {
@@ -256,6 +268,11 @@ func (s *Store) SubnetPoll(ctx context.Context, a MonitorAuth, p SubnetPoll) (Su
 					}
 				}
 				w.Budget = len(w.Reads)
+			}
+		}
+		if enabled && w.Address != "" && p.FreeMemory >= 524288 {
+			if err = nativeSubnetSnapshotAssignment(ctx, tx, &w); err != nil {
+				return err
 			}
 		}
 		body, _ := json.Marshal(w)

@@ -21,6 +21,8 @@ type SubnetDiscoveryStatus struct {
 	Started   *time.Time `json:"started_at,omitempty"`
 	Progress  *time.Time `json:"progress_at,omitempty"`
 	Completed *time.Time `json:"completed_at,omitempty"`
+	Mode      string     `json:"mode"`
+	Error     string     `json:"error,omitempty"`
 }
 type SubnetDiscoveredItem struct {
 	SubnetCatalogItem
@@ -39,7 +41,11 @@ func (s *Store) subnetDiscoveryStatus(ctx context.Context, id string) (SubnetDis
 	err := s.pool.QueryRow(ctx, `SELECT coalesce(b.subnet_discovery_capable,false),coalesce(x.checked,0),coalesce(x.failed,0),coalesce(x.total,(SELECT count(*) FROM subnet_catalog)),coalesce(x.round,1),x.started_at,x.progress_at,x.completed_at,
  (SELECT count(*) FROM subnet_discovered d WHERE d.subnet_id=n.id AND d.revision=n.revision AND d.session_id=c.current_session AND d.quantity>0 AND d.error='' AND d.observed_at>now()-interval '10 minutes')
  FROM monitored_subnets n JOIN monitor_collectors c ON c.id=n.collector_id LEFT JOIN monitor_sessions b ON b.id=c.current_session LEFT JOIN subnet_discovery x ON x.subnet_id=n.id AND x.revision=n.revision WHERE n.id=$1`, id).Scan(&v.Capable, &v.Checked, &v.Failed, &v.Total, &v.Round, &v.Started, &v.Progress, &v.Completed, &v.Found)
-	return v, notFound(err)
+	if err != nil {
+		return v, notFound(err)
+	}
+	err = s.subnetNativeStatus(ctx, id, &v)
+	return v, err
 }
 func (s *Store) SubnetDiscovered(ctx context.Context, member, group, id, kind, q string, offset int) (SubnetDiscoveryPage, error) {
 	out := SubnetDiscoveryPage{Items: []SubnetDiscoveredItem{}}
