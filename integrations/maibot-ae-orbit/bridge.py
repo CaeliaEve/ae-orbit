@@ -122,31 +122,49 @@ def energy_lines(energy: Dict[str, Any], heading: str = "") -> List[str]:
     status = energy.get("status", "waiting_sample")
     labels = {"offline":"监控 OC 离线", "stale":"数据过期", "read_error":"读取异常", "paused":"监控已暂停", "revoked":"监控 OC 已撤销", "waiting_collector":"等待监控 OC", "waiting_sample":"等待首次观测"}
     lines = [heading] if heading else []
-    valid = all(isinstance(energy.get(k), str) and re.fullmatch(r"[0-9]+", energy[k]) for k in ["stored_eu", "capacity_eu"])
+    valid = all(isinstance(energy.get(k), str) and re.fullmatch(r"[0-9]{1,128}", energy[k]) for k in ["stored_eu", "capacity_eu"])
+    if valid:
+        stored, capacity = int(energy["stored_eu"]), int(energy["capacity_eu"])
+        valid = capacity > 0 and stored <= capacity
     if valid:
         label = "当前储能" if status == "online" else "最后观测储能"
-        lines.append(f"{label}：{int(energy['stored_eu']):,} / {int(energy['capacity_eu']):,} EU")
-        if energy.get("percent") is not None:
-            lines.append("电量：" + str(energy["percent"]) + "%")
+        lines.append(f"{label}：{short_energy(stored)}")
+        hundredths = (stored * 10000 + capacity // 2) // capacity
+        percent = f"{hundredths // 100}.{hundredths % 100:02d}".rstrip("0").rstrip(".")
+        lines.append("电量：" + percent + "%")
     else:
         lines.append("储能：尚无有效观测")
     if status != "online":
-        lines.append("状态：" + labels.get(status, status) + "；当前电量未确认")
-    flow = energy.get("flow")
-    if isinstance(flow, dict) and not energy.get("flow_error"):
-        for key, label in [("input_eut", "输入"), ("output_eut", "输出"), ("loss_eut", "自损耗")]:
-            value = flow.get(key)
-            if isinstance(value, str) and re.fullmatch(r"[0-9]+", value):
-                lines.append(f"{label}：{int(value):,} EU/t")
-        if all(isinstance(flow.get(k),str) and re.fullmatch(r"[0-9]+",flow[k]) for k in ["input_eut","output_eut","loss_eut"]):
-            net=int(flow['input_eut'])-int(flow['output_eut'])-int(flow['loss_eut'])
-            lines.append(f"净收支：{net:+,} EU/t")
-    lines.append("观测时间：" + observation_time(energy.get("observed_at")))
+        lines.append(labels.get(status, status) + " · " + observation_time(energy.get("observed_at")))
     return lines
+
+
+def short_energy(value: int) -> str:
+    for exponent, unit in [(24,"Y"),(21,"Z"),(18,"E"),(15,"P"),(12,"T"),(9,"G"),(6,"M"),(3,"k")]:
+        scale = 10 ** exponent
+        if value >= scale:
+            hundredths = (value * 100 + scale // 2) // scale
+            amount = f"{hundredths // 100:,}.{hundredths % 100:02d}".rstrip("0").rstrip(".")
+            return f"{amount} {unit} EU"
+    return f"{value:,} EU"
 
 
 def notification_text(delivery: Dict[str, Any]) -> str:
     payload = delivery["payload"]
+    if payload.get("alert_kind") == "low_energy" or isinstance(payload.get("energy"), dict):
+        device = str(payload.get("device") or "蓝波顿").strip()
+        if device == "蓝波顿超级电容库": device = "蓝波顿"
+        current = payload.get("current_energy") or payload.get("energy") or {}
+        return "\n".join([f"⚠️ {device}电量预警", *energy_lines(current)])[:1600]
+    if "devices" in payload:
+        devices = payload["devices"]
+        lines = ["蓝波顿电量"]
+        if not devices: lines.append("尚无有效电量数据")
+        for device in devices:
+            name = str(device.get("device") or "蓝波顿")
+            heading = "\n" + name if len(devices) > 1 or name not in ("蓝波顿", "蓝波顿超级电容库") else ""
+            lines.extend(energy_lines(device, heading))
+        return "\n".join(lines)[:1600]
     lines = [str(payload.get("title", "AE Orbit 通知"))]
     for key, label in (("cpu", "CPU"), ("device", "设备"), ("network", "网络"), ("owner", "下单玩家")):
         if payload.get(key):
@@ -158,26 +176,10 @@ def notification_text(delivery: Dict[str, Any]) -> str:
         if unit == "fluid": unit = "mB"
         if unit == "item": unit = "件"
         lines.append(f"产物：{product}" + (f" × {quantity} {unit}" if quantity else ""))
-    if payload.get("alert_kind"):
-        labels = {"low_energy": "低电量", "collector_offline": "监控 OC 离线", "read_error": "读取异常", "falling": "储能持续下降", "capacity_changed": "容量变化"}
-        lines.append("类型：" + labels.get(payload["alert_kind"], payload["alert_kind"]))
-    current = payload.get("current_energy") or payload.get("energy")
-    if isinstance(current, dict):
-        lines.extend(energy_lines(current))
-        triggered = payload.get("energy")
-        if isinstance(triggered, dict) and triggered.get("observed_at") != current.get("observed_at") and triggered.get("percent"):
-            lines.append("触发时电量：" + str(triggered["percent"]) + "%")
-    if "devices" in payload:
-        devices = payload["devices"]
-        if not devices:
-            lines.append("尚未绑定蓝波顿监控设备，或名称没有匹配。")
-        for device in devices:
-            lines.extend(energy_lines(device, "\n" + str(device.get("device", "蓝波顿"))))
     if payload.get("reason"):
         lines.append(str(payload["reason"]))
     if payload.get("at"):
         lines.append("发生时间：" + observation_time(payload["at"]))
-    lines.append("AE Orbit · " + delivery["id"][:8])
     return "\n".join(lines)[:1600]
 
 

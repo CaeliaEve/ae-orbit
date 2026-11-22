@@ -60,7 +60,7 @@ func (s *Store) QQBridgePoll(ctx context.Context, a QQAuth, in QQBridgePoll) (QQ
 		if !out.Enabled {
 			return nil
 		}
-		if _, err = tx.Exec(ctx, `UPDATE qq_outbox SET state='expired',detail='采集状态播报已关闭，仅保留低电量通知' WHERE server_group=$1 AND (kind='network' OR kind='alarm' AND coalesce(payload->>'alert_kind','')<>'low_energy') AND state IN ('queued','leased')`, a.Group); err != nil {
+		if _, err = tx.Exec(ctx, `UPDATE qq_outbox SET state='expired',detail='采集状态播报已关闭，仅保留低电量通知' WHERE server_group=$1 AND (kind='network' OR kind='alarm' AND (coalesce(payload->>'alert_kind','')<>'low_energy' OR coalesce(payload->>'state','')<>'active')) AND state IN ('queued','leased')`, a.Group); err != nil {
 			return err
 		}
 		if _, err = tx.Exec(ctx, `UPDATE qq_outbox SET state='uncertain',detail='发送进程中断，结果待确认' WHERE server_group=$1 AND state='sending' AND lease_until<now()`, a.Group); err != nil {
@@ -95,7 +95,7 @@ func (s *Store) QQBridgePoll(ctx context.Context, a QQAuth, in QQBridgePoll) (QQ
 		if _, err = tx.Exec(ctx, `UPDATE qq_outbox q SET state='expired',detail='告警已恢复，跳过过时告警' FROM monitor_alerts m WHERE q.server_group=$1 AND q.state='queued' AND q.kind='alarm' AND q.source_key='alert:'||m.id||':active' AND m.state='resolved'`, a.Group); err != nil {
 			return err
 		}
-		rows, err = tx.Query(ctx, `SELECT q.id FROM qq_outbox q JOIN qq_groups g ON g.server_group=q.server_group AND g.group_id=q.group_id JOIN qq_connectors c ON c.server_group=q.server_group WHERE q.server_group=$1 AND c.catalog_ready AND (q.channel='group' OR c.allow_private) AND q.kind<>'network' AND (q.kind<>'alarm' OR q.payload->>'alert_kind'='low_energy') AND q.state='queued' AND q.expires_at>now() AND g.enabled ORDER BY q.created_at,q.id FOR UPDATE OF q SKIP LOCKED LIMIT 4`, a.Group)
+		rows, err = tx.Query(ctx, `SELECT q.id FROM qq_outbox q JOIN qq_groups g ON g.server_group=q.server_group AND g.group_id=q.group_id JOIN qq_connectors c ON c.server_group=q.server_group WHERE q.server_group=$1 AND c.catalog_ready AND (q.channel='group' OR c.allow_private) AND q.kind<>'network' AND (q.kind<>'alarm' OR q.payload->>'alert_kind'='low_energy' AND q.payload->>'state'='active') AND q.state='queued' AND q.expires_at>now() AND g.enabled ORDER BY q.created_at,q.id FOR UPDATE OF q SKIP LOCKED LIMIT 4`, a.Group)
 		if err != nil {
 			return err
 		}
@@ -182,7 +182,7 @@ func (s *Store) QQBeginDelivery(ctx context.Context, a QQAuth, id, attempt strin
 		if !enabled {
 			return ErrForbidden
 		}
-		tag, err := tx.Exec(ctx, `UPDATE qq_outbox q SET state='sending',lease_until=now()+interval '120 seconds' FROM qq_groups g,qq_connectors c WHERE q.id=$1 AND q.server_group=$2 AND q.attempt_id=$3 AND q.kind<>'network' AND (q.kind<>'alarm' OR q.payload->>'alert_kind'='low_energy') AND q.state='leased' AND q.lease_until>now() AND q.expires_at>now() AND g.server_group=q.server_group AND g.group_id=q.group_id AND g.enabled AND c.server_group=q.server_group AND c.catalog_ready AND (q.channel='group' OR c.allow_private)`, id, a.Group, attempt)
+		tag, err := tx.Exec(ctx, `UPDATE qq_outbox q SET state='sending',lease_until=now()+interval '120 seconds' FROM qq_groups g,qq_connectors c WHERE q.id=$1 AND q.server_group=$2 AND q.attempt_id=$3 AND q.kind<>'network' AND (q.kind<>'alarm' OR q.payload->>'alert_kind'='low_energy' AND q.payload->>'state'='active') AND q.state='leased' AND q.lease_until>now() AND q.expires_at>now() AND g.server_group=q.server_group AND g.group_id=q.group_id AND g.enabled AND c.server_group=q.server_group AND c.catalog_ready AND (q.channel='group' OR c.allow_private)`, id, a.Group, attempt)
 		if err == nil && tag.RowsAffected() == 0 {
 			err = ErrConflict
 		}

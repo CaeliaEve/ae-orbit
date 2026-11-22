@@ -73,6 +73,8 @@ func (s *Store) QQSettings(ctx context.Context, member, group string) (QQSetting
 	return v, rows.Err()
 }
 func (s *Store) SetQQSettings(ctx context.Context, member, group string, v QQSettings) error {
+	// Older browsers may still submit the former recovery checkbox.
+	v.Recoveries = false
 	if err := s.RequireAdmin(ctx, member); err != nil {
 		return err
 	}

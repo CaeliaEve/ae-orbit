@@ -234,7 +234,7 @@ func TestQQCPUWatchEndsWithoutClaimingSuccess(t *testing.T) {
 		t.Fatal(deliveries, err)
 	}
 }
-func TestQQMonitorTransitionAndRecoveredAlarmSuppression(t *testing.T) {
+func TestQQMonitorRecoveryRemainsSilent(t *testing.T) {
 	s, a, n, auth := qqFixture(t)
 	if _, err := s.Pool().Exec(ctx, `INSERT INTO plugin_installations(server_group,plugin_id,enabled,settings) VALUES($1,'gtnh.lsc',true,'{}');`, n.ServerGroup); err != nil {
 		t.Fatal(err)
@@ -252,12 +252,12 @@ func TestQQMonitorTransitionAndRecoveredAlarmSuppression(t *testing.T) {
 		t.Fatal(err)
 	}
 	out, err := s.QQDeliveries(ctx, a.ID, n.ServerGroup)
-	if err != nil || len(out) != 2 {
+	if err != nil || len(out) != 1 {
 		t.Fatal(out, err)
 	}
 	enableQQSending(t, s, a, n)
 	p, err := s.QQBridgePoll(ctx, auth, store.QQBridgePoll{BotID: "12345678", Adapter: "snowluma"})
-	if err != nil || len(p.Deliveries) != 1 {
+	if err != nil || len(p.Deliveries) != 0 {
 		t.Fatal(p, err)
 	}
 }
@@ -423,7 +423,7 @@ func TestQQNetworkTransitionsStaySilentAndOldLeasesStop(t *testing.T) {
 		t.Fatal("pending announcements not stopped", count, err)
 	}
 	settings, err := s.QQSettings(ctx, a.ID, n.ServerGroup)
-	if err != nil || !settings.Enabled || !settings.SendingEnabled || !settings.Alarms || !settings.Exceptions || !settings.Recoveries {
+	if err != nil || !settings.Enabled || !settings.SendingEnabled || !settings.Alarms || !settings.Exceptions || settings.Recoveries {
 		t.Fatal("other notifications altered", settings, err)
 	}
 }
@@ -484,7 +484,7 @@ func TestQQLowEnergyCustomThresholdAndReconnectAreDistinct(t *testing.T) {
 	if _, err := s.Pool().Exec(ctx, `UPDATE monitor_latest SET stored_eu=40,observed_at=now() WHERE object_id='threshold-object'`); err != nil {
 		t.Fatal(err)
 	}
-	maintain(2)
+	maintain(1)
 	var other int
 	if err := s.Pool().QueryRow(ctx, `SELECT count(*) FROM monitor_alerts WHERE kind IN ('collector_offline','read_error')`).Scan(&other); err != nil || other != 0 {
 		t.Fatal(other, err)
@@ -495,7 +495,28 @@ func TestQQLowEnergyCustomThresholdAndReconnectAreDistinct(t *testing.T) {
 		}
 	}
 	out, err := s.QQDeliveries(ctx, a.ID, n.ServerGroup)
-	if err != nil || len(out) != 2 {
+	if err != nil || len(out) != 1 {
 		t.Fatal("diagnostic alert reached QQ", out, err)
+	}
+	// Recovery rearms the rule even though no recovery notification is sent.
+	if _, err = s.Pool().Exec(ctx, `UPDATE monitor_latest SET stored_eu=34,observed_at=now() WHERE object_id='threshold-object'`); err != nil {
+		t.Fatal(err)
+	}
+	maintain(2)
+}
+func TestQQRecoveryCannotBeEnabledByAnOldBrowser(t *testing.T) {
+	s, a, n, _ := qqFixture(t)
+	settings, err := s.QQSettings(ctx, a.ID, n.ServerGroup)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings.Recoveries = true
+	settings.Groups = nil
+	if err = s.SetQQSettings(ctx, a.ID, n.ServerGroup, settings); err != nil {
+		t.Fatal(err)
+	}
+	settings, err = s.QQSettings(ctx, a.ID, n.ServerGroup)
+	if err != nil || settings.Recoveries {
+		t.Fatal(settings, err)
 	}
 }

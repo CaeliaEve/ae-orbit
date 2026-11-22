@@ -25,7 +25,7 @@ class ConnectorSettings(PluginConfigBase):
     enabled: bool = Field(default=True, description="启用连接器")
     endpoint: str = Field(default="http://125.77.172.25:8080", description="AE Orbit 地址")
     credential_file: str = Field(default="/opt/qqbot/ae-orbit-connector.json", description="连接凭据文件（服务器 chmod 600）")
-    config_version: str = Field(default="1.2.1", description="配置版本")
+    config_version: str = Field(default="1.3.0", description="配置版本")
 
 
 class ConnectorConfig(PluginConfigBase):
