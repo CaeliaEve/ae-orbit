@@ -31,7 +31,9 @@ export function validateJobDetail(value, scope, jobId) {
     entry.wait_for_cpu = waitForCPU;
   });
   if (Object.keys(counts).some(key => String(counts[key]) !== summary.counts[key])) throw new Error("Invalid entry counts.");
-  return { summary, entries };
+  const activity = Array.isArray(value.activity) ? structuredClone(value.activity) : [];
+  if (activity.length > 1024 || activity.some(event => typeof event.actor_id !== "string" || typeof event.actor_name !== "string" || !["pause","resume","stop"].includes(event.action) || !Number.isFinite(Date.parse(event.created_at)))) throw new Error("Invalid task activity.");
+  return { summary, entries, activity };
 }
 
 export function createJobController({ storage, request, makeKey = newId, lock = (_key, work) => work(), onChange = () => {} }) {
@@ -47,7 +49,8 @@ export function createJobController({ storage, request, makeKey = newId, lock = 
     if (error.uncertain === false && (
       error.status === 429 && error.code === "capacity_exceeded" ||
       error.status === 403 && ["forbidden", "capability_unavailable"].includes(error.code) ||
-      error.status === 400 && ["invalid_request", "invalid_reference", "capability_unavailable"].includes(error.code)
+      error.status === 400 && ["invalid_request", "invalid_reference", "capability_unavailable"].includes(error.code) ||
+      error.status === 409 && error.code === "identity_changed"
     )) savedJournal.markDefiniteRejected(requestKey, error);
   }
   function local() {
@@ -99,7 +102,7 @@ export function createJobController({ storage, request, makeKey = newId, lock = 
     syncing = work;
     return work;
   }
-  async function submit(ids, { name = "", ttlSeconds = 3600 } = {}) {
+  async function submit(ids, { name = "", ttlSeconds = 3600, notification = null } = {}) {
     if (!scope || state.support !== "supported" || state.busy) throw new Error("Jobs unavailable.");
     const token = generation, path = base(), savedJournal = journal, key = draftKey();
     state.busy = true; emit();
@@ -109,7 +112,7 @@ export function createJobController({ storage, request, makeKey = newId, lock = 
         const draft = local().draft;
         if (draft.warning) throw new Error("Draft storage unavailable.");
         const rows = ids.map(id => draft.entries.find(row => row.id === id));
-        const intent = createJobIntent({ ...scope, requestKey: makeKey(), entries: rows, name, ttlSeconds });
+        const intent = createJobIntent({ ...scope, requestKey: makeKey(), entries: rows, name, ttlSeconds, notification });
         // Materialize journal overlays before prepare so a prior interrupted claim cannot be reused.
         saveDraft(storage, key, draft);
         return savedJournal.prepare(intent);

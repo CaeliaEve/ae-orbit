@@ -32,6 +32,16 @@ local function fixture(options)
     end
     return true
   end}
+  if options.resource_subscriptions then
+    s.resource_disabled=0
+    for _,name in ipairs({"setFluidEventSubscription","setEssentiaEventSubscription"}) do
+      me[name]=function(enabled)
+        assert(enabled==false,"resource subscription enabled")
+        s.resource_disabled=s.resource_disabled+1
+        return options.resource_disable_failed~=true
+      end
+    end
+  end
   local internet={request=function()
     s.requests=(s.requests or 0)+1
     return {finishConnect=function() return true end,response=function() return 200,nil,{} end,
@@ -45,7 +55,7 @@ local function fixture(options)
     assert(name=="network_item_changed","runtime must not own interrupted listener")
     s.listened=s.listened+1;s.listener=fn;return true
   end,ignore=function(name,fn) assert(name=="network_item_changed" and fn==s.listener);s.ignored=s.ignored+1;return true end}
-  package.loaded["aeorbit.adapter"]={new=function(_,cfg) s.adapter_config=cfg;return {} end,has_method=function() return true end}
+  package.loaded["aeorbit.adapter"]={new=function(_,cfg) s.adapter_config=cfg;return {} end,has_method=function(proxy,name) return type(proxy[name])=="function" end}
   package.loaded["aeorbit.client"]={new=function(card,cfg,clock)
     s.clock=clock
     return options.real_network_stop and real_client.new(card,cfg,clock) or {}
@@ -153,6 +163,14 @@ test("exact-only worker clears a persisted subscription before handshake",functi
   assert(r.kind=="stopped" and s.starts==1 and s.enabled==0 and s.listened==0 and s.disabled==1)
   assert(s.adapter_config.role=="quantity_worker" and s.adapter_config.inventory_mode=="exact_only")
   assert(not s.subscription and s.diagnostics.events_disabled==1)
+end)
+test("exact-only mode clears resource subscriptions before handshake",function()
+  local r,s=fixture({exact_only=true,resource_subscriptions=true})
+  assert(r.kind=="stopped" and s.starts==1 and s.resource_disabled==2)
+end)
+test("failed resource unsubscribe blocks startup",function()
+  local r,s=fixture({exact_only=true,resource_subscriptions=true,resource_disable_failed=true})
+  assert(r.kind=="blocked" and r.code=="event_failed" and s.starts==0)
 end)
 test("exact-only worker blocks startup when unsubscribe fails",function()
   local r,s=fixture({worker=true,exact_only=true,stale_subscription=true,disable_failed=true})

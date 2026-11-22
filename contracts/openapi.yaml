@@ -7,6 +7,9 @@ info:
     Quantities, item IDs, revisions and sequence numbers are exact decimal strings.
     Network/member/order/session/attempt IDs are opaque strings.
     Deployment is one service instance with PostgreSQL.
+    Browser requests may send X-AE-Member with the expected authenticated member ID.
+    A mismatch returns 409 identity_changed before executing the operation, preventing
+    an old browser tab from acting as a player who signed in through another tab.
 servers:
   - url: http://127.0.0.1:8080
 security:
@@ -21,6 +24,921 @@ tags:
   - {name: Jobs}
   - {name: Bridge}
 paths:
+  /bridge/qq/v1/inventory/keywords:
+    get:
+      operationId: cachedGETbridgeqqv1inventorykeywords
+      responses:
+        '200':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+      - qqBearer: []
+  /bridge/qq/v1/inventory:
+    get:
+      operationId: cachedGETbridgeqqv1inventory
+      responses:
+        '200':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+      - qqBearer: []
+    post:
+      operationId: cachedPOSTbridgeqqv1inventory
+      responses:
+        '204':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+      - qqBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+  /api/v1/plugins:
+    get:
+      operationId: cachedGETapiv1plugins
+      responses:
+        '200':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+  /bridge/qq/v1/poll:
+    post:
+      operationId: cachedPOSTbridgeqqv1poll
+      responses:
+        '204':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+      - qqBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+  /bridge/qq/v1/channels:
+    put:
+      operationId: cachedPUTbridgeqqv1channels
+      responses:
+        '204':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+      - qqBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+  /bridge/qq/v1/power:
+    get:
+      operationId: cachedGETbridgeqqv1power
+      responses:
+        '200':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+      - qqBearer: []
+    post:
+      operationId: cachedPOSTbridgeqqv1power
+      responses:
+        '204':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+      - qqBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+  /bridge/qq/v1/groups/{qqgroup}:
+    put:
+      operationId: cachedPUTbridgeqqv1groupsqqgroup
+      responses:
+        '204':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+      parameters:
+      - name: qqgroup
+        in: path
+        required: true
+        schema:
+          type: string
+      security:
+      - qqBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+  /bridge/qq/v1/deliveries/{delivery}/begin:
+    post:
+      operationId: cachedPOSTbridgeqqv1deliveriesdeliverybegin
+      responses:
+        '204':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+      parameters:
+      - name: delivery
+        in: path
+        required: true
+        schema:
+          type: string
+      security:
+      - qqBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+  /bridge/qq/v1/deliveries/{delivery}/receipt:
+    post:
+      operationId: cachedPOSTbridgeqqv1deliveriesdeliveryreceipt
+      responses:
+        '204':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+      parameters:
+      - name: delivery
+        in: path
+        required: true
+        schema:
+          type: string
+      security:
+      - qqBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+  /bridge/subnet/hello:
+    post:
+      operationId: cachedPOSTbridgesubnethello
+      responses:
+        '204':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+      - monitorBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+  /bridge/subnet/poll:
+    post:
+      operationId: cachedPOSTbridgesubnetpoll
+      responses:
+        '204':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+      - monitorBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+  /api/v1/subnet-catalog/{item}/image:
+    get:
+      operationId: cachedGETapiv1subnetcatalogitemimage
+      responses:
+        '200':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+      parameters:
+      - name: item
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/v1/integrations:
+    get:
+      operationId: integrationGETapiv1integrations
+      tags:
+      - Integrations
+      security:
+      - memberBearer: []
+      - browserCookie: []
+      responses:
+        '200':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      operationId: integrationPOSTapiv1integrations
+      tags:
+      - Integrations
+      security:
+      - memberBearer: []
+      - browserCookie: []
+      responses:
+        '201':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+  /api/v1/integrations/{key}:
+    put:
+      operationId: integrationPUTapiv1integrationskey
+      tags:
+      - Integrations
+      security:
+      - memberBearer: []
+      - browserCookie: []
+      responses:
+        '200':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+      parameters:
+      - name: key
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+  /api/v1/integrations/{key}/token:
+    post:
+      operationId: integrationPOSTapiv1integrationskeytoken
+      tags:
+      - Integrations
+      security:
+      - memberBearer: []
+      - browserCookie: []
+      responses:
+        '201':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+      parameters:
+      - name: key
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+  /api/integration/v1/check:
+    get:
+      operationId: integrationGETapiintegrationv1check
+      tags:
+      - Integrations
+      security:
+      - integrationBearer: []
+      responses:
+        '200':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+  /api/integration/v1/networks:
+    get:
+      operationId: integrationGETapiintegrationv1networks
+      tags:
+      - Integrations
+      security:
+      - integrationBearer: []
+      responses:
+        '200':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+  /api/integration/v1/networks/{network}/items:
+    get:
+      operationId: integrationGETapiintegrationv1networksnetworkitems
+      tags:
+      - Integrations
+      security:
+      - integrationBearer: []
+      responses:
+        '200':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+      parameters:
+      - name: network
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/integration/v1/networks/{network}/cpus:
+    get:
+      operationId: integrationGETapiintegrationv1networksnetworkcpus
+      tags:
+      - Integrations
+      security:
+      - integrationBearer: []
+      responses:
+        '200':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+      parameters:
+      - name: network
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/integration/v1/groups/{group}/energy:
+    get:
+      operationId: integrationGETapiintegrationv1groupsgroupenergy
+      tags:
+      - Integrations
+      security:
+      - integrationBearer: []
+      responses:
+        '200':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+      parameters:
+      - name: group
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/integration/v1/groups/{group}/subnets:
+    get:
+      operationId: integrationGETapiintegrationv1groupsgroupsubnets
+      tags:
+      - Integrations
+      security:
+      - integrationBearer: []
+      responses:
+        '200':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+      parameters:
+      - name: group
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/integration/v1/groups/{group}/subnets/{subnet}/items:
+    get:
+      operationId: integrationGETapiintegrationv1groupsgroupsubnetssubnetitems
+      tags:
+      - Integrations
+      security:
+      - integrationBearer: []
+      responses:
+        '200':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+      parameters:
+      - name: group
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: subnet
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/v1/monitoring/groups:
+    get:
+      operationId: monitoringApiV1MonitoringGroups_get
+      tags:
+      - Monitoring
+      responses:
+        '200':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+  /api/v1/monitoring/groups/{group}/plugins:
+    get:
+      operationId: monitoringApiV1MonitoringGroupsGroupPlugins_get
+      tags:
+      - Monitoring
+      responses:
+        '200':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+      parameters:
+      - name: group
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/v1/monitoring/groups/{group}/plugins/{plugin}:
+    put:
+      operationId: monitoringApiV1MonitoringGroupsGroupPluginsPlugin_put
+      tags:
+      - Monitoring
+      responses:
+        '200':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+      parameters:
+      - name: group
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: plugin
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+              - enabled
+              - settings
+              - revision
+              properties:
+                enabled:
+                  type: boolean
+                settings:
+                  $ref: '#/components/schemas/MonitorSettings'
+                revision:
+                  type: integer
+                  minimum: 0
+  /api/v1/monitoring/groups/{group}/collectors:
+    get:
+      operationId: monitoringApiV1MonitoringGroupsGroupCollectors_get
+      tags:
+      - Monitoring
+      responses:
+        '200':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+      parameters:
+      - name: group
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      operationId: monitoringApiV1MonitoringGroupsGroupCollectors_post
+      tags:
+      - Monitoring
+      responses:
+        '201':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+      parameters:
+      - name: group
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+              - name
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 128
+  /api/v1/monitoring/groups/{group}/collectors/{collector}/token:
+    post:
+      operationId: monitoringApiV1MonitoringGroupsGroupCollectorsCollectorToken_post
+      tags:
+      - Monitoring
+      responses:
+        '200':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+      parameters:
+      - name: group
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: collector
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+  /api/v1/monitoring/groups/{group}/collectors/{collector}:
+    delete:
+      operationId: monitoringApiV1MonitoringGroupsGroupCollectorsCollector_delete
+      tags:
+      - Monitoring
+      responses:
+        '200':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+      parameters:
+      - name: group
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: collector
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/v1/monitoring/groups/{group}/objects:
+    get:
+      operationId: monitoringApiV1MonitoringGroupsGroupObjects_get
+      tags:
+      - Monitoring
+      responses:
+        '200':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+      parameters:
+      - name: group
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      operationId: monitoringApiV1MonitoringGroupsGroupObjects_post
+      tags:
+      - Monitoring
+      responses:
+        '200':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+      parameters:
+      - name: group
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MonitorObjectInput'
+  /api/v1/monitoring/groups/{group}/objects/{object}:
+    put:
+      operationId: monitoringApiV1MonitoringGroupsGroupObjectsObject_put
+      tags:
+      - Monitoring
+      responses:
+        '200':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+      parameters:
+      - name: group
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: object
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MonitorObjectInput'
+  /api/v1/monitoring/groups/{group}/objects/{object}/history:
+    get:
+      operationId: monitoringApiV1MonitoringGroupsGroupObjectsObjectHistory_get
+      tags:
+      - Monitoring
+      responses:
+        '200':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+      parameters:
+      - name: group
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: object
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: from
+        in: query
+        schema:
+          type: string
+          format: date-time
+      - name: to
+        in: query
+        schema:
+          type: string
+          format: date-time
+  /api/v1/monitoring/groups/{group}/alerts:
+    get:
+      operationId: monitoringApiV1MonitoringGroupsGroupAlerts_get
+      tags:
+      - Monitoring
+      responses:
+        '200':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+      parameters:
+      - name: group
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/v1/monitoring/groups/{group}/alerts/{alert}/acknowledge:
+    post:
+      operationId: monitoringApiV1MonitoringGroupsGroupAlertsAlertAcknowledge_post
+      tags:
+      - Monitoring
+      responses:
+        '204':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+      parameters:
+      - name: group
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: alert
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+  /bridge/monitor/hello:
+    post:
+      operationId: monitoringBridgeMonitorHello_post
+      tags:
+      - Monitoring
+      responses:
+        '200':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MonitorHello'
+      security:
+      - monitorBearer: []
+      description: Dedicated monitor credential; accepts no AE queries or machine control. Sequence retries return
+        the immutable receipt. EU strings preserve up to 128 digits. Server receive time is authoritative.
+  /bridge/monitor/poll:
+    post:
+      operationId: monitoringBridgeMonitorPoll_post
+      tags:
+      - Monitoring
+      responses:
+        '200':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MonitorPoll'
+      security:
+      - monitorBearer: []
+      description: Dedicated monitor credential; accepts no AE queries or machine control. Sequence retries return
+        the immutable receipt. EU strings preserve up to 128 digits. Server receive time is authoritative.
+  /api/v1/players/register:
+    post:
+      operationId: registerPlayer
+      tags:
+      - Members
+      responses:
+        '201':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlayerSession'
+        default:
+          $ref: '#/components/responses/Error'
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlayerRegisterInput'
+  /api/v1/me/player:
+    put:
+      operationId: updatePlayerProfile
+      tags:
+      - Members
+      responses:
+        '201':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlayerSession'
+        default:
+          $ref: '#/components/responses/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlayerProfileInput'
+      parameters:
+      - $ref: '#/components/parameters/CSRF'
+      - $ref: '#/components/parameters/Origin'
+  /api/v1/player-invitations:
+    get:
+      operationId: listPlayerInvitations
+      tags:
+      - Members
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PlayerInvitation'
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      operationId: createPlayerInvitation
+      tags:
+      - Members
+      responses:
+        '201':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                - code
+                - invitation
+                properties:
+                  code:
+                    $ref: '#/components/schemas/Token'
+                  invitation:
+                    $ref: '#/components/schemas/PlayerInvitation'
+        default:
+          $ref: '#/components/responses/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+              - network_id
+              - can_craft
+              - max_uses
+              properties:
+                network_id:
+                  $ref: '#/components/schemas/ID'
+                can_craft:
+                  type: boolean
+                max_uses:
+                  type: integer
+                  minimum: 1
+                  maximum: 100
+      parameters:
+      - $ref: '#/components/parameters/CSRF'
+      - $ref: '#/components/parameters/Origin'
+  /api/v1/player-invitations/{invitation}:
+    parameters:
+    - name: invitation
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/ID'
+    delete:
+      operationId: revokePlayerInvitation
+      tags:
+      - Members
+      responses:
+        '204':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+  /api/v1/members/{member}/player:
+    parameters:
+    - name: member
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/ID'
+    put:
+      operationId: resetPlayerProfile
+      tags:
+      - Members
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Member'
+        default:
+          $ref: '#/components/responses/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+              - game_id
+              - password
+              properties:
+                game_id:
+                  type: string
+                  pattern: ^[A-Za-z0-9_]{3,16}$
+                  minLength: 3
+                  maxLength: 16
+                password:
+                  type: string
+                  minLength: 10
+                  maxLength: 256
+      parameters:
+      - $ref: '#/components/parameters/CSRF'
+      - $ref: '#/components/parameters/Origin'
   /api/v1/networks/{network}/jobs:
     parameters: [{$ref: '#/components/parameters/NetworkID'}]
     post:
@@ -68,6 +986,7 @@ paths:
       tags: [Jobs]
       description: Settled summaries ordered by settlement descending then ID descending. Each page is individually consistent, not a frozen multi-page snapshot.
       parameters:
+        - {name: grouped, in: query, schema: {type: boolean}, description: Group item variants by registry and metadata; concrete variants must be selected before ordering.}
         - {name: cursor, in: query, description: Opaque network-bound keyset cursor returned by this endpoint, schema: {type: string}}
         - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 100, default: 100}}
       responses:
@@ -171,17 +1090,20 @@ paths:
       tags: [Members]
       security: []
       description: |
-        Exchange a member/admin token for an HttpOnly SameSite=Strict cookie and a CSRF token.
+        Exchange a member/admin token or player game ID and password for an HttpOnly
+        SameSite=Strict cookie and a CSRF token. Authentication modes are mutually exclusive.
         An Origin header, when supplied, must equal AE_PUBLIC_URL. Session lifetime is 24 hours.
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: false
-              required: [token]
-              properties: {token: {$ref: '#/components/schemas/Token'}}
+              oneOf:
+                - type: object
+                  additionalProperties: false
+                  required: [token]
+                  properties: {token: {$ref: '#/components/schemas/Token'}}
+                - {$ref: '#/components/schemas/PlayerLoginInput'}
       responses:
         '201':
           description: Browser session created; the ac_session cookie is scoped to /api/.
@@ -441,6 +1363,7 @@ paths:
         Returns 406 if neither gzip nor identity is acceptable. OC and SSE encodings are unchanged.
       parameters:
         - {name: q, in: query, description: 'Chinese label, pinyin, first letters or registry name; whitespace terms are ANDed and @modid selects an exact registry namespace', schema: {type: string, maxLength: 128}}
+        - {name: kind, in: query, description: 'Resource type. NESQL profile defaults to item. Fluid quantities are mB; essentia quantities are aspect units. Type is part of cursor identity.', schema: {type: string, enum: [item, fluid, essentia]}}
         - {name: sort, in: query, schema: {type: string, enum: [name, quantity], default: name}}
         - {name: consistency, in: query, schema: {type: string, enum: [strict, live, window], default: strict}, description: Live requires name sorting. Window follows a moving keyset boundary across membership changes for either sort.}
         - {name: craftable, in: query, schema: {type: boolean}}
@@ -460,6 +1383,61 @@ paths:
             Server-Timing: {description: Server time to headers and database phase timings in milliseconds; phases can overlap., schema: {type: string}}
           content: {application/json: {schema: {$ref: '#/components/schemas/ItemPage'}}}
         '406': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/networks/{network}/items/{item}/variants:
+    parameters:
+      - {$ref: '#/components/parameters/NetworkID'}
+      - {name: item, in: path, required: true, schema: {type: string}}
+    get:
+      operationId: listItemVariants
+      tags: [Inventory]
+      description: Read up to 100 concrete variants of one registry and metadata group; counts come from cached AE observations.
+      parameters:
+        - {name: after, in: query, schema: {type: string}}
+        - {name: view, in: query, schema: {type: string, enum: [stock, all]}}
+      responses:
+        '200': {description: Concrete variant page, content: {application/json: {schema: {$ref: '#/components/schemas/ItemPage'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/networks/{network}/items/{item}/variant-data:
+    parameters:
+      - {$ref: '#/components/parameters/NetworkID'}
+      - {name: item, in: path, required: true, schema: {type: string}}
+    get:
+      operationId: getVariantData
+      tags: [Inventory]
+      description: Authorized, on-demand lossless typed NBT detail for one registered item; list endpoints omit raw NBT.
+      responses:
+        '200': {description: Typed NBT detail, content: {application/json: {schema: {type: object}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/networks/{network}/inventory-profile/variants:
+    parameters: [{$ref: '#/components/parameters/NetworkID'}]
+    post:
+      operationId: enableVariantCatalog
+      tags: [Inventory]
+      description: Admin-only incremental import of exact NESQL NBT candidates, preserving all existing observations and item schedules.
+      parameters: [{$ref: '#/components/parameters/CSRF'}, {$ref: '#/components/parameters/Origin'}]
+      responses:
+        '200': {description: Inventory coverage statistics, content: {application/json: {schema: {type: object}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /bridge/v2/register-sample:
+    post:
+      operationId: registerVariantSample
+      tags: [Bridge]
+      security: [{DeviceBearer: []}]
+      description: Registers one exact item identity from a physical sample; never records sample count as AE stock. Requires an active v2 safe NBT-capable device session.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [session_id, item]
+              properties:
+                session_id: {type: string}
+                item: {$ref: '#/components/schemas/Definition'}
+      responses:
+        '200': {description: Registered canonical item ID, content: {application/json: {schema: {type: object}}}}
         default: {$ref: '#/components/responses/Error'}
   /api/v1/networks/{network}/items/lookup:
     parameters: [{$ref: '#/components/parameters/NetworkID'}]
@@ -537,6 +1515,25 @@ paths:
             image/png: {schema: {type: string, format: binary}}
         '304': {description: ETag matched; response has no body.}
         default: {$ref: '#/components/responses/Error'}
+  /api/v1/networks/{network}/catalog/cpus/{cpu}/image:
+    parameters:
+      - {$ref: '#/components/parameters/NetworkID'}
+      - {name: cpu, in: path, required: true, schema: {type: string}, description: Catalog record key supplied by the CPU output response.}
+      - {name: v, in: query, required: true, schema: {type: string}, description: Current catalog image content key.}
+    get:
+      operationId: getCPUOutputImage
+      tags: [Inventory]
+      description: Returns a verified catalog image for a resource present in the authorized network's current CPU output snapshot; does not read the game or create inventory identities.
+      responses:
+        '200':
+          description: CPU output texture.
+          headers:
+            ETag: {schema: {type: string}}
+            Cache-Control: {schema: {type: string}}
+          content:
+            image/png: {schema: {type: string, format: binary}}
+        '304': {description: ETag matched.}
+        default: {$ref: '#/components/responses/Error'}
   /api/v1/networks/{network}/items/refresh:
     parameters: [{$ref: '#/components/parameters/NetworkID'}]
     post:
@@ -547,7 +1544,8 @@ paths:
         Viewing access suffices; no crafting is performed. Returns cached values immediately, with
         latest per-item refresh status. Aliases share a canonical request. Pending duplicates reuse
         its generation and 60-second deadline; a request after confirmation or expiry starts a new generation.
-        After alias resolution, every existing requested cached resource must have kind=item and exact=true;
+        After alias resolution, every existing requested cached resource must be an exact item or a registered
+        NESQL fluid/essentia identity in a cooperative network with a matching safe OC capability;
         otherwise the entire batch returns 400 invalid_request without enqueueing any work.
         Unknown and cross-network IDs remain missing_ids and do not cause this rejection.
         Limits are 128 pending and 256 retained statuses per network. Old terminal statuses may be evicted.
@@ -599,6 +1597,9 @@ paths:
                   pending: {type: string}
                   oldest_observation: {type: string, format: date-time}
                   last_observation: {type: string, format: date-time}
+                  resources:
+                    type: array
+                    items: {$ref: '#/components/schemas/ResourceStatistics'}
         default: {$ref: '#/components/responses/Error'}
   /api/v1/networks/{network}/inventory-profile/nesql-plain:
     parameters: [{$ref: '#/components/parameters/NetworkID'}]
@@ -609,6 +1610,16 @@ paths:
       parameters: [{$ref: '#/components/parameters/CSRF'}, {$ref: '#/components/parameters/Origin'}]
       responses:
         '200': {description: Scoped inventory statistics and candidate progress}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/networks/{network}/inventory-profile/resources:
+    parameters: [{$ref: '#/components/parameters/NetworkID'}]
+    post:
+      operationId: enableResourceInventoryProfile
+      tags: [Inventory]
+      description: 'Administrator only. Idempotently add NESQL no-NBT fluid registry names and aspect tags to an existing cooperative plain profile. Counts remain unknown until authenticated receipts. Does not reset item schedules, profile epoch or history. Dispatch requires matching fluid/essentia capabilities and disabled native enumeration/events. Fluid recipes and crafting require separate primary craft_fluids support; essentia remains inventory-only.'
+      parameters: [{$ref: '#/components/parameters/CSRF'}, {$ref: '#/components/parameters/Origin'}]
+      responses:
+        '204': {description: Resource candidates enabled}
         default: {$ref: '#/components/responses/Error'}
   /api/v1/networks/{network}/inventory-history:
     parameters:
@@ -697,6 +1708,41 @@ paths:
             Content-Disposition: {schema: {type: string}}
           content:
             text/csv: {schema: {type: string}}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/networks/{network}/cpu-details:
+    parameters: [{$ref: '#/components/parameters/NetworkID'}]
+    post:
+      operationId: requestCPUDetails
+      tags: [Inventory]
+      description: Renew a 15-second viewer lease on one anchored CPU per network. Main OC rotates category reads at least ten seconds apart. See contracts/cpu-details.md.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CPUDetailInput'}
+      responses:
+        '200': {description: Cached independent category observations., content: {application/json: {schema: {$ref: '#/components/schemas/CPUDetailView'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/networks/{network}/cpu-details/{viewer}:
+    parameters:
+      - {$ref: '#/components/parameters/NetworkID'}
+      - {name: viewer, in: path, required: true, schema: {$ref: '#/components/schemas/AssignmentID'}}
+    delete:
+      operationId: closeCPUDetails
+      tags: [Inventory]
+      responses:
+        '204': {description: Own viewer lease removed.}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/networks/{network}/catalog/cpu-details/{asset}/image:
+    parameters:
+      - {$ref: '#/components/parameters/NetworkID'}
+      - {name: asset, in: path, required: true, schema: {type: string}}
+      - {name: v, in: query, required: true, schema: {type: string}}
+    get:
+      operationId: getCPUDetailImage
+      tags: [Inventory]
+      responses:
+        '200': {description: Verified image from a current-boot recent CPU detail observation., content: {image/png: {schema: {type: string, format: binary}}}}
         default: {$ref: '#/components/responses/Error'}
   /api/v1/networks/{network}/cpus:
     parameters: [{$ref: '#/components/parameters/NetworkID'}]
@@ -1001,6 +2047,12 @@ paths:
         default: {$ref: '#/components/responses/Error'}
 components:
   securitySchemes:
+    qqBearer: {type: http, scheme: bearer, description: MaiBot connector token}
+    integrationBearer: {type: http, scheme: bearer, description: Independent scoped read-only application key}
+    monitorBearer:
+      type: http
+      scheme: bearer
+      description: Independent ac_mon_ collector credential; never accepted by AE bridge endpoints.
     memberBearer: {type: http, scheme: bearer, description: 'Admin/member token, never an OC device token'}
     deviceBearer: {type: http, scheme: bearer, description: 'Independent device token, never a member token'}
     browserCookie: {type: apiKey, in: cookie, name: ac_session, description: Mutations also require matching Origin and X-CSRF-Token}
@@ -1050,6 +2102,231 @@ components:
                 required: [code, message]
                 properties: {code: {type: string}, message: {type: string}}
   schemas:
+    MonitorEnergy:
+      type: string
+      pattern: ^(0|[1-9][0-9]{0,127})$
+    MonitorComponent:
+      type: object
+      additionalProperties: false
+      required:
+      - address
+      - type
+      - supported
+      properties:
+        address:
+          type: string
+          pattern: ^[a-f0-9-]{36}$
+        type:
+          type: string
+          const: LSC
+        supported:
+          type: boolean
+    MonitorSettings:
+      type: object
+      additionalProperties: false
+      required:
+      - interval_seconds
+      - low_percent
+      - recover_percent
+      - low_duration_seconds
+      - offline_seconds
+      - falling_minutes
+      - raw_retention_days
+      - alerts
+      properties:
+        interval_seconds:
+          type: integer
+          minimum: 1
+          maximum: 3600
+        history_interval_seconds:
+          type: integer
+          minimum: 5
+          maximum: 3600
+          default: 10
+          description: Separate history cadence; omitted by older clients defaults to ten seconds.
+        low_percent:
+          type: integer
+          minimum: 1
+          maximum: 95
+        recover_percent:
+          type: integer
+          minimum: 2
+          maximum: 100
+        low_duration_seconds:
+          type: integer
+          minimum: 10
+          maximum: 3600
+        offline_seconds:
+          type: integer
+          minimum: 30
+          maximum: 10800
+        falling_minutes:
+          type: integer
+          minimum: 0
+          maximum: 1440
+        raw_retention_days:
+          type: integer
+          minimum: 0
+          maximum: 3650
+        alerts:
+          type: boolean
+    MonitorHello:
+      type: object
+      additionalProperties: false
+      required:
+      - boot_id
+      - modules
+      - components
+      properties:
+        min_interval_seconds: {type: integer, enum: [1, 10], default: 10, description: New boot negotiates one-second collector support.}
+        boot_id: &id001
+          type: string
+          pattern: ^[a-f0-9]{32}$
+        modules:
+          type: array
+          items:
+            type: string
+            enum:
+            - gtnh.lsc
+          maxItems: 8
+        components:
+          type: array
+          items:
+            $ref: '#/components/schemas/MonitorComponent'
+          maxItems: 32
+    MonitorFlow:
+      type: object
+      additionalProperties: false
+      required: [input_eut, output_eut, loss_eut, avg_input_eut, avg_output_eut, window_seconds, source]
+      properties:
+        input_eut: {$ref: '#/components/schemas/MonitorEnergy'}
+        output_eut: {$ref: '#/components/schemas/MonitorEnergy'}
+        loss_eut: {$ref: '#/components/schemas/MonitorEnergy'}
+        avg_input_eut: {$ref: '#/components/schemas/MonitorEnergy'}
+        avg_output_eut: {$ref: '#/components/schemas/MonitorEnergy'}
+        window_seconds: {type: integer, const: 5}
+        source: {type: string, const: lsc_sensor_v1}
+    MonitorSample:
+      type: object
+      additionalProperties: false
+      required:
+      - object_id
+      - revision
+      - installation_revision
+      - sample_millis
+      properties:
+        object_id: *id001
+        revision:
+          type: integer
+          minimum: 1
+        installation_revision:
+          type: integer
+          minimum: 1
+        sample_millis:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        stored_eu:
+          $ref: '#/components/schemas/MonitorEnergy'
+        capacity_eu:
+          $ref: '#/components/schemas/MonitorEnergy'
+        flow:
+          $ref: '#/components/schemas/MonitorFlow'
+        flow_error:
+          type: string
+          enum: [unsupported, read_failed, invalid_format]
+        error:
+          type: string
+          enum:
+          - component_missing
+          - interface_unsupported
+          - read_failed
+          - invalid_energy
+          - memory_low
+          - controller_mismatch
+      allOf:
+      - not:
+          required: [flow, flow_error]
+      - if:
+          required: [error]
+        then:
+          not:
+            anyOf:
+            - required: [flow]
+            - required: [flow_error]
+      oneOf:
+      - required:
+        - stored_eu
+        - capacity_eu
+        not:
+          required:
+          - error
+      - required:
+        - error
+        not:
+          anyOf:
+          - required:
+            - stored_eu
+          - required:
+            - capacity_eu
+    MonitorPoll:
+      type: object
+      additionalProperties: false
+      required:
+      - session_id
+      - sequence
+      - free_memory
+      - samples
+      properties:
+        session_id: *id001
+        sequence:
+          type: integer
+          minimum: 1
+          maximum: 1000000000
+        free_memory:
+          type: integer
+          minimum: 0
+          maximum: 1099511627776
+        samples:
+          type: array
+          items:
+            $ref: '#/components/schemas/MonitorSample'
+          maxItems: 16
+        components:
+          type: array
+          items:
+            $ref: '#/components/schemas/MonitorComponent'
+          maxItems: 32
+    MonitorObjectInput:
+      type: object
+      additionalProperties: false
+      required:
+      - plugin_id
+      - collector_id
+      - component_address
+      - name
+      - enabled
+      - revision
+      properties:
+        plugin_id:
+          const: gtnh.lsc
+          type: string
+        collector_id: *id001
+        component_address:
+          type: string
+          pattern: ^[a-f0-9-]{36}$
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        location:
+          type: string
+          maxLength: 128
+        enabled:
+          type: boolean
+        revision:
+          type: integer
+          minimum: 0
     InventoryHistoryEpoch:
       type: object
       required: [id, scope, started_at]
@@ -1177,6 +2454,7 @@ components:
         id: {$ref: '#/components/schemas/ID'}
         network_id: {$ref: '#/components/schemas/ID'}
         owner_id: {$ref: '#/components/schemas/ID'}
+        owner_name: {type: string}
         name: {type: string}
         manifest_digest: {type: string, pattern: '^[a-f0-9]{64}$'}
         control: {type: string, enum: [active, paused, stopped]}
@@ -1214,6 +2492,7 @@ components:
       properties:
         summary: {$ref: '#/components/schemas/ProductionJobSummary'}
         entries: {type: array, maxItems: 500, items: {$ref: '#/components/schemas/ProductionJobEntry'}}
+        activity: {type: array, maxItems: 1024, items: {$ref: '#/components/schemas/ProductionJobActivity'}}
     ProductionJobAcceptance:
       type: object
       additionalProperties: false
@@ -1336,21 +2615,152 @@ components:
       type: object
       required: [status]
       properties: {status: {type: string, enum: [ok, ready, unavailable]}}
+    PlayerLoginInput:
+      type: object
+      additionalProperties: false
+      required:
+      - game_id
+      - password
+      properties:
+        game_id:
+          type: string
+          pattern: ^[A-Za-z0-9_]{3,16}$
+          minLength: 3
+          maxLength: 16
+        password:
+          type: string
+          minLength: 1
+          maxLength: 256
+    PlayerRegisterInput:
+      type: object
+      additionalProperties: false
+      required:
+      - game_id
+      - password
+      - invitation
+      properties:
+        game_id:
+          type: string
+          pattern: ^[A-Za-z0-9_]{3,16}$
+          minLength: 3
+          maxLength: 16
+        password:
+          type: string
+          minLength: 10
+          maxLength: 256
+        invitation:
+          $ref: '#/components/schemas/Token'
+    PlayerProfileInput:
+      type: object
+      additionalProperties: false
+      required:
+      - game_id
+      properties:
+        game_id:
+          type: string
+          pattern: ^[A-Za-z0-9_]{3,16}$
+          minLength: 3
+          maxLength: 16
+        current_password:
+          type: string
+          maxLength: 256
+        password:
+          type: string
+          maxLength: 256
+    PlayerInvitation:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - network_id
+      - can_craft
+      - max_uses
+      - uses
+      - expires_at
+      - revoked
+      properties:
+        id:
+          $ref: '#/components/schemas/ID'
+        network_id:
+          $ref: '#/components/schemas/ID'
+        can_craft:
+          type: boolean
+        max_uses:
+          type: integer
+          minimum: 1
+          maximum: 100
+        uses:
+          type: integer
+          minimum: 0
+        expires_at:
+          type: string
+          format: date-time
+        revoked:
+          type: boolean
+    ProductionJobActivity:
+      type: object
+      additionalProperties: false
+      required:
+      - actor_id
+      - actor_name
+      - action
+      - created_at
+      properties:
+        actor_id:
+          $ref: '#/components/schemas/ID'
+        actor_name:
+          type: string
+        action:
+          type: string
+          enum:
+          - pause
+          - resume
+          - stop
+        created_at:
+          type: string
+          format: date-time
+    PlayerSession:
+      type: object
+      additionalProperties: false
+      required:
+      - member
+      - csrf
+      - expires_at
+      properties:
+        member:
+          $ref: '#/components/schemas/Member'
+        csrf:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
     Member:
       type: object
       required: [id, name, admin]
-      properties: {id: {$ref: '#/components/schemas/ID'}, name: {type: string}, admin: {type: boolean}}
+      properties: {id: {$ref: '#/components/schemas/ID'}, name: {type: string}, admin: {type: boolean}, game_id: {type: string}, password_login: {type: boolean}}
     Grant:
       type: object
       additionalProperties: false
       required: [network_id, can_craft]
       properties: {network_id: {$ref: '#/components/schemas/ID'}, can_craft: {type: boolean}}
+    ResourceStatistics:
+      type: object
+      required: [kind, unit, candidates, checked, entries, total_quantity, supported]
+      properties:
+        kind: {type: string, enum: [fluid, essentia]}
+        unit: {type: string, enum: [mB, 源质]}
+        candidates: {type: string, pattern: '^(0|[1-9][0-9]*)$'}
+        checked: {type: string, pattern: '^(0|[1-9][0-9]*)$'}
+        entries: {type: string, pattern: '^(0|[1-9][0-9]*)$'}
+        total_quantity: {type: string, pattern: '^(0|[1-9][0-9]*)$'}
+        last_observation: {type: string, format: date-time}
+        supported: {type: boolean, description: A current safe OC session reports the matching method. Not an online guarantee.}
     Definition:
       type: object
       additionalProperties: false
       required: [kind, name, damage, label, exact]
       properties:
-        kind: {type: string, enum: [item, fluid]}
+        kind: {type: string, enum: [item, fluid, essentia]}
         name: {type: string, minLength: 1, maxLength: 256}
         damage: {type: integer, minimum: 0, maximum: 2147483647}
         nbt: {type: string, maxLength: 16384, description: 'Canonical base64 of one gzip member containing a typed NBT root compound. At most 12288 compressed bytes, 65536 expanded bytes, 32 levels and 1024 tags. Compound order and root name do not affect identity; primitive bits, types and list order do. Omitted for untagged items.'}
@@ -1364,10 +2774,16 @@ components:
         native_scan_disabled: {type: boolean, description: Native full inventory enumeration is disabled for this boot.}
         events_disabled: {type: boolean, description: Native inventory event subscription was disabled before handshake.}
         quantity_refresh: {type: boolean, description: Supports the independent quantity-only refresh lane. A new boot is required to change negotiated capabilities.}
+        fluids: {type: boolean, description: Supports exact getFluidInNetwork with a registry-name descriptor.}
+        craft_fluids: {type: boolean, description: 'Primary supports exact getCraftable(detail, fluid), output identity verification and mB crafting requests. Inventory-only fluid support does not authorize recipes or commands.'}
+        essentia: {type: boolean, description: Supports getEssentiaInNetwork with an explicit aspect-name descriptor.}
         craft: {type: boolean}
         cpu_output: {type: boolean}
+        cpu_details: {type: boolean, description: Primary v2 supports on-demand CPU-local task lists.}
         cpu_selection: {type: boolean, description: 'The primary OC supports strict named CPU selection when true. Targets must be unique; duplicate, missing, or busy targets never fall back to automatic assignment.'}
         exact_quantities: {type: boolean}
+        exact_nbt: {type: boolean}
+        max_nbt_bytes: {type: integer, minimum: 0, maximum: 12288}
         max_craft_quantity: {$ref: '#/components/schemas/Quantity'}
         enumeration: {type: string, maxLength: 64}
     Network:
@@ -1423,7 +2839,7 @@ components:
         quantity_known: {type: boolean, description: False means an unqueried NESQL plain candidate; its quantity field is a placeholder and must not be displayed as confirmed zero. Absent preserves legacy observed-item semantics.}
         id: {$ref: '#/components/schemas/PositiveQuantity'}
         canonical_id: {allOf: [{$ref: '#/components/schemas/PositiveQuantity'}], description: 'Present only when an ID lookup used a legacy alias. Stock belongs to this canonical item; aliases must not be added together.'}
-        kind: {type: string, enum: [item, fluid]}
+        kind: {type: string, enum: [item, fluid, essentia]}
         name: {type: string}
         damage: {type: integer}
         label: {type: string}
@@ -1434,6 +2850,21 @@ components:
         craftable_observed_at: {type: string, format: date-time, description: Server acceptance time of the latest recipe observation. Omitted when unknown; quantity-only readings do not refresh this time.}
         current_session: {type: boolean, description: Quantity source is still its owning device's current valid session; independent of primary availability and age.}
         craftable_current_session: {type: boolean, description: Recipe source is still its owning device's current valid session.}
+        has_tag: {type: boolean}
+        group:
+          type: object
+          required: [candidates, checked, stock, quantity]
+          properties:
+            candidates: {type: integer}
+            checked: {type: integer}
+            stock: {type: integer}
+            quantity: {type: string}
+        variant:
+          type: object
+          properties:
+            hash: {type: string}
+            custom_name: {type: string}
+            summary: {type: array, items: {type: string}}
         catalog: {$ref: '#/components/schemas/CatalogItem'}
     CatalogItem:
       type: object
@@ -1448,6 +2879,7 @@ components:
         max_stack_size: {type: integer, minimum: 0}
         image_url: {type: string, format: uri-reference}
         image_key: {type: string, description: Stable texture-pack asset path.}
+        base_fallback: {type: boolean}
         image_state: {type: string, enum: [available, missing]}
         width: {type: integer, minimum: 1}
         height: {type: integer, minimum: 1}
@@ -1502,7 +2934,17 @@ components:
       type: object
       additionalProperties: false
       required: [name, label, quantity]
-      properties: {name: {type: string, maxLength: 256}, label: {type: string, maxLength: 512}, quantity: {$ref: '#/components/schemas/Quantity'}}
+      properties:
+        name: {type: string, maxLength: 256}
+        label: {type: string, maxLength: 512}
+        quantity: {$ref: '#/components/schemas/Quantity'}
+        kind: {type: string, enum: [item, fluid, essentia], description: Optional observed resource type; missing in older OC snapshots.}
+        damage: {type: integer, minimum: 0, maximum: 2147483647, description: Optional observed item metadata; omission does not imply zero.}
+        has_tag: {type: boolean, description: Optional observed NBT presence; the tag payload is never uploaded with CPU output.}
+        catalog:
+          allOf: [{$ref: '#/components/schemas/CatalogItem'}]
+          readOnly: true
+          description: Server resolved visual metadata; bridge uploads must not provide it.
     CPU:
       type: object
       additionalProperties: false
@@ -1516,6 +2958,70 @@ components:
         coprocessors: {type: integer, minimum: 0}
         output: {$ref: '#/components/schemas/Stack'}
         output_unavailable: {type: string, maxLength: 256}
+    CPUDetailInput:
+      type: object
+      additionalProperties: false
+      required: [session_id, cpu_id, viewer_id]
+      properties:
+        session_id: {$ref: '#/components/schemas/ID'}
+        cpu_id: {$ref: '#/components/schemas/ID'}
+        viewer_id: {$ref: '#/components/schemas/AssignmentID'}
+    CPUDetailAssignment:
+      type: object
+      additionalProperties: false
+      required: [assignment_id, cpu_id, kind, ttl_millis]
+      properties:
+        assignment_id: {$ref: '#/components/schemas/AssignmentID'}
+        cpu_id: {$ref: '#/components/schemas/ID'}
+        kind: {type: string, enum: [active, pending, stored]}
+        ttl_millis: {type: integer, minimum: 1, maximum: 8000}
+    CPUDetailItem:
+      type: object
+      additionalProperties: false
+      required: [row_id, kind, name, label, quantity]
+      properties:
+        row_id: {$ref: '#/components/schemas/ID'}
+        kind: {type: string, enum: [item, fluid, essentia]}
+        name: {type: string, minLength: 1, maxLength: 256}
+        label: {type: string, maxLength: 512}
+        damage: {type: integer, minimum: 0, maximum: 2147483647}
+        has_tag: {type: boolean}
+        variant_hash: {type: string, pattern: '^[0-9a-f]{64}$'}
+        quantity: {$ref: '#/components/schemas/Quantity'}
+        catalog: {$ref: '#/components/schemas/CatalogItem'}
+    CPUDetailResult:
+      type: object
+      additionalProperties: false
+      required: [assignment_id, cpu_id, kind, total, truncated]
+      properties:
+        assignment_id: {$ref: '#/components/schemas/AssignmentID'}
+        cpu_id: {$ref: '#/components/schemas/ID'}
+        kind: {type: string, enum: [active, pending, stored]}
+        total: {type: integer, minimum: 0, maximum: 1000000}
+        truncated: {type: boolean}
+        items: {type: array, maxItems: 64, items: {$ref: '#/components/schemas/CPUDetailItem'}}
+        error: {type: string, enum: [unsupported, target_expired, target_changed, read_failed, memory_low, invalid_items, packet_budget]}
+    CPUDetailPart:
+      type: object
+      required: [kind, items, total, truncated]
+      properties:
+        kind: {type: string, enum: [active, pending, stored]}
+        items: {type: array, maxItems: 64, items: {$ref: '#/components/schemas/CPUDetailItem'}}
+        total: {type: integer, minimum: 0, maximum: 1000000}
+        truncated: {type: boolean}
+        error: {type: string}
+        observed_at: {type: string, format: date-time}
+        reported_at: {type: string, format: date-time}
+    CPUDetailView:
+      type: object
+      required: [session_id, cpu_id, cpu, parts, status, refresh_seconds]
+      properties:
+        session_id: {$ref: '#/components/schemas/ID'}
+        cpu_id: {$ref: '#/components/schemas/ID'}
+        cpu: {$ref: '#/components/schemas/CPU'}
+        parts: {type: array, maxItems: 3, items: {$ref: '#/components/schemas/CPUDetailPart'}}
+        status: {type: string, enum: [collecting, ready, stale, target_changed]}
+        refresh_seconds: {type: integer, const: 30}
     CPUView:
       type: object
       description: Returns the latest accepted snapshot, including its IDs, order and observation time, even when unchanged visible state produced no CPU event.
@@ -1545,6 +3051,7 @@ components:
         id: {$ref: '#/components/schemas/ID'}
         network_id: {$ref: '#/components/schemas/ID'}
         user_id: {$ref: '#/components/schemas/ID'}
+        owner_name: {type: string}
         item_id: {$ref: '#/components/schemas/PositiveQuantity'}
         quantity: {$ref: '#/components/schemas/PositiveQuantity'}
         state: {$ref: '#/components/schemas/OrderState'}
@@ -1900,6 +3407,7 @@ components:
       additionalProperties: false
       required: [session_id, sequence]
       properties:
+        cpu_detail: {$ref: '#/components/schemas/CPUDetailResult'}
         session_id: {$ref: '#/components/schemas/ID'}
         sequence: {$ref: '#/components/schemas/PositiveQuantity'}
         reports: {type: array, maxItems: 16, items: {$ref: '#/components/schemas/Report'}}
@@ -1914,6 +3422,7 @@ components:
       additionalProperties: false
       required: [ack, commands, reads, poll_millis, scan_budget]
       properties:
+        cpu_detail: {$ref: '#/components/schemas/CPUDetailAssignment'}
         ack: {$ref: '#/components/schemas/PositiveQuantity'}
         commands: {type: array, maxItems: 16, items: {$ref: '#/components/schemas/Command'}}
         poll_millis: {type: integer, minimum: 1, maximum: 30000}

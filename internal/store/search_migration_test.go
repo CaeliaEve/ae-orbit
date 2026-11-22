@@ -17,7 +17,8 @@ func TestInventorySearchMigrationPreservesEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = f.s.Pool().Exec(ctx, `ALTER TABLE item_definitions DROP COLUMN search_label;
+	if _, err = f.s.Pool().Exec(ctx, `DROP VIEW item_catalog_candidates;
+        ALTER TABLE item_definitions DROP COLUMN search_label;
 		ALTER TABLE plain_catalog_candidates DROP COLUMN search_text;
 		DELETE FROM schema_versions WHERE version='migrations/016_inventory_search.sql'`); err != nil {
 		t.Fatal(err)
@@ -26,6 +27,13 @@ func TestInventorySearchMigrationPreservesEvidence(t *testing.T) {
 		if err = f.s.Migrate(ctx); err != nil {
 			t.Fatal(err)
 		}
+	}
+	// The later variant view depends on the restored search columns.
+	if _, err = f.s.Pool().Exec(ctx, `CREATE VIEW item_catalog_candidates AS
+ SELECT network_id,item_id,label,search_text FROM plain_catalog_candidates
+ UNION ALL SELECT v.network_id,v.item_id,v.label,v.search_text FROM variant_catalog_candidates v
+ WHERE NOT EXISTS(SELECT 1 FROM plain_catalog_candidates p WHERE p.network_id=v.network_id AND p.item_id=v.item_id)`); err != nil {
+		t.Fatal(err)
 	}
 	after, err := f.s.Items(ctx, f.admin.ID, f.network.ID, protocol.ItemQuery{View: "all"})
 	if err != nil || !reflect.DeepEqual(before, after) {

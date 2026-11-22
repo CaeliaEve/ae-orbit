@@ -1,15 +1,9 @@
+import { jobStates, jobDisplayState, jobProgressHTML, jobStateCountsHTML, craftingJobModel, craftingJobsHTML } from "./crafting-center.mjs";
+import { submitterName } from "./player-identity.mjs";
+export { jobStates } from "./crafting-center.mjs";
 const esc = value => String(value ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-export const jobStates = { pending:"待调度", rejected:"未通过", queued:"排队中", assigned:"已派发", computing:"计算中", running:"合成中", needs_review:"结果待确认", done:"已完成", failed:"失败", canceled:"已撤回", expired:"已过期" };
-const controlNames = {active:"正常调度",paused:"已暂停",stopped:"已停止"};
-const countsHTML = summary => `<div class="job-counts">${Object.entries(summary.counts).filter(([,n])=>n!=="0").map(([key,n])=>`<span data-state="${key}">${jobStates[key]} <b class="number">${esc(n)}</b></span>`).join("")}</div>`;
-export function jobListHTML(model, filter, dateTime) {
-  if (model.support === "unsupported") return `<div class="empty">后端尚不支持生产任务。请升级服务；新提交已禁用，单项订单仍可查看和核对。</div>`;
-  if (!model.sync) return `<div class="empty">${model.loading ? "正在读取生产任务…" : model.error?.status === 403 ? "当前账号无权查看此网络任务。" : model.error ? "生产任务暂不可用，请刷新重试。" : "尚未连接网络"}</div>`;
-  const live = [...model.sync.jobs.values()];
-  const rows = filter === "history" ? model.history.map(row => model.sync.jobs.get(row.id) || row) : live.filter(row => !row.settled_at &&
-    (filter !== "attention" || row.control === "paused" || row.counts.needs_review !== "0" || row.counts.rejected !== "0" || row.counts.failed !== "0"));
-  return rows.length ? rows.map(row => `<div class="job-row"><button class="task-main" data-job="${esc(row.id)}"><span class="task-title">${esc(row.name || `生产任务 ${row.id}`)}</span><span class="task-sub">所有者 ${esc(row.owner_id)} · ${esc(dateTime(row.created_at))}</span>${countsHTML(row)}</button><div class="job-admission"><span>${controlNames[row.control]}</span><span class="muted number">共 ${esc(row.total)} 项</span></div></div>`).join("") :
-    `<div class="empty">${filter === "history" && !model.historyLoaded ? model.historyLoading ? "正在读取历史…" : "历史尚未读取，请加载历史记录。" : filter === "attention" ? "暂无待处理生产任务" : filter === "history" ? "暂无保留的历史任务" : "暂无未完成生产任务"}</div>`;
+export function jobListHTML(model, filter, dateTime, options = {}) {
+  return craftingJobsHTML(craftingJobModel(model, { ...options, filter }), filter, { dateTime, memberId: options.memberId });
 }
 export function recoveryHTML(local, icon) {
   const uncertain = local.intents.filter(intent => intent.state !== "accepted" || local.draft.entries.some(row=>row.batch_id === `job:${intent.requestKey}`));
@@ -27,14 +21,16 @@ export function jobDetailHTML(detail, local, member, {itemFor,itemImage,quantity
   const s = detail.summary, operations = local.controls.filter(op=>op.jobId===s.id);
   const authorized = member?.admin || member?.id === s.owner_id;
   const mutable = controlsAvailable && authorized && !s.settled_at && s.control !== "stopped" && !operations.length;
-  return `<div class="job-heading"><h2>${esc(s.name || `生产任务 ${s.id}`)}</h2><span>${controlNames[s.control]}</span></div>
-    <div class="order-detail-facts"><div class="fact"><span>任务标识</span><span>${esc(s.id)}</span></div><div class="fact"><span>所有者</span><span>${esc(s.owner_id)}</span></div><div class="fact"><span>提交时间</span><span>${esc(dateTime(s.created_at))}</span></div><div class="fact"><span>条目总数</span><span>${esc(s.total)}</span></div></div>${countsHTML(s)}
+  const status = jobDisplayState(s);
+  return `<div class="crafting-detail-heading"><div><h2>${esc(s.name || `生产任务 ${s.id}`)}</h2><p>${esc(submitterName(s))} 下单${member?.id === s.owner_id ? " · 我的任务" : ""} · ${esc(dateTime(s.created_at))}</p></div><span class="crafting-state" data-tone="${status.tone}"><i aria-hidden="true"></i>${status.label}</span></div>
+    <div class="crafting-detail-progress">${jobProgressHTML(s)}${jobStateCountsHTML(s)}<p>按清单条目统计；暂停或停止调度后，已经执行的合成仍可能继续。</p></div>
     ${s.reason ? `<p class="error">${esc(s.reason)}</p>` : ""}
-    <div class="order-actions">${mutable ? `<button class="secondary" data-job-action="${s.control === "paused" ? "resume" : "pause"}">${icon(s.control === "paused" ? "play" : "pause")}${s.control === "paused" ? "继续调度" : "暂停调度"}</button><button class="secondary" data-job-action="stop">${icon("square")}停止任务</button>` : !authorized ? `<span class="muted">仅所有者或管理员可控制此任务。</span>` : s.settled_at ? `<span class="muted">任务已结束，不可再次调度。</span>` : ""}</div>
+    <div class="crafting-detail-actions">${mutable ? `<button class="secondary" data-job-action="${s.control === "paused" ? "resume" : "pause"}">${icon(s.control === "paused" ? "play" : "pause")}${s.control === "paused" ? "继续调度" : "暂停调度"}</button><button class="secondary crafting-stop" data-job-action="stop">${icon("square")}停止调度</button>` : !authorized ? `<span class="muted">仅所有者或管理员可控制此任务。</span>` : s.settled_at ? `<span class="muted">任务已结束，不可再次调度。</span>` : s.control === "stopped" ? '<span class="muted">调度已停止，已执行条目继续保留。</span>' : ""}</div>
     ${operations.map(op=>`<div class="job-recovery"><strong>控制结果待核对 · ${esc(op.action)}</strong><p>${esc(op.operationKey)} · 原控制版本 ${esc(op.expectedControlVersion)}</p>${authorized && controlsAvailable ? `<button class="secondary" data-control-replay="${esc(op.operationKey)}">${icon("refresh-cw")}核对并重放此原操作</button>` : ""}<p>只使用保存的操作键和版本。状态冲突不会清除本机记录。</p></div>`).join("")}
-    <div class="job-entries">${detail.entries.map(entry=>{
+    <div class="crafting-entry-heading"><h3>合成清单</h3><span>${esc(s.total)} 项</span></div><div class="job-entries">${detail.entries.map(entry=>{
       const item = itemFor(entry.item_id);
       const cpu = entry.cpu_name || "自动分配";
-      return `<div class="job-entry">${itemImage(item)}<div class="job-entry-main"><strong>${esc(item?.label || `物品 #${entry.item_id}`)}</strong><span class="muted number">× ${quantity(entry.quantity)}</span><span class="muted">CPU：${esc(cpu)}${entry.wait_for_cpu ? " · 等待" : ""}</span><span class="task-state" data-state="${esc(entry.state)}">${jobStates[entry.state]}</span>${entry.reason ? `<p class="error">${esc(entry.reason)}</p>` : ""}${entry.order_id ? `<button class="job-order-link" data-order="${esc(entry.order_id)}">查看单项订单 ${icon("arrow-up-right")}</button>` : ""}</div><span class="muted">#${entry.ordinal+1}</span></div>`;
-    }).join("")}</div>`;
+      const tone = ["needs_review", "rejected", "failed"].includes(entry.state) ? "warn" : entry.state === "done" ? "ok" : ["assigned", "computing", "running"].includes(entry.state) ? "active" : "idle";
+      return `<div class="crafting-detail-entry"><span class="crafting-entry-media">${itemImage(item)}</span><div class="crafting-entry-copy"><strong>${esc(item?.label || `物品 #${entry.item_id}`)}</strong><small>CPU：${esc(cpu)}${entry.wait_for_cpu ? " · 等待指定 CPU" : ""}</small>${entry.reason ? `<p class="error">${esc(entry.reason)}</p>` : ""}${entry.order_id ? `<button class="job-order-link" data-order="${esc(entry.order_id)}">查看单项订单 ${icon("arrow-up-right")}</button>` : ""}</div><span class="crafting-entry-quantity number">× ${quantity(entry.quantity,item)}</span><span class="crafting-state" data-tone="${tone}"><i aria-hidden="true"></i>${esc(jobStates[entry.state] || entry.state)}</span></div>`;
+    }).join("")}</div><section class="job-activity"><h3>操作记录</h3><div class="job-activity-row"><span>${esc(submitterName(s))} 创建任务</span><time>${esc(dateTime(s.created_at))}</time></div>${(detail.activity || []).map(event=>`<div class="job-activity-row"><span>${esc(event.actor_name || "旧账号")} ${{pause:"暂停调度",resume:"恢复调度",stop:"停止调度"}[event.action]}${event.actor_id !== s.owner_id ? " · 管理员代操作" : ""}</span><time>${esc(dateTime(event.created_at))}</time></div>`).join("")}</section><details class="crafting-detail-identifiers"><summary>任务标识与时间${icon("chevron-down")}</summary><dl><div><dt>任务 ID</dt><dd>${esc(s.id)}</dd></div><div><dt>下单人</dt><dd>${esc(submitterName(s))}</dd><dt>成员标识</dt><dd>${esc(s.owner_id)}</dd></div><div><dt>最近更新</dt><dd>${esc(dateTime(s.updated_at))}</dd></div>${s.settled_at ? `<div><dt>结束时间</dt><dd>${esc(dateTime(s.settled_at))}</dd></div>` : ""}</dl></details>`;
 }

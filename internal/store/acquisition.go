@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -24,7 +25,7 @@ const acquisitionDemand = `((a.slots>0 AND a.bytes>0) OR EXISTS(
 // before the current intent is registered, so arrival order cannot win it.
 func (s *Store) acquisitionGrant(ctx context.Context, tx pgx.Tx, d Device, session, group string, slots, queueBytes, version int) (budget int, grantID string, ttl int, err error) {
 	var cooperative bool
-	if err = tx.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM networks WHERE server_group=$1 AND bridge_mode='cooperative')", group).Scan(&cooperative); err != nil {
+	if err = tx.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM networks WHERE server_group=$1 AND bridge_mode='cooperative') OR EXISTS(SELECT 1 FROM subnet_plugins WHERE server_group=$1 AND enabled)", group).Scan(&cooperative); err != nil {
 		return
 	}
 	if !cooperative {
@@ -112,6 +113,32 @@ func (s *Store) allocateAcquisitionRound(ctx context.Context, tx pgx.Tx, group s
 	if err = rows.Err(); err != nil {
 		return err
 	}
+	subnetIDs := map[string]string{}
+	rows, err = tx.Query(ctx, `SELECT n.id,n.collector_id FROM subnet_read_intents a JOIN monitored_subnets n ON n.id=a.subnet_id JOIN subnet_plugins p ON p.server_group=n.server_group JOIN monitor_collectors c ON c.id=n.collector_id WHERE n.server_group=$1 AND n.enabled AND p.enabled AND NOT c.revoked AND n.component_address<>'' AND a.session_id=c.current_session AND a.last_intent_at>now()-interval '2 seconds' AND (EXISTS(SELECT 1 FROM subnet_items i WHERE i.subnet_id=n.id AND i.enabled AND i.next_read_at<=now() AND (i.assignment_until IS NULL OR i.assignment_until<=now() OR i.assignment_session<>c.current_session OR i.assignment_revision<>n.revision))
+ OR EXISTS(SELECT 1 FROM monitor_sessions b WHERE b.id=c.current_session AND b.subnet_discovery_capable AND n.discovery_mode='exact' AND (
+  NOT EXISTS(SELECT 1 FROM subnet_discovery x WHERE x.subnet_id=n.id AND x.revision=n.revision AND x.completed_at>now()-interval '1 hour')
+  OR EXISTS(SELECT 1 FROM subnet_discovery_reads r WHERE r.subnet_id=n.id AND (r.assignment_until IS NULL OR r.assignment_until<=now() OR r.assignment_session<>c.current_session))
+  OR EXISTS(SELECT 1 FROM subnet_discovered d WHERE d.subnet_id=n.id AND d.quantity>0 AND d.next_read_at<=now() AND NOT EXISTS(SELECT 1 FROM subnet_items i WHERE i.subnet_id=n.id AND i.item_id=d.item_id AND i.enabled))))) ORDER BY n.id`, group)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var id, collector string
+		if err = rows.Scan(&id, &collector); err != nil {
+			rows.Close()
+			return err
+		}
+		key := "subnet:" + id
+		devices[key] = []string{collector}
+		cursors[key] = ""
+		networks = append(networks, key)
+		subnetIDs[collector] = id
+	}
+	rows.Close()
+	if err = rows.Err(); err != nil {
+		return err
+	}
+	sort.Strings(networks)
 	after := func(values []string, cursor string) int {
 		index := sort.Search(len(values), func(i int) bool { return values[i] > cursor })
 		return index % len(values)
@@ -133,13 +160,25 @@ func (s *Store) allocateAcquisitionRound(ctx context.Context, tx pgx.Tx, group s
 		FROM devices d JOIN networks n ON n.id=d.network_id WHERE a.device_id=d.id AND n.server_group=$1`, group, deadline); err != nil {
 		return err
 	}
+	if _, err = tx.Exec(ctx, `UPDATE subnet_read_intents a SET grant_id='',grant_budget=0,claimed=false,grant_until=$2 FROM monitored_subnets n WHERE n.id=a.subnet_id AND n.server_group=$1`, group, deadline); err != nil {
+		return err
+	}
 	for device, budget := range allocations {
+		if subnet, ok := subnetIDs[device]; ok {
+			if _, err := tx.Exec(ctx, `UPDATE subnet_read_intents SET grant_id=$2,grant_budget=$3,claimed=false,grant_until=$4 WHERE subnet_id=$1`, subnet, newID(), budget, deadline); err != nil {
+				return err
+			}
+			continue
+		}
 		if _, err = tx.Exec(ctx, `UPDATE acquisition_intents SET grant_id=$2,grant_budget=$3 WHERE device_id=$1`,
 			device, newID(), budget); err != nil {
 			return err
 		}
 	}
 	for network, cursor := range cursors {
+		if strings.HasPrefix(network, "subnet:") {
+			continue
+		}
 		if _, err = tx.Exec(ctx, `INSERT INTO cooperative_rotation(network_id,device_cursor) VALUES($1,$2)
 			ON CONFLICT(network_id) DO UPDATE SET device_cursor=excluded.device_cursor`, network, cursor); err != nil {
 			return err

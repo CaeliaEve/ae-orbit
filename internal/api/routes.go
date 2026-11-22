@@ -24,6 +24,19 @@ func integerQuery(r *http.Request, key string) (int, error) {
 }
 
 func (s *Server) routes() {
+	s.integrationRoutes()
+	s.qqRoutes()
+	s.monitoringRoutes()
+	s.subnetRoutes()
+	s.cpuDetailRoutes()
+	s.mux.HandleFunc("POST /api/v1/networks/{network}/inventory-profile/resources", s.user(func(w http.ResponseWriter, r *http.Request, m protocol.Member) {
+		if err := s.db.EnableResourceCatalog(r.Context(), m.ID, r.PathValue("network")); err != nil {
+			fail(w, err)
+			return
+		}
+		respond(w, 204, nil)
+	}))
+	s.playerRoutes()
 	s.productionJobRoutes()
 	s.mux.HandleFunc("GET /api/v1/networks/{network}/devices", s.user(s.devices))
 	s.mux.HandleFunc("POST /api/v1/networks/{network}/devices", s.user(s.createDevice))
@@ -34,6 +47,10 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /bridge/v2/hello", s.device(s.helloV2))
 	s.mux.HandleFunc("POST /bridge/v2/poll", s.device(s.pollV2))
 	s.mux.HandleFunc("POST /bridge/v2/inventory", s.device(s.inventoryV2))
+	s.mux.HandleFunc("POST /bridge/v2/register-sample", s.device(s.registerSample))
+	s.mux.HandleFunc("POST /api/v1/networks/{network}/inventory-profile/variants", s.user(s.enableVariants))
+	s.mux.HandleFunc("GET /api/v1/networks/{network}/items/{item}/variants", s.user(s.itemVariants))
+	s.mux.HandleFunc("GET /api/v1/networks/{network}/items/{item}/variant-data", s.user(s.variantData))
 	s.mux.HandleFunc("GET /oc/{path...}", s.ocFile)
 	s.mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { respond(w, 200, map[string]string{"status": "ok"}) })
 	s.mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
@@ -99,7 +116,8 @@ func (s *Server) routes() {
 			fail(w, err)
 			return
 		}
-		q := protocol.ItemQuery{Search: r.URL.Query().Get("q"), Sort: r.URL.Query().Get("sort"), Cursor: r.URL.Query().Get("cursor"), Limit: limit, Consistency: r.URL.Query().Get("consistency")}
+		q := protocol.ItemQuery{Kind: r.URL.Query().Get("kind"), Search: r.URL.Query().Get("q"), Sort: r.URL.Query().Get("sort"), Cursor: r.URL.Query().Get("cursor"), Limit: limit, Consistency: r.URL.Query().Get("consistency")}
+		q.Grouped = r.URL.Query().Get("grouped") == "true"
 		q.View = r.URL.Query().Get("view")
 		if len(r.URL.Query()["anchor"]) > 1 || len(r.URL.Query()["cursor"]) > 1 || len(r.URL.Query()["page"]) > 1 || len(r.URL.Query()["pagination"]) > 1 {
 			fail(w, store.ErrInvalid)
@@ -146,6 +164,7 @@ func (s *Server) routes() {
 		respondInventory(w, r, value)
 	}))
 	s.mux.HandleFunc("GET /api/v1/networks/{network}/catalog/items/{item}/image", s.user(s.catalogImage))
+	s.mux.HandleFunc("GET /api/v1/networks/{network}/catalog/cpus/{cpu}/image", s.user(s.cpuOutputImage))
 	s.mux.HandleFunc("GET /api/v1/networks/{network}/items/lookup", s.user(s.lookupItems))
 	s.mux.HandleFunc("GET /api/v1/networks/{network}/inventory-history", s.user(s.inventoryHistorySeries))
 	s.mux.HandleFunc("GET /api/v1/networks/{network}/inventory-history/records", s.user(s.inventoryHistoryRecords))
@@ -174,6 +193,7 @@ func (s *Server) routes() {
 			fail(w, err)
 			return
 		}
+		s.enrichCPUOutputs(r.PathValue("network"), value.CPUs)
 		respond(w, 200, value)
 	}))
 	s.mux.HandleFunc("POST /api/v1/networks/{network}/orders", s.user(func(w http.ResponseWriter, r *http.Request, m protocol.Member) {

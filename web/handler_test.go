@@ -33,6 +33,12 @@ func TestFrontendBoundaries(t *testing.T) {
 			if tc.code == http.StatusOK && !strings.Contains(w.Header().Get("Content-Security-Policy"), "frame-ancestors 'none'") {
 				t.Fatal("missing frontend CSP")
 			}
+			if tc.code == http.StatusOK {
+				csp := w.Header().Get("Content-Security-Policy")
+				if !strings.Contains(csp, "img-src 'self' blob:;") || !strings.Contains(csp, "script-src 'self';") {
+					t.Fatal("local texture images must be allowed without expanding script sources", csp)
+				}
+			}
 		})
 	}
 }

@@ -13,11 +13,11 @@ test("inventory cards expose a restrained depth and selected-state contract", ()
   assert.match(compactCSS, /\.inventory-table \.missing-image[\s\S]*?background:/);
 });
 
-test("inventory detail and hover surfaces keep a visual anchor without requiring textures", () => {
+test("inventory detail keeps its visual anchor and tooltip stays text-first", () => {
   assert.match(compactCSS, /\.detail-empty/);
-  assert.match(compactCSS, /\.inventory-hover-media/);
   assert.match(appSource, /class="detail-empty"/);
-  assert.match(appSource, /class="inventory-hover-media"/);
+  assert.doesNotMatch(appSource, /class="inventory-hover-media"/);
+  assert.match(compactCSS, /\.nei-tooltip-title/);
 });
 
 test("the shell avoids template kickers and ambient panel shadows", () => {
@@ -59,11 +59,13 @@ test("inventory footer names navigation and announces loading without rebuilding
   assert.match(compactCSS, /\.catalog-footer \.page-button[\s\S]*min-height: 44px/);
 });
 
-test("inventory hover card is centered over the catalog and only mouse-triggered", () => {
-  assert.match(appSource, /const tableRect = wrap\.getBoundingClientRect\(\)/);
-  assert.match(appSource, /const left = tableRect\.left \+ \(tableRect\.width - cardRect\.width\) \/ 2/);
+test("inventory tooltip follows the pointer without a delayed card or position animation", () => {
+  assert.match(appSource, /tooltipPosition\(inventoryHover\.pointer/);
+  assert.match(appSource, /requestAnimationFrame\(positionInventoryHover\)/);
+  assert.doesNotMatch(appSource, /inventoryHoverTimer/);
   assert.doesNotMatch(appSource, /document\.addEventListener\("focusin", event => \{[\s\S]*?showInventoryHover/);
   assert.match(compactCSS, /\.inventory-hover-card\s*\{[\s\S]*?position:\s*fixed/);
+  assert.match(compactCSS, /\.inventory-hover-card\s*\{[^}]*transition:\s*none/);
 });
 
 test("inventory hover does not add a white card highlight", () => {
@@ -73,28 +75,23 @@ test("inventory hover does not add a white card highlight", () => {
   assert.match(compactCSS, /\.inventory-table tr:hover td\s*\{[\s\S]*?background:\s*transparent/);
 });
 
-test("inventory hover exposes catalog metadata without inventing missing values", () => {
-  assert.match(appSource, /from "\.\/inventory-catalog\.mjs"/);
-  assert.match(appSource, /catalogFacts\(item\)/);
-  assert.match(appSource, /catalogTooltips\(item\)/);
-  assert.match(appSource, /inventory-hover-catalog/);
-  assert.match(compactCSS, /\.inventory-hover-catalog/);
-  assert.match(compactCSS, /\.inventory-hover-tooltip/);
+test("inventory hover supports NEI detail and tooltip paging without changing inventory wheel behavior", () => {
+  assert.match(appSource, /inventoryTooltipModel\(item, inventoryHover\.advanced\)/);
+  assert.match(appSource, /event\.code === "KeyZ"/);
+  assert.match(appSource, /event\.key === "Shift"/);
+  assert.match(compactCSS, /\.nei-tooltip-mod/);
+  assert.match(compactCSS, /\.mc-6/);
 });
 
-test("network management uses one structured operations dashboard", () => {
-  assert.match(appSource, /class="network-hero"/);
-  assert.match(appSource, /class="network-metrics"/);
-  assert.match(appSource, /class="network-dashboard-grid"/);
-  assert.match(appSource, /class="network-capabilities"/);
-  assert.match(appSource, /network-devices-panel/);
-  assert.doesNotMatch(appSource, /<div class="network-table" id="network-table">/);
-  assert.match(compactCSS, /\.network-dashboard\s*\{/);
-  assert.match(compactCSS, /\.network-metrics\s*\{/);
-  assert.match(compactCSS, /\.network-dashboard-grid\s*\{/);
-  assert.match(compactCSS, /\.network-capability\s*\{/);
-  assert.match(compactCSS, /\.network-devices-panel\s+\.device-cards\s*\{/);
-  assert.match(compactCSS, /#view-network #network-info\.network-dashboard\s*\{[\s\S]*?overflow-y:\s*auto/);
+test("network management uses one reachable roster and preserves its controls during refresh", () => {
+  assert.match(indexHTML, /id="network-nodes-search"/);
+  assert.match(indexHTML, /id="network-nodes-list"/);
+  assert.match(indexHTML, /id="network-sidebar"/);
+  assert.doesNotMatch(appSource, /class="device-card"|class="network-table-row"/);
+  assert.match(appSource, /patchDashboardHTML\("#network-nodes-list"/);
+  assert.match(appSource, /state\.networkNodes\.expanded/);
+  assert.match(compactCSS, /#view-network\s*\{[^}]*overflow-y:\s*auto/);
+  assert.match(compactCSS, /\.network-management-layout\s*\{[^}]*minmax\(0,\s*1fr\)/);
 });
 
 test("CPU summary has one stable host and desktop lists remain reachable", () => {

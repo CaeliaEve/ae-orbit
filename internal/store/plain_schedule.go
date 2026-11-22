@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"github.com/CaeliaEve/ae-orbit/internal/protocol"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -14,6 +16,14 @@ const plainZeroRecheck = time.Hour
 // Stock and recipe work starts from the small observed stock set, rather than
 // walking every scheduled candidate to find the few positive observations.
 func (s *Store) plainBackgroundPool(ctx context.Context, tx pgx.Tx, d Device, stock, recipe bool) ([]cooperativeCandidate, error) {
+	var encoded []byte
+	var caps protocol.Capabilities
+	if err := tx.QueryRow(ctx, "SELECT capabilities FROM devices WHERE id=$1", d.ID).Scan(&encoded); err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(encoded, &caps); err != nil {
+		return nil, err
+	}
 	kind, due := "quantity", "q.next_quantity_at"
 	if recipe {
 		kind, due = "quantity_recipe", "q.next_verify_at"
@@ -21,7 +31,7 @@ func (s *Store) plainBackgroundPool(ctx context.Context, tx pgx.Tx, d Device, st
 	columns := `d.id,d.kind,d.name,d.damage,d.nbt,d.label,d.exact,'',now()+interval '30 seconds'`
 	from := `FROM inventory_schedule q
 		JOIN network_inventory_profiles p ON p.network_id=q.network_id
-		JOIN LATERAL (SELECT d.* FROM plain_catalog_candidates c
+		JOIN LATERAL (SELECT d.* FROM item_catalog_candidates c
 			JOIN item_definitions d ON d.network_id=c.network_id AND d.id=c.item_id
 			WHERE c.network_id=q.network_id AND c.item_id=q.item_id OFFSET 0) d ON true
 		LEFT JOIN LATERAL (SELECT i.item_id,i.quantity FROM inventory i
@@ -39,13 +49,13 @@ func (s *Store) plainBackgroundPool(ctx context.Context, tx pgx.Tx, d Device, st
 		from = `FROM stock i
 			JOIN LATERAL (SELECT q.* FROM inventory_schedule q
 				WHERE q.network_id=$1 AND q.item_id=i.item_id OFFSET 0) q ON true
-			JOIN LATERAL (SELECT d.* FROM plain_catalog_candidates c
+			JOIN LATERAL (SELECT d.* FROM item_catalog_candidates c
 				JOIN item_definitions d ON d.network_id=c.network_id AND d.id=c.item_id
 				WHERE c.network_id=q.network_id AND c.item_id=q.item_id OFFSET 0) d ON true`
 		observed = ""
 	}
 	query := prefix + `SELECT ` + columns + ` ` + from + `
-		WHERE q.network_id=$1 AND d.kind='item' AND d.exact AND d.nbt='' AND ` + due + `<=now()` + observed + `
+		WHERE q.network_id=$1 AND ` + exactItemSQL(caps) + ` AND d.exact AND ` + due + `<=now()` + observed + `
 		AND ` + noActiveCooperativeQuantity + `
 		AND NOT EXISTS(SELECT 1 FROM inventory_refreshes hot WHERE hot.network_id=q.network_id
 			AND hot.item_id=q.item_id AND hot.confirmed_at IS NULL AND hot.expires_at>now())
@@ -66,7 +76,7 @@ func (s *Store) plainBackgroundPool(ctx context.Context, tx pgx.Tx, d Device, st
 	defer rows.Close()
 	result := []cooperativeCandidate{}
 	for rows.Next() {
-		c := cooperativeCandidate{NextQuantityTurn: -1}
+		c := cooperativeCandidate{NextQuantityTurn: -1, NextResourceTurn: -1, NextFluidRecipeTurn: -1}
 		c.Kind, c.Purpose = kind, "background"
 		if err := rows.Scan(&c.ID, &c.Item.Kind, &c.Item.Name, &c.Item.Damage, &c.Item.NBT,
 			&c.Item.Label, &c.Item.Exact, &c.RequestID, &c.ExpiresAt); err != nil {

@@ -13,6 +13,11 @@ local function safe_code(err,fallback)
   return fallback
 end
 function M.run(context,config_path,report,mode)
+  local read_ok,initial=pcall(function()return assert(loadfile(config_path or "/etc/ae-orbit.cfg"))()end)
+  if read_ok and type(initial)=="table" and initial.role=="subnet_monitor" then return require("aeorbit.subnet").run(context,config_path,report,mode) end
+  if read_ok and type(initial)=="table" and initial.role=="monitor" then
+    return require("aeorbit.monitor").run(context,config_path,report,mode)
+  end
   local event,me,bridge,changed
   local listener_owned,subscription_owned=false,false
   local phase="setup_failed"
@@ -54,6 +59,15 @@ function M.run(context,config_path,report,mode)
       local disabled,result=pcall(me.setItemEventSubscription,false)
       if not disabled then cancel.rethrow(result) end
       if not disabled or result==false then error({fatal=true,code="event_failed"},0) end
+    end
+    if config.inventory_mode=="exact_only" then
+      for _,method in ipairs({"setFluidEventSubscription","setEssentiaEventSubscription"}) do
+        if adapter.has_method(me,method) then
+          local disabled,result=pcall(me[method],false)
+          if not disabled then cancel.rethrow(result) end
+          if not disabled or result==false then error({fatal=true,code="event_failed"},0) end
+        end
+      end
     end
     local internet=config.internet_address and component.proxy(config.internet_address) or component.getPrimary("internet")
     assert(internet)

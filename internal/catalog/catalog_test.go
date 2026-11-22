@@ -175,7 +175,7 @@ func writeElysiumSourceWithScope(t *testing.T, root string, rows map[string][]ma
 		}
 	}
 	files := make([]map[string]any, 0, 3)
-	for _, kind := range []string{"assets", "items", "strings"} {
+	for _, kind := range []string{"assets", "items", "strings", "fluids", "aspects"} {
 		if len(rows[kind]) == 0 {
 			continue
 		}

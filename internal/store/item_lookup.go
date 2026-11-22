@@ -46,7 +46,7 @@ func (s *Store) ItemsByID(ctx context.Context, userID, networkID string, ids []p
         FROM item_definitions requested
         LEFT JOIN item_aliases a ON a.network_id=requested.network_id AND a.alias_id=requested.id
         JOIN item_definitions d ON d.network_id=requested.network_id AND d.id=coalesce(a.canonical_id,requested.id)
-        LEFT JOIN plain_catalog_candidates c ON c.network_id=d.network_id AND c.item_id=d.id
+        LEFT JOIN item_catalog_candidates c ON c.network_id=d.network_id AND c.item_id=d.id
         LEFT JOIN inventory i ON i.network_id=d.network_id AND i.item_id=d.id AND `+catalogObservedSQL+`
         WHERE requested.network_id=$1 AND requested.id=ANY($3::bigint[]) AND `+catalogScopeSQL+`
         AND (i.item_id IS NOT NULL OR $4)`, networkID, session, unique, plain)

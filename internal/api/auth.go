@@ -46,6 +46,10 @@ func (s *Server) user(fn func(http.ResponseWriter, *http.Request, protocol.Membe
 			member = auth.Member
 			r = r.WithContext(context.WithValue(r.Context(), authExpiryKey{}, auth.ExpiresAt))
 		}
+		if expected := r.Header.Get("X-AE-Member"); expected != "" && expected != member.ID {
+			fail(w, httpError{409, "identity_changed"})
+			return
+		}
 		fn(w, r, member)
 	}
 }
@@ -98,17 +102,38 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input struct {
-		Token string `json:"token"`
+		Token    string `json:"token"`
+		GameID   string `json:"game_id"`
+		Password string `json:"password"`
 	}
 	if err := readJSON(w, r, &input, 2048); err != nil {
 		fail(w, err)
 		return
 	}
-	session, err := s.db.CreateSession(r.Context(), input.Token)
+	var session store.BrowserSession
+	var err error
+	if input.Token != "" {
+		if input.GameID != "" || input.Password != "" {
+			fail(w, store.ErrInvalid)
+			return
+		}
+		session, err = s.db.CreateSession(r.Context(), input.Token)
+	} else {
+		done, ok := s.admitPlayerLogin(w, r)
+		if !ok {
+			return
+		}
+		defer done()
+		session, err = s.db.PlayerLogin(r.Context(), input.GameID, input.Password)
+	}
 	if err != nil {
 		fail(w, err)
 		return
 	}
+	s.respondSession(w, session)
+}
+
+func (s *Server) respondSession(w http.ResponseWriter, session store.BrowserSession) {
 	http.SetCookie(w, &http.Cookie{Name: "ac_session", Value: session.Token, Path: "/api/", Expires: session.ExpiresAt, MaxAge: 86400, HttpOnly: true, Secure: s.options.SecureCookies, SameSite: http.SameSiteStrictMode})
 	respond(w, 201, map[string]any{"member": session.Member, "csrf": session.CSRF, "expires_at": session.ExpiresAt})
 }

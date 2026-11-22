@@ -24,7 +24,7 @@ function M.new(me,config)
   assert(M.has_method(me,"getItemInNetwork"),"adapter: missing getItemInNetwork; requires OC 1.12.47-GTNH+ (table/NBT API)")
   local cpu_limit=config.cpu_limit or 64
   assert(type(cpu_limit)=="number" and cpu_limit%1==0 and cpu_limit>=1 and cpu_limit<=64,"adapter: CPU limit must be 1..64")
-  local adapter={me=me,identity_bytes=config.identity_bytes or 4096,cpu_limit=cpu_limit,cpu_generation="0",
+  local adapter={me=me,identity_bytes=config.identity_bytes or 4096,cpu_limit=cpu_limit,cpu_generation="0",cpu_detail_targets=cache.new(768,196608),
     nbt_cache=cache.new(64,32768)}
   local function cpu_name(raw)
     return tostring(raw and raw.name or ""):sub(1,256)
@@ -46,16 +46,22 @@ function M.new(me,config)
     return true
   end
   function adapter:capabilities()
+    local fluids=M.has_method(me,"getFluidInNetwork")
+    local essentia=M.has_method(me,"getEssentiaInNetwork")
     if worker then
-      return {inventory=true,craft=false,cpu_output=false,cpu_selection=false,exact_quantities=true,quantity_refresh=true}
+      return {inventory=true,craft=false,cpu_output=false,cpu_selection=false,exact_quantities=true,quantity_refresh=true,fluids=fluids,essentia=essentia,exact_nbt=true,max_nbt_bytes=self.identity_bytes}
     end
-    return {inventory=true,craft=M.has_method(me,"getCraftable"),cpu_output=M.has_method(me,"getCpus"),
+    return {inventory=true,cpu_notifications=M.has_method(me,"getCpus"),cpu_details=M.has_method(me,"getCpus"),craft=M.has_method(me,"getCraftable"),cpu_output=M.has_method(me,"getCpus"),
       cpu_selection=M.has_method(me,"getCraftable") and M.has_method(me,"getCpus"),
-      exact_quantities=true,quantity_refresh=true,max_craft_quantity=quantity.maximum(),
+      exact_quantities=true,quantity_refresh=true,fluids=fluids,essentia=essentia,craft_fluids=fluids and M.has_method(me,"getCraftable"),max_craft_quantity=quantity.maximum(),exact_nbt=true,max_nbt_bytes=self.identity_bytes,
       enumeration=exact_only and "exact_only" or "volatile_iterator"}
   end
   function adapter:key(raw)
     assert(type(raw)=="table" and type(raw.name)=="string" and #raw.name>0 and #raw.name<=256,"adapter: invalid registry name")
+    if raw.kind=="fluid" or raw.kind=="essentia" then
+      assert((raw.damage or 0)==0 and not raw.tag and raw.hasTag~=true and raw.hasTag~=1,"adapter: tagged resources are unsupported")
+      return raw.kind.."\0"..raw.name.."\0"
+    end
     local damage=raw.damage or 0
     assert(type(damage)=="number" and damage>=0 and damage%1==0 and damage<=2147483647,"adapter: invalid metadata")
     -- OC serializes event booleans through NBT, returning numeric 0/1 in Lua.
@@ -79,13 +85,20 @@ function M.new(me,config)
     self:key(raw)
     local label=type(raw.label)=="string" and raw.label or raw.name
     assert(#label<=512,"adapter: label exceeds budget")
-    return {kind="item",name=raw.name,damage=raw.damage or 0,label=label,exact=true,nbt=raw.tag and base64.encode(raw.tag) or nil}
+    return {kind=raw.kind or "item",name=raw.name,damage=raw.damage or 0,label=label,exact=true,nbt=raw.tag and base64.encode(raw.tag) or nil}
   end
   function adapter:descriptor(raw)
     self:key(raw)
-    return {name=raw.name,damage=raw.damage or 0,tag=raw.tag,hasTag=raw.hasTag==true or raw.hasTag==1,label=raw.label}
+    return {kind=raw.kind,name=raw.name,damage=raw.damage or 0,tag=raw.tag,hasTag=raw.hasTag==true or raw.hasTag==1,label=raw.label}
   end
   function adapter:from_definition(definition)
+    if definition.kind=="fluid" or definition.kind=="essentia" then
+      assert(definition.exact==true and (definition.damage or 0)==0 and (definition.nbt==nil or definition.nbt==""),"adapter: unsupported resource identity")
+      local method=definition.kind=="fluid" and "getFluidInNetwork" or "getEssentiaInNetwork"
+      assert(M.has_method(me,method),"adapter: exact resource method unavailable")
+      local raw={kind=definition.kind,name=definition.name,damage=0,label=definition.label,hasTag=false}
+      self:key(raw);return raw
+    end
     assert(definition.kind=="item" and definition.exact==true,"adapter: unsupported or ambiguous resource")
     local tag=definition.nbt and definition.nbt~="" and base64.decode(definition.nbt) or nil
     local raw={name=definition.name,damage=definition.damage or 0,label=definition.label,tag=tag,hasTag=tag~=nil}
@@ -93,6 +106,19 @@ function M.new(me,config)
   end
   function adapter:read(raw)
     local detail=self:descriptor(raw)
+    if detail.kind=="fluid" or detail.kind=="essentia" then
+      local method=detail.kind=="fluid" and me.getFluidInNetwork or me.getEssentiaInNetwork
+      local value,reason=method({name=detail.name,amount=0})
+      assert(reason==nil,"adapter: exact resource lookup failed")
+      if value~=nil then
+        assert(type(value)=="table" and value.name==detail.name,"adapter: resource lookup returned another identity")
+        assert(value.hasTag~=true and value.hasTag~=1 and not value.tag,"adapter: tagged fluid identity unavailable")
+        detail.size=value.size or value.amount
+        assert(detail.size~=nil,"adapter: resource quantity unavailable")
+        detail.label=value.label or detail.label
+      else detail.size=0 end
+      return detail
+    end
     local value,reason=me.getItemInNetwork(detail)
     assert(reason==nil,"adapter: exact lookup failed")
     if value~=nil then
@@ -115,13 +141,16 @@ function M.new(me,config)
     return quantity.from_number(raw.size)
   end
   function adapter:_recipe(detail)
-    local available,craftable=pcall(me.getCraftable,detail,"item")
+    local kind=detail.kind or "item"
+    if kind~="item" and kind~="fluid" then return nil,"resource recipe type is unsupported" end
+    local request=kind=="fluid" and {name=detail.name,amount=0,size=1} or detail
+    local available,craftable=pcall(me.getCraftable,request,kind)
     if not available then cancel.rethrow(craftable) end
     if not available then return nil,"recipe lookup failed" end
     if craftable==nil then
       -- An empty exact lookup does not establish that a recipe is absent.
       -- Both filtered fallbacks can rebuild the full native storage list.
-      if exact_only then return nil,"recipe could not be confirmed in exact-only mode" end
+      if exact_only or kind=="fluid" then return nil,"recipe could not be confirmed in exact-only mode" end
       if not M.has_method(me,"getCraftables") then return nil,"recipe lookup unavailable" end
       -- Filter inside OC before results enter Lua; never request the full
       -- recipe array. The native method may still walk the AE storage list.
@@ -142,12 +171,17 @@ function M.new(me,config)
     local matches,stack=pcall(function() return craftable.getStack() end)
     if not matches then cancel.rethrow(stack) end
     if not matches then return nil,"recipe identity could not be verified" end
+    if kind=="fluid" then
+      if type(stack)~="table" or stack.amount==nil or (stack.kind~=nil and stack.kind~="fluid") then return nil,"recipe output identity differs" end
+      stack={kind="fluid",name=stack.name,damage=stack.damage,hasTag=stack.hasTag,tag=stack.tag}
+    end
     local identity_ok,key=pcall(self.key,self,stack)
     if not identity_ok then cancel.rethrow(key) end
     if not identity_ok or key~=self:key(detail) then return nil,"recipe output identity differs" end
     return craftable
   end
   function adapter:recipe_status(raw)
+    assert(raw.kind==nil or raw.kind=="item" or raw.kind=="fluid","adapter: resource recipe type is unsupported")
     local detail=self:descriptor(raw)
     local recipe,reason=self:_recipe(detail)
     if reason=="recipe NBT encoding could not be verified" and M.has_method(me,"getItemsInNetwork") then
@@ -167,6 +201,7 @@ function M.new(me,config)
     return recipe~=nil
   end
   function adapter:craft(command)
+    if command.item.kind~="item" and command.item.kind~="fluid" then return nil,"resources are inventory-only",false end
     if command.cpu_name~=nil and type(command.cpu_name)~="string" then
       return nil,"invalid CPU target",false
     end
@@ -236,19 +271,57 @@ function M.new(me,config)
       local raw=values[index]
       local cpu={id=self.cpu_generation..":"..index,name=tostring(raw.name or ""):sub(1,256),busy=raw.busy==true,
         storage=quantity.from_number(raw.storage or 0),coprocessors=raw.coprocessors or 0}
+      if raw.cpu then self.cpu_detail_targets:put(cpu.id,{cpu=raw.cpu},200) end
       if cpu.busy and raw.cpu then
         local ok,output,reason=pcall(function() return raw.cpu.finalOutput() end)
         if not ok then cancel.rethrow(output) end
         if ok and type(output)=="table" then
-          local precise,count=pcall(self.count,self,output)
+          local precise,count=pcall(function()
+            -- Optional visual metadata must never abort the basic CPU roster.
+            local target=self.cpu_detail_targets:get(cpu.id)
+            if target then target.output_identity={name=type(output.name)=="string" and output.name:sub(1,256) or "",
+              damage=output.damage,kind=output.kind,hasTag=output.hasTag,
+              label=type(output.label)=="string" and output.label:sub(1,512) or ""} end
+            return self:count({size=output.size or output.amount})
+          end)
           if not precise then cancel.rethrow(count) end
-          if precise then cpu.output={name=tostring(output.name or ""):sub(1,256),label=tostring(output.label or ""):sub(1,512),quantity=count}
+          if precise then
+            local represented,visual=pcall(function()
+            local visual={name=tostring(output.name or ""):sub(1,256),label=tostring(output.label or ""):sub(1,512),quantity=count}
+            -- finalOutput already supplies this descriptor; retain only small
+            -- visual identity fields, never NBT payloads or another ME query.
+            local kind=output.kind
+            if kind==nil then
+              if output.damage~=nil then kind="item"
+              elseif output.amount~=nil and type(output.hasTag)=="boolean" then kind="fluid" end
+            end
+            if kind=="item" or kind=="fluid" or kind=="essentia" then
+              visual.kind=kind
+              if kind=="item" and type(output.damage)=="number" and output.damage%1==0 and output.damage>=0 and output.damage<=2147483647 then visual.damage=output.damage end
+              local tag=output.hasTag
+              if tag==true or tag==1 or output.tag~=nil then visual.has_tag=true
+              elseif tag==false or tag==0 then visual.has_tag=false end
+            end
+            assert(#visual.name>0,"CPU output registry unavailable")
+            json.encode(visual,8192)
+            return visual
+            end)
+            if not represented then cancel.rethrow(visual) end
+            if represented then cpu.output=visual else cpu.output_unavailable="output metadata unavailable" end
           else cpu.output_unavailable="quantity precision unavailable" end
         else cpu.output_unavailable=ok and tostring(reason or "output unavailable"):sub(1,256) or "monitor unavailable" end
       elseif cpu.busy then cpu.output_unavailable="monitor unavailable" end
       result[#result+1]=cpu
     end
     return result,#values>self.cpu_limit
+  end
+  function adapter:cpu_detail(assignment,check)
+    local target=self.cpu_detail_target
+    if not target or target.id~=assignment.cpu_id then
+      target={id=assignment.cpu_id,value=self.cpu_detail_targets:get(assignment.cpu_id)}
+      self.cpu_detail_target=target
+    end
+    return require("aeorbit.cpu_details").read(target.value,assignment,check)
   end
   return adapter
 end

@@ -80,6 +80,24 @@ cases = [
                   "item": {"kind": "item", "name": "minecraft:stone", "damage": 0, "label": "Stone", "exact": True},
                   "quantity": "64", "current_quantity": "0", "cpu_name": "Main CPU", "wait_for_cpu": True}, True),
 ]
+detail={'assignment_id':'a'*32,'cpu_id':'1:1','kind':'active','ttl_millis':8000}
+result={'assignment_id':'a'*32,'cpu_id':'1:1','kind':'active','total':0,'truncated':False}
+cases += [('CPUDetailAssignment',detail,True),('CPUDetailAssignment',{**detail,'ttl_millis':8001},False),
+          ('CPUDetailResult',result,True),('CPUDetailResult',{**result,'kind':'network'},False),
+          ('CPUDetailResult',{**result,'items':[{'row_id':'row','kind':'item','name':'test:item','label':'Item','quantity':64}]},False),
+          ('PollV2',{'session_id':'session','sequence':'1','cpu_detail':result},True),
+          ('Poll',{'session_id':'session','sequence':'1','cpu_detail':result},False),
+          ('PollAckV2',{**poll_ack,'cpu_detail':detail},True)]
+flow={"input_eut":"100","output_eut":"80","loss_eut":"5","avg_input_eut":"101","avg_output_eut":"79","window_seconds":5,"source":"lsc_sensor_v1"}
+monitor_sample={"object_id":"a"*32,"revision":1,"installation_revision":1,"sample_millis":1000,"stored_eu":"1000","capacity_eu":"10000"}
+cases += [("MonitorSample",monitor_sample,True),("MonitorSample",{**monitor_sample,"flow":flow},True),
+ ("MonitorSample",{**monitor_sample,"flow_error":"unsupported"},True),
+ ("MonitorSample",{**monitor_sample,"flow":{**flow,"input_eut":100}},False),
+ ("MonitorSample",{**monitor_sample,"flow":flow,"flow_error":"unsupported"},False),
+ ("MonitorSample",{"object_id":"a"*32,"revision":1,"installation_revision":1,"sample_millis":1000,"error":"controller_mismatch"},True)]
+cases += [('MonitorHello',{'boot_id':'a'*32,'modules':['gtnh.lsc'],'components':[],'min_interval_seconds':1},True),
+          ('MonitorHello',{'boot_id':'a'*32,'modules':['gtnh.lsc'],'components':[],'min_interval_seconds':0},False),
+          ('MonitorSettings',{'interval_seconds':1,'history_interval_seconds':10,'low_percent':20,'recover_percent':25,'low_duration_seconds':30,'offline_seconds':60,'falling_minutes':15,'raw_retention_days':30,'alerts':True},True)]
 for name, value, expected in cases:
     schema = {"$ref": f"#/components/schemas/{name}", "components": document["components"]}
     valid = Draft202012Validator(schema).is_valid(value)

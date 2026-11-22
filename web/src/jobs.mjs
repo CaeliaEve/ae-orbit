@@ -1,4 +1,5 @@
 import { normalizeQuantity, storageKey, saveDraft } from "./model.mjs";
+import { notificationTarget } from "./qq-notifications.mjs";
 
 const STATES = ["pending", "rejected", "queued", "assigned", "computing", "running", "needs_review", "done", "failed", "canceled", "expired"];
 const KEY = /^[A-Za-z0-9_.:-]{8,128}$/;
@@ -29,7 +30,7 @@ function sameScope(a, b) { return a.memberId === b.memberId && a.networkId === b
 
 export function isJobClaim(entry) { return typeof entry?.batch_id === "string" && entry.batch_id.startsWith(CLAIM); }
 
-export function createJobIntent({ memberId, networkId, requestKey, entries, name = "", ttlSeconds = 3600 }) {
+export function createJobIntent({ memberId, networkId, requestKey, entries, name = "", ttlSeconds = 3600, notification = null }) {
   id(memberId); id(networkId); key(requestKey);
   requireValue(requestKey.length <= 124, "Local job request keys must fit the v1 claim (8-124 characters).");
   requireValue(typeof name === "string" && !/[\u0000-\u001f\u007f]/.test(name) && new TextEncoder().encode(name).length <= 128);
@@ -43,7 +44,7 @@ export function createJobIntent({ memberId, networkId, requestKey, entries, name
     const entryKey = key(`draft-${row.id}`);
     requireValue(!seen.has(entryKey)); seen.add(entryKey);
     return { entry_key: entryKey, item_id: normalizeQuantity(row.item.id), quantity: normalizeQuantity(row.quantity),
-      ...cpuPolicy(row.cpu_name, row.wait_for_cpu) };
+      ...cpuPolicy(row.cpu_name, row.wait_for_cpu), ...(notificationTarget(row.notification || notification) ? {notification:notificationTarget(row.notification || notification)} : {}) };
   });
   const manifest = { request_key: requestKey, name, ttl_seconds: ttlSeconds || 3600, entries: manifestEntries };
   requireValue(new TextEncoder().encode(JSON.stringify(manifest)).length <= 262144);
@@ -57,13 +58,13 @@ function validateIntent(value) {
     value.draftIds.length === value.manifest.entries.length, "Missing persisted manifest associations.");
   const entries = value.manifest.entries.map(entry => {
     requireValue(entry && typeof entry === "object" && !Array.isArray(entry), "Invalid persisted manifest entry.");
-    requireValue(Object.keys(entry).every(field => ["entry_key", "item_id", "quantity", "cpu_name", "wait_for_cpu"].includes(field)),
+    requireValue(Object.keys(entry).every(field => ["entry_key", "item_id", "quantity", "cpu_name", "wait_for_cpu", "notification"].includes(field)),
       "Unexpected persisted manifest entry field.");
     return { ...entry, ...cpuPolicy(entry.cpu_name, entry.wait_for_cpu) };
   });
   const canonical = createJobIntent({ memberId: value.memberId, networkId: value.networkId,
     requestKey: value.requestKey, name: value.manifest.name, ttlSeconds: value.manifest.ttl_seconds,
-    entries: value.draftIds.map((rowId, i) => ({ id: rowId, status: "draft", ...cpuPolicy(entries[i].cpu_name, entries[i].wait_for_cpu),
+    entries: value.draftIds.map((rowId, i) => ({ id: rowId, status: "draft", notification:entries[i].notification, ...cpuPolicy(entries[i].cpu_name, entries[i].wait_for_cpu),
       item: { id: entries[i]?.item_id, exact: true, craftable: true }, quantity: entries[i]?.quantity })) });
   const manifest = { ...value.manifest, entries };
   requireValue(JSON.stringify(canonical.manifest) === JSON.stringify(manifest), "Invalid persisted immutable manifest.");
@@ -254,6 +255,7 @@ export function verifyJobAcceptance(intent, response, context) {
       requireValue(entry.ordinal === ordinal && entry.entry_key === expected.entry_key &&
         entry.requested_item_id === expected.item_id && entry.quantity === expected.quantity &&
         policy.cpu_name === expected.cpu_name && policy.wait_for_cpu === expected.wait_for_cpu && STATES.includes(entry.state));
+      requireValue(JSON.stringify(notificationTarget(entry.notification))===JSON.stringify(notificationTarget(expected.notification)), 'Notification receipt differs from submitted target.');
     });
   }
   return { jobId: receipt.job_id, digest: receipt.manifest_digest, archived: receipt.archived };

@@ -17,11 +17,15 @@ import (
 )
 
 func catalogFixture(t *testing.T) *catalog.Catalog {
+	return catalogFixtureImage(t, "item/minecraft/stone~0.png", []byte{137, 80, 78, 71})
+}
+
+func catalogFixtureImage(t *testing.T, imagePath string, image []byte) *catalog.Catalog {
 	t.Helper()
 	root := t.TempDir()
 	manifest := catalog.Manifest{Version: 1, Items: []catalog.Item{{
 		Key: "minecraft:stone@0", Name: "minecraft:stone", Damage: 0,
-		LocalizedName: "石头", ImagePath: "item/minecraft/stone~0.png",
+		LocalizedName: "石头", ImagePath: imagePath,
 		Frames:      []protocol.CatalogFrame{{X: 0, Y: 0, Width: 16, Height: 16, Ticks: 2}},
 		Interpolate: true,
 	}}}
@@ -37,11 +41,11 @@ func catalogFixture(t *testing.T) *catalog.Catalog {
 		t.Fatal(err)
 	}
 	archive := zip.NewWriter(file)
-	entry, err := archive.Create("item/minecraft/stone~0.png")
+	entry, err := archive.Create(imagePath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = entry.Write([]byte{137, 80, 78, 71}); err != nil {
+	if _, err = entry.Write(image); err != nil {
 		t.Fatal(err)
 	}
 	if err = archive.Close(); err != nil {
@@ -106,6 +110,32 @@ func TestCatalogMetadataAndImageEndpoint(t *testing.T) {
 	second.Body.Close()
 	if second.StatusCode != http.StatusNotModified {
 		t.Fatalf("ETag response = %d", second.StatusCode)
+	}
+	// A source upgrade retains the stock identity but changes its image content
+	// key. Give the browser a new URL instead of reusing its immutable old cache.
+	newImage := []byte{137, 80, 78, 71, 1}
+	newCatalog := catalogFixtureImage(t, "item/minecraft/stone-new~0.png", newImage)
+	t.Cleanup(func() { newCatalog.Close() })
+	updatedServer := httptest.NewServer(api.NewWithCatalog(f.db, options, newCatalog))
+	t.Cleanup(updatedServer.Close)
+	updatedPage := decode[protocol.ItemPage](t, sendServer(t, updatedServer, "GET", "/api/v1/networks/"+f.network.ID+"/items?limit=1", adminToken, ""), 200)
+	if len(updatedPage.Items) != 1 || updatedPage.Items[0].ID != page.Items[0].ID || updatedPage.Items[0].Quantity != page.Items[0].Quantity || updatedPage.Items[0].Catalog.ImageURL == imagePath {
+		t.Fatal("source upgrade reused an immutable image URL or changed stock", updatedPage.Items)
+	}
+	request, err = http.NewRequest("GET", updatedServer.URL+updatedPage.Items[0].Catalog.ImageURL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Authorization", "Bearer "+adminToken)
+	request.Header.Set("If-None-Match", etag)
+	updatedImage, err := updatedServer.Client().Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err = io.ReadAll(updatedImage.Body)
+	updatedImage.Body.Close()
+	if err != nil || updatedImage.StatusCode != http.StatusOK || string(data) != string(newImage) || updatedImage.Header.Get("ETag") == etag {
+		t.Fatalf("source upgrade returned the old image: %d, %x, %v", updatedImage.StatusCode, data, err)
 	}
 }
 

@@ -68,6 +68,7 @@ test("imports without listening and serves only the static allowlist", async (t)
   assert.equal(page.status, 200);
   assert.match(page.text, /AE Orbit/);
   assert.match(page.headers["content-security-policy"], /connect-src 'self'/);
+  assert.match(page.headers["content-security-policy"], /img-src 'self' data: blob:/);
   assert.equal(page.headers["x-content-type-options"], "nosniff");
   assert.match(page.headers["cache-control"], /no-store/);
   assert.match((await request(`${origin}/app.js`)).headers["content-type"], /javascript/);

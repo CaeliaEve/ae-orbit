@@ -1,0 +1,16 @@
+{
+  "manifest_version": 2,
+  "id": "aeorbit.qq-notifications",
+  "version": "1.5.2",
+  "name": "AE Orbit QQ 联动",
+  "description": "蓝波顿电量预警与查询、指定 CPU 的任务通知、子网库存关键词查询。复用 SnowLuma，支持群内 @ 和私聊。",
+  "author": {"name": "AE Orbit", "url": "https://github.com/CaeliaEve/ae-orbit"},
+  "urls": {"repository": "https://github.com/CaeliaEve/ae-orbit"},
+  "i18n": {"default_locale": "zh-CN", "supported_locales": ["zh-CN"]},
+  "license": "MIT",
+  "host_application": {"min_version": "1.3.0", "max_version": "1.3.99"},
+  "sdk": {"min_version": "2.21.0", "max_version": "2.99.99"},
+  "dependencies": [],
+  "capabilities": ["api.call"],
+  "plugin_type": "integration"
+}

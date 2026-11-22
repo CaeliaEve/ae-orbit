@@ -208,7 +208,7 @@ func (s *Store) assignCommands(ctx context.Context, tx pgx.Tx, networkID, group,
         FROM orders o LEFT JOIN item_aliases a ON a.network_id=o.network_id AND a.alias_id=o.item_id
         JOIN item_definitions d ON d.network_id=o.network_id AND d.id=coalesce(a.canonical_id,o.item_id)
         JOIN inventory i ON i.network_id=d.network_id AND i.item_id=d.id
-        WHERE o.network_id=$1 AND `+catalogScopeSQL+` AND `+catalogObservedSQL+` AND o.state='queued' AND o.expires_at>now() ORDER BY o.created_at,o.id LIMIT $2 FOR UPDATE OF o SKIP LOCKED`, networkID, available)
+        WHERE o.network_id=$1 AND `+craftSupportedSQL(caps)+` AND `+catalogScopeSQL+` AND `+catalogObservedSQL+` AND o.state='queued' AND o.expires_at>now() ORDER BY o.created_at,o.id LIMIT $2 FOR UPDATE OF o SKIP LOCKED`, networkID, available)
 	if err != nil {
 		return err
 	}
@@ -297,9 +297,15 @@ func uniqueIdleCPU(cpus *[]protocol.CPU, truncated bool, name string) bool {
 }
 
 func (s *Store) saveCPUs(ctx context.Context, tx pgx.Tx, networkID string, p protocol.Poll) error {
+	if _, err := tx.Exec(ctx, `DELETE FROM qq_cpu_candidates WHERE network_id=$1 AND (session_id<>$2 OR observed_at<=now()-interval '90 seconds')`, networkID, p.SessionID); err != nil {
+		return err
+	}
 	encoded, _ := json.Marshal(*p.CPUs)
 	if string(encoded) == "null" {
 		encoded = []byte("[]")
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO qq_cpu_candidates(network_id,session_id,cpu_id,cpu) SELECT $1,$2,c->>'id',c FROM jsonb_array_elements($3::jsonb) c ON CONFLICT(network_id,session_id,cpu_id) DO UPDATE SET cpu=excluded.cpu,observed_at=now()`, networkID, p.SessionID, encoded); err != nil {
+		return err
 	}
 	var previousSession string
 	var previousJSON []byte
@@ -321,6 +327,9 @@ func (s *Store) saveCPUs(ctx context.Context, tx pgx.Tx, networkID string, p pro
 		return err
 	}
 	if changed {
+		if err := updateQQCPUWatches(ctx, tx, networkID, p); err != nil {
+			return err
+		}
 		return s.event(ctx, tx, networkID, "cpus")
 	}
 	return nil

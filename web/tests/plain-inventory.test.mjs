@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { stockText, stockFreshness, inventorySummary } from "../src/plain-inventory.mjs";
+import { stockText, stockFreshness, inventorySummary, resourceUnit, craftingKindSupported, craftingQuantityLabel } from "../src/plain-inventory.mjs";
 
 test("unqueried candidates are distinct from confirmed zero and stale stock", () => {
   assert.equal(stockText({ quantity: "0", quantity_known: false }), "未查询");
@@ -8,6 +8,30 @@ test("unqueried candidates are distinct from confirmed zero and stale stock", ()
   assert.equal(stockText({ quantity: "42" }), "42");
   assert.equal(stockFreshness({ quantity_known: false }, () => "wrong"), "等待精确查询");
   assert.equal(stockFreshness({ quantity_known: true, current_session: false }, () => "wrong"), "库存待同步");
+});
+test("resource quantities keep units and remain unknown until observed",()=>{
+  assert.equal(stockText({kind:"fluid",quantity:"125000"}),"125,000 mB");
+  assert.equal(stockText({kind:"essentia",quantity:"69"}),"69 源质");
+  assert.equal(stockText({kind:"fluid",quantity:"0",quantity_known:false}),"未查询");
+  assert.equal(resourceUnit({kind:"item"}),"");
+  const stats={scope:"nesql_plain",resources:[{kind:"fluid",entries:"2",checked:"4",candidates:"10",total_quantity:"2500",unit:"mB",supported:false}]};
+  assert.match(inventorySummary(stats,()=>"","fluid"),/2,500 mB/);
+  assert.match(inventorySummary(stats,()=>"","fluid"),/等待支持此类型的 OC/);
+  assert.match(inventorySummary(stats,()=>"","essentia"),/目录尚未启用/);
+});
+test("fluid ordering requires separately negotiated primary crafting support",()=>{
+ const fluid={kind:"fluid"};
+ assert.equal(craftingKindSupported(fluid,{craft:true,fluids:true}),false);
+ assert.equal(craftingKindSupported(fluid,{craft:true,fluids:true,craft_fluids:true}),true);
+ assert.equal(craftingKindSupported({kind:"essentia"},{craft:true,fluids:true,craft_fluids:true}),false);
+ assert.match(craftingQuantityLabel(fluid),/1000 mB = 1 桶/);
+});
+test("group totals retain exact quantities and only concrete NBT identities can craft",()=>{
+ const item={kind:'item',has_tag:true};
+ assert.equal(craftingKindSupported(item,{craft:true}),false);
+ assert.equal(craftingKindSupported(item,{exact_nbt:true}),true);
+ assert.equal(craftingKindSupported({...item,group:{quantity:'12'}},{exact_nbt:true}),false);
+ assert.equal(stockText({quantity:'0',group:{quantity:'18446744073709551614'}}),'18,446,744,073,709,551,614');
 });
 test("summary describes export scope, partial progress and observation freshness", () => {
   assert.equal(inventorySummary(null, () => ""), "");

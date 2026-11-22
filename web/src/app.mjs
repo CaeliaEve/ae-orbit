@@ -1,20 +1,29 @@
+import {createIntegrationSettings} from './integration-settings.mjs';
 import {
   createIcons, createElement, Orbit, Network, LogOut, Boxes, ListChecks, Cpu, RadioTower, RefreshCw,
   Search, ListPlus, ChevronLeft, ChevronRight, ChevronDown, X, Plus, Minus, Package,
   Trash2, Check, Clock, CircleAlert, LogIn, ArrowUpRight, Server, Send, Pause, Play, Square,
   LayoutDashboard, Settings, Github, Bell, Activity, Monitor, SlidersHorizontal, Code2, FileText, CircleHelp, Copy,
-  WifiOff, PanelLeftClose,
+  WifiOff, PanelLeftClose, UserRound, Puzzle, Ellipsis, BatteryCharging, ArrowUp, ArrowDown, GripVertical, MessagesSquare,
 } from "lucide";
 import { createAPI } from "./api.mjs";
+import { createCPUDetails, cpuDetailColumnsHTML, cpuDetailStatus } from "./cpu-details.mjs";
+import { cpuOutputText } from "./cpu-ui.mjs";
+import { createPluginMarket } from "./plugin-market.mjs";
+import { createSubnetMonitor } from "./subnet-monitor.mjs";
+import { coreNavigation, pluginNavigation, availableNavigation, orderedNavigation, partitionNavigation, navigationKey, loadNavigation, saveNavigation, moveNavigation, placeNavigation, normalizeNavigation } from "./navigation.mjs";
 import { createInventoryWheel, inventoryKeyboardDirection } from "./inventory-paging.mjs";
-import { quantityKnown, stockText, stockFreshness, inventorySummary } from "./plain-inventory.mjs";
+import { inventoryTooltipModel, paginateTooltipLines, splitTooltipLine, tooltipLineHTML, tooltipPosition } from "./inventory-tooltip.mjs";
+import { quantityKnown, craftingKindSupported, craftingQuantityLabel, stockText, stockFreshness, inventorySummary,resourceUnit,resourceLabel } from "./plain-inventory.mjs";
 import { inventoryTrendHTML, inventoryTrendModel, loadTrendHistory, recordTrendSample, saveTrendHistory, trendStorageKey } from "./inventory-trend.mjs";
 import { dashboardTasks, dashboardInventory, dashboardTasksHTML } from "./dashboard.mjs";
 import { createHistoryController, historyChartHTML, historyChartModel, historyRecordsHTML, historyTime } from "./inventory-history.mjs";
 import { loadOrderSnapshot } from "./orders.mjs";
 import { createJobController } from "./job-controller.mjs";
 import { isJobClaim } from "./jobs.mjs";
+import { createQQNotifications, notificationLabel } from "./qq-notifications.mjs";
 import { jobListHTML, jobDetailHTML, recoveryHTML } from "./job-view.mjs";
+import { craftingJobModel, craftingOverviewHTML, craftingOrdersHTML } from "./crafting-center.mjs";
 import {
   normalizeQuantity, formatQuantity, formatCompactQuantity, storageKey, loadDraft, saveDraft, addDraft,
   updateDraft, removeDraft, completeSubmission, networkQualityLabel,
@@ -28,15 +37,15 @@ import {
   loadTexturePackURL,
   saveCachedTexturePack,
 } from "./texture-pack.mjs";
+import { playerName, submitterName, loginPayload, playerAccountHTML } from "./player-identity.mjs";
 import { clearSession, loadSession, saveSession } from "./session.mjs";
 import { connectionTestTone, connectionTestText } from "./connection-status.mjs";
-import { deviceState, healthSummary, networkDeviceSummary, roleLabel } from "./device-status.mjs";
+import { networkDeviceSummary } from "./device-status.mjs";
+import { networkNodeModel, networkNodesHTML, networkOverviewHTML, networkSidebarHTML } from "./network-monitor.mjs";
 import {
   networkCreateResult,
   networkRefreshState,
   normalizeNetworkDraft,
-  networkDashboardSummary,
-  networkCapabilityRows,
 } from "./network-ui.mjs";
 import { connectionDiagnostics, streamStateTone, streamStateText } from "./connection-diagnostics.mjs";
 import { networkErrorKind, networkRecoveryState } from "./network-recovery.mjs";
@@ -46,9 +55,6 @@ import {
   animationFrameAt,
   catalogAnimation,
   catalogDisplayName,
-  catalogFacts,
-  catalogSource,
-  catalogTooltips,
   spriteLayout,
 } from "./inventory-catalog.mjs";
 
@@ -57,6 +63,8 @@ const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const esc = value => String(value ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const quantityHTML = value => formatQuantity(value).replaceAll(",", ",<wbr>");
 const compactQuantityHTML = value => esc(formatCompactQuantity(value));
+const resourceQuantityHTML = (item, compact = false) => quantityKnown(item)
+  ? `${compact ? compactQuantityHTML(item.group?.quantity ?? item.quantity) : quantityHTML(item.group?.quantity ?? item.quantity)}${resourceUnit(item) ? `<small class="resource-unit">${resourceUnit(item)}</small>` : ""}` : "未查询";
 const icon = name => `<i data-lucide="${name}" aria-hidden="true"></i>`;
 const inventoryIconCache = new Map();
 function inventoryIcon(name) {
@@ -68,7 +76,7 @@ function inventoryIcon(name) {
   }
   return inventoryIconCache.get(name);
 }
-const icons = { Orbit, Network, LogOut, Boxes, ListChecks, Cpu, RadioTower, RefreshCw, Search, ListPlus, ChevronLeft, ChevronRight, ChevronDown, X, Plus, Minus, Package, Trash2, Check, Clock, CircleAlert, LogIn, ArrowUpRight, Server, Send, Pause, Play, Square, LayoutDashboard, Settings, Github, Bell, Activity, Monitor, SlidersHorizontal, Code2, FileText, CircleHelp, Copy, WifiOff, PanelLeftClose };
+const icons = { Orbit, Network, LogOut, Boxes, ListChecks, Cpu, RadioTower, RefreshCw, Search, ListPlus, ChevronLeft, ChevronRight, ChevronDown, X, Plus, Minus, Package, Trash2, Check, Clock, CircleAlert, LogIn, ArrowUpRight, Server, Send, Pause, Play, Square, LayoutDashboard, Settings, Github, Bell, Activity, Monitor, SlidersHorizontal, Code2, FileText, CircleHelp, Copy, WifiOff, PanelLeftClose, UserRound, Puzzle, Ellipsis, BatteryCharging, ArrowUp, ArrowDown, GripVertical, MessagesSquare };
 const paint = () => {
   const pending = $$('i[data-lucide]');
   if (!pending.length) return;
@@ -77,10 +85,11 @@ const paint = () => {
   for (const element of $$('[data-icon-pending]')) element.removeAttribute("data-icon-pending");
 };
 const api = createAPI();
+const cpuDetails = createCPUDetails({request:(...args)=>api.request(...args),changed:()=>renderCPUProcess()});
 const texturePack = createTexturePackStore();
 const state = {
   member: null, network: null, networks: [], view: "dashboard", items: [], itemCache: new Map(),
-  orders: [], devices: [], cpus: { cpus: [] }, icons: {}, filter: "", sort: "name", search: "",
+  orders: [], devices: [], cpus: { cpus: [] }, icons: {}, filter: "", sort: "name", search: "",resourceKind:"item",
   stockView: "stock", inventoryScope: "", inventoryStats: null,
   inventoryTrend: [], inventoryTrendKey: "", dashboardTrendHours: 24,
   cursor: "", anchorCursor: "", inventoryWindowAnchored: false, nextCursor: "", cursors: [{ cursor: "", anchor: "" }], page: 0, inventoryPageCount: 1, inventoryTotal: null, inventoryDesiredPage: null, inventoryLimit: 50, inventoryTarget: null, inventoryQueryPending: false, selected: null, amount: "1",
@@ -89,10 +98,12 @@ const state = {
   orderFilter: "active", orderGroup: "batch", stream: null, streamConnected: false, streamState: "closed", generation: 0,
   context: 0, orderGeneration: 0, orderSnapshot: null, ordersLoading: false, ordersError: false,
   cpuMonitor: { search: "", filter: "all", sort: "network", expanded: new Set() },
+  networkNodes: { search: "", filter: "all", role: "all", expanded: new Set() },
   activeOrderCount: 0, activeOrdersTruncated: false, detailId: "", detailGeneration: 0,
   taskMode: "jobs", jobFilter: "unsettled", jobStorageError: false,
-  settings: loadSettings(), settingsSection: "display", session: null,
-  texturePackStatus: texturePack.status(), texturePackLoading: false, texturePackError: "",
+  crafting: { search: "", sort: "newest", owner: "all", orderSearch: "" },
+  settings: loadSettings(), settingsSection: "display", session: null, loginMode: "player", teamMembers: [], teamInvitations: [],
+  texturePackStatus: texturePack.status(), texturePackLoading: false, texturePackError: "", texturePackWarning: "",
   connectionTest: { status: "idle", checkedAt: "", message: "" },
   networkLoading: false, networkError: "", networkErrorKind: "", networkSnapshotReady: false, networkCreateBusy: false,
 };
@@ -111,6 +122,15 @@ const jobs = createJobController({
     if (!$("#detail-panel").contains(document.activeElement)) renderDetail();
   },
 });
+let navigationPreferences = loadNavigation(localStorage, "");
+let navigationInstallations = [];
+let navigationSignature = "", mobileNavigationSignature = "";
+const navigationButtons = new Map($$("#navigation-primary [data-view]").map(button => [button.dataset.view, button]));
+const pluginMarket = createPluginMarket({runtimeRoot:$("#view-plugin-lsc"),onPluginsChanged:installationsChanged,root:$('#view-plugins'),widget:$('#dashboard-energy-widgets'),request:(path,options)=>api.request(path,options),member:()=>state.member,network:()=>state.network,showView,toast});
+let jobNotification = null;
+const qqNotifications = createQQNotifications({root:$('#view-plugin-qq'),showView,request:(path,options)=>api.request(path,options),member:()=>state.member,network:()=>state.network,toast,changed:v=>installationsChanged([...navigationInstallations.filter(r=>r.plugin.id!=='aeorbit.qq'),{plugin:{id:'aeorbit.qq'},enabled:v.enabled}])});
+const subnetMonitor=createSubnetMonitor({root:$('#view-plugin-subnet'),market:$('#view-plugins'),image:itemImage,request:(path,options)=>api.request(path,options),member:()=>state.member,network:()=>state.network,toast,showView,changed:v=>installationsChanged([...navigationInstallations.filter(r=>r.plugin.id!=='aeorbit.subnet'),v])});
+const integrationSettings=createIntegrationSettings({root:()=>$('#integration-settings-root'),request:(path,options)=>api.request(path,options),member:()=>state.member,toast});
 const activeStates = new Set(["queued", "assigned", "computing", "running"]);
 const attentionStates = new Set(["failed", "needs_review"]);
 const inventoryHistory = createHistoryController({ request: (path,options) => api.request(networkPath(path),options), onChange: () => renderInventoryHistory() });
@@ -202,10 +222,91 @@ function applySettings() {
 }
 
 function placeGlobalControls() {
-  const controls = $("#global-controls");
-  if (matchMedia("(min-width: 901px)").matches) {
-    if (controls.parentElement !== $("#sidebar-tools")) $("#sidebar-tools").append(controls);
-  } else if (controls.parentElement !== $(".content")) $(".content").insertBefore(controls, $("#main"));
+  for (const [id, slot] of [["connection-controls", "connection-controls-slot"], ["account-controls", "account-controls-slot"]]) {
+    const controls = $(`#${id}`), destination = $(`#${slot}`) || $("#settings-control-parking");
+    if (controls.parentElement !== destination) destination.append(controls);
+  }
+  renderNavigation();
+}
+function navigationAvailable() { return availableNavigation(navigationInstallations); }
+function navigationButtonHTML(entry) {
+  return `<button data-view="${entry.id}" aria-label="${esc(entry.title || entry.label)}" title="${esc(entry.title || entry.label)}">${icon(entry.icon)}<span>${esc(entry.label)}</span></button>`;
+}
+function renderNavigationCurrent() {
+  $$("[data-view]").forEach(button => {
+    if (button.dataset.view === state.view) button.setAttribute("aria-current", "page");
+    else button.removeAttribute("aria-current");
+  });
+  $$('[data-navigation-more]').forEach(button => {
+    const outside = !$("#navigation-primary")?.querySelector(`[data-view="${state.view}"]`);
+    const mobile = button.closest('.mobile-nav');
+    const current = mobile ? !mobile.querySelector(`[data-view="${state.view}"]`) && state.view !== 'settings' : outside && state.view !== 'settings';
+    if (current) button.setAttribute('aria-current','page'); else button.removeAttribute('aria-current');
+  });
+}
+function renderNavigation() {
+  const available = navigationAvailable();
+  const sidebar = $("#sidebar"), head = $(".sidebar-head"), settings = $('#sidebar > [data-view="settings"]');
+  const style = getComputedStyle(sidebar);
+  const height = sidebar.clientHeight - head.offsetHeight - parseFloat(getComputedStyle(head).marginBottom || 0)
+    - parseFloat(style.paddingTop || 0) - parseFloat(style.paddingBottom || 0) - settings.offsetHeight - 56;
+  const desktop = partitionNavigation(navigationPreferences, available, Math.floor(height / 46));
+  const mobile = partitionNavigation(navigationPreferences, available, Math.max(1, Math.min(4, Math.floor(innerWidth / 68) - 2)));
+  const signature = desktop.primary.map(row => row.id).join(',') + '|' + desktop.drawer.map(row => row.id).join(',');
+  if (signature !== navigationSignature) {
+    navigationSignature = signature;
+    for (const entry of available) if (!navigationButtons.has(entry.id)) {
+      const template = document.createElement('template'); template.innerHTML = navigationButtonHTML(entry);
+      navigationButtons.set(entry.id, template.content.firstElementChild);
+    }
+    for (const button of navigationButtons.values()) $('#navigation-parking').append(button);
+    for (const entry of desktop.primary) $('#navigation-primary').append(navigationButtons.get(entry.id));
+    $('#navigation-more').hidden = !desktop.drawer.length;
+  }
+  const mobileSignature = mobile.primary.map(row => row.id).join(',');
+  if (mobileNavigationSignature !== mobileSignature || !$('.mobile-nav').children.length) {
+    mobileNavigationSignature = mobileSignature;
+    $('.mobile-nav').innerHTML = mobile.primary.map(navigationButtonHTML).join('') + `<button data-navigation-more aria-label="更多功能" aria-haspopup="dialog">${icon('ellipsis')}<span>更多</span></button><button data-view="settings" aria-label="设置">${icon('settings')}<span>设置</span></button>`;
+  }
+  renderNavigationDrawer(matchMedia('(max-width:900px)').matches ? mobile : desktop);
+  renderNavigationCurrent(); paint();
+}
+function renderNavigationDrawer(layout) {
+  const html = layout.drawer.map(entry => navigationButtonHTML(entry)).join('') || '<p class="muted">所有功能都已显示在导航中。</p>';
+  const host = $('#navigation-drawer-items');
+  if (host.dataset.signature !== html) {
+    const focused = host.contains(document.activeElement) ? document.activeElement.closest('[data-view]')?.dataset.view : '';
+    host.innerHTML = html; host.dataset.signature = html;
+    if ($('#navigation-dialog').open && focused) (host.querySelector(`[data-view="${focused}"]`) || $('#navigation-dialog [data-navigation-settings]')).focus();
+  }
+  renderNavigationCurrent(); paint();
+}
+
+function openNavigationDrawer() {
+  const mobile = matchMedia('(max-width:900px)').matches;
+  const available = navigationAvailable();
+  const capacity = mobile ? Math.max(1,Math.min(4,Math.floor(innerWidth / 68)-2)) : $('#navigation-primary').children.length;
+  renderNavigationDrawer(partitionNavigation(navigationPreferences,available,capacity));
+  $('#navigation-dialog').showModal();
+}
+function installationsChanged(installations) {
+	if(!installations.some(r=>r.plugin.id==='aeorbit.subnet'))installations=[...installations,...navigationInstallations.filter(r=>r.plugin.id==='aeorbit.subnet')];
+  const before = navigationInstallations.map(row => `${row.plugin.id}:${row.enabled}`).join(',');
+  navigationInstallations = installations;
+  renderNavigation();
+  if (['plugin-lsc','plugin-qq','plugin-subnet'].includes(state.view) && !navigationAvailable().some(entry => entry.id === state.view)) showView('plugins');
+  if (before !== installations.map(row => `${row.plugin.id}:${row.enabled}`).join(',') && state.settingsSection === 'navigation' && state.view === 'settings') renderSettings();
+}
+function navigationSettingsHTML() {
+  const entries = orderedNavigation(navigationPreferences,navigationAvailable());
+  return `<p class="muted">拖动或使用上下按钮调整顺序。空间不足时，末尾常用入口临时收进“更多”；设置始终可见。新插件默认放入“更多”，采集不受入口位置影响。</p><div class="navigation-settings-list">${entries.map((entry,index) => `<div class="navigation-setting-row" data-navigation-row="${entry.id}"><button class="icon-button navigation-drag" draggable="true" data-navigation-drag="${entry.id}" title="拖动排序" aria-label="拖动${esc(entry.label)}">${icon('grip-vertical')}</button><span>${icon(entry.icon)}<strong>${esc(entry.label)}</strong></span><select data-navigation-placement="${entry.id}" aria-label="${esc(entry.label)}入口位置"><option value="primary" ${entry.placement === 'primary'?'selected':''}>常用导航</option><option value="drawer" ${entry.placement === 'drawer'?'selected':''}>更多抽屉</option></select><div class="navigation-move"><button class="icon-button" data-navigation-move="${entry.id}" data-direction="-1" aria-label="上移${esc(entry.label)}" ${index===0?'disabled':''}>${icon('arrow-up')}</button><button class="icon-button" data-navigation-move="${entry.id}" data-direction="1" aria-label="下移${esc(entry.label)}" ${index===entries.length-1?'disabled':''}>${icon('arrow-down')}</button></div></div>`).join('')}</div><div class="setting-actions"><button class="secondary" data-navigation-reset>恢复默认导航</button><span class="muted">当前用户 · 保存在此浏览器</span></div>`;
+}
+function updateNavigation(value, focusSelector) {
+  navigationPreferences = normalizeNavigation(value);
+  try { navigationPreferences = saveNavigation(localStorage,state.member?.id,navigationPreferences); }
+  catch { toast('布局已应用，但浏览器未能保存，下次打开可能恢复默认。',true); }
+  renderNavigation(); renderSettings();
+  if (focusSelector) $(focusSelector)?.focus({preventScroll:true});
 }
 
 function textureAssetURL(item) {
@@ -224,6 +325,9 @@ function refreshTexturePackState() {
   renderInventory();
   renderDetail();
   patchDraftAppearance();
+  renderCPUList();
+  if(cpuDetails.current)renderCPUProcess();
+  subnetMonitor.refreshTextures();
   hideInventoryHover();
 }
 
@@ -232,6 +336,7 @@ async function applyTexturePackURL(url, notify = true) {
   if (!normalized) throw new Error("请输入纹理包 URL。");
   state.texturePackLoading = true;
   state.texturePackError = "";
+  state.texturePackWarning = "";
   renderSettings();
   try {
     const bytes = await loadTexturePackURL(normalized);
@@ -259,16 +364,23 @@ async function applyTexturePackFile(file) {
   if (!file) return;
   state.texturePackLoading = true;
   state.texturePackError = "";
+  state.texturePackWarning = "";
   renderSettings();
   try {
     const bytes = await file.arrayBuffer();
     await texturePack.loadArchive(bytes, file.name);
-    await saveCachedTexturePack(bytes);
+    try {
+      const saved=await saveCachedTexturePack(bytes);
+      if(!saved)state.texturePackWarning="纹理已应用，本浏览器无法保存；刷新后需要重新导入。";
+    } catch {
+      // A full disk or private browsing mode must not discard a valid import.
+      state.texturePackWarning="纹理已应用，但浏览器保存失败；刷新后需要重新导入。";
+    }
     state.settings = saveSettings(localStorage, {
       ...state.settings, textureSource: "local", texturePackURL: "",
     });
     refreshTexturePackState();
-    toast(`本地纹理包已加载：${file.name}`);
+    toast(state.texturePackWarning || `本地纹理包已加载并保存：${file.name}`);
   } catch (error) {
     state.texturePackError = error?.message || "纹理包加载失败。";
     texturePack.clear();
@@ -284,7 +396,7 @@ function textureSettingsHTML() {
   const status = state.texturePackLoading
     ? "正在读取纹理包…"
     : state.texturePackStatus.loaded
-      ? `${state.texturePackStatus.label} · ${state.texturePackStatus.assetCount.toLocaleString("zh-CN")} 个资源`
+      ? `${state.texturePackStatus.label} · ${state.texturePackStatus.assetCount.toLocaleString("zh-CN")} 个资源${state.texturePackWarning ? " · "+state.texturePackWarning : ""}`
       : state.texturePackError || "当前使用服务器按需纹理";
   return `<div class="setting-field"><span><strong>纹理来源</strong><small>默认按需读取；纹理包会缓存在当前浏览器，减少重复下载。</small></span><select data-setting="textureSource" aria-label="纹理来源"><option value="server" ${state.settings.textureSource === "server" ? "selected" : ""}>服务器按需加载</option><option value="url" ${state.settings.textureSource === "url" ? "selected" : ""}>指定纹理包 URL</option><option value="local" ${state.settings.textureSource === "local" ? "selected" : ""}>本地已导入纹理包</option></select></div>
     <div class="texture-pack-controls" ${state.settings.textureSource === "url" ? "" : "hidden"}><label class="setting-input"><span>纹理包地址</span><input id="texture-pack-url" type="url" value="${esc(state.settings.texturePackURL)}" placeholder="https://example.com/ae-orbit-textures.zip" autocomplete="off"></label><div class="setting-actions"><button type="button" class="secondary" data-texture-pack-action="load-url" ${state.texturePackLoading ? "disabled" : ""}>${icon("download")}加载并应用</button></div></div>
@@ -383,7 +495,7 @@ function renderConnectionDiagnostics() {
 }
 
 function connectionSettingsHTML() {
-  return settingControl("reconnect", "自动重连", "网络恢复后自动重新建立事件流连接。", state.settings.reconnect)
+  return `<div id="connection-controls-slot"></div>` + settingControl("reconnect", "自动重连", "网络恢复后自动重新建立事件流连接。", state.settings.reconnect)
     + settingControl("rememberSession", "记住本次会话", "仅保存会话恢复信息，不保存原始访问令牌。", state.settings.rememberSession)
     + connectionDiagnosticsHTML()
     + `<div class="setting-actions"><button type="button" class="secondary" data-session-action="test"><i data-lucide="refresh-cw"></i>测试连接</button><button type="button" class="secondary" data-session-action="login"><i data-lucide="log-in"></i>重新登录</button><button type="button" class="secondary" data-session-action="clear"><i data-lucide="trash-2"></i>清除已保存会话</button></div>`;
@@ -392,13 +504,19 @@ function connectionSettingsHTML() {
 function renderSettings() {
   const detail = $("#settings-detail");
   if (!detail) return;
+  for (const id of ["connection-controls", "account-controls"]) $("#settings-control-parking").append($(`#${id}`));
   const section = state.settingsSection;
+  $$("[data-settings-section]").forEach(button => {
+    button.setAttribute("aria-selected", String(button.dataset.settingsSection === section));
+    button.setAttribute("aria-current", String(button.dataset.settingsSection === section));
+  });
   const sections = {
     display: {
       title: "显示",
       description: "调整工作台密度与库存网格，不改变页面结构。",
       body: `<div class="setting-field"><span><strong>界面密度</strong><small>控制页面标题、卡片和列表的垂直间距。</small></span><div class="setting-segment" role="group" aria-label="界面密度"><button type="button" data-setting-value="density" data-value="compact" aria-pressed="${state.settings.density === "compact"}">紧凑</button><button type="button" data-setting-value="density" data-value="comfortable" aria-pressed="${state.settings.density === "comfortable"}">舒适</button></div></div><div class="setting-field"><span><strong>库存网格</strong><small>在桌面端选择每行物品数量，自动模式随窗口宽度调整。</small></span><select data-setting="inventoryLayout" aria-label="库存网格"><option value="auto" ${state.settings.inventoryLayout === "auto" ? "selected" : ""}>自动</option><option value="dense" ${state.settings.inventoryLayout === "dense" ? "selected" : ""}>紧密</option><option value="wide" ${state.settings.inventoryLayout === "wide" ? "selected" : ""}>宽松</option></select></div>`,
     },
+    navigation: { title: "导航布局", description: "安排你的常用入口与更多抽屉，按当前用户保存。", body: navigationSettingsHTML() },
     notifications: {
       title: "通知",
       description: "选择哪些状态变化通过页面提示反馈。错误提示始终保留。",
@@ -409,20 +527,32 @@ function renderSettings() {
       description: "使用服务器按需纹理，或导入可复用的本地纹理包。",
       body: textureSettingsHTML(),
     },
+    account: { title: "玩家与团队", description: "每位玩家使用独立身份，下单自动署名。", body: `<div id="account-controls-slot"></div>` + playerAccountHTML(state.member,state.networks,state.teamMembers,state.teamInvitations) },
     connection: {
-      title: "连接与凭据",
-      description: "管理服务连接、自动重连和浏览器会话。",
-      body: connectionSettingsHTML(),
+      title: "API 与集成",
+      description: "给外部应用分配独立只读接口与访问范围。",
+      body: `<div id="integration-settings-root"></div><details class="plugin-disclosure"><summary>网页连接与会话</summary>${connectionSettingsHTML()}</details>`,
     },
   };
   const current = sections[section] || sections.display;
   detail.innerHTML = `<div class="settings-detail-heading"><div><h2>${current.title}</h2><span class="muted">${current.description}</span></div></div><div class="settings-detail-body">${current.body}</div>`;
+  placeGlobalControls();
+  if(section==='connection')integrationSettings.mount();
   paint();
 }
 
 function errorText(error) {
   if (error?.name === "AbortError") return "";
-  if (error?.status === 401) showLogin();
+  if (error?.code === "identity_changed") {
+    api.setCSRF("");
+    state.session = null;
+    qqNotifications.reset(); integrationSettings.reset(); jobNotification=null;
+    pluginMarket.sessionChanged(); subnetMonitor.sessionChanged();
+    clearSession(localStorage,sessionStorage);
+    state.stream?.close();
+    showLogin();
+  }
+  else if (error?.status === 401) showLogin();
   if (error?.status || error?.code) return error.message;
   return "操作未完成，请检查数量、当前状态或浏览器存储。";
 }
@@ -434,11 +564,13 @@ function message(id, text) {
 }
 
 function dateTime(value) {
+  if (!value) return "尚无记录";
   const date = new Date(value);
   return Number.isFinite(date.getTime()) ? date.toLocaleString("zh-CN", { hour12: false }) : "尚无记录";
 }
 
 function age(value) {
+  if (!value) return "未观测";
   const time = new Date(value).getTime();
   if (!Number.isFinite(time)) return "未观测";
   const seconds = Math.max(0, Math.floor((Date.now() - time) / 1000));
@@ -480,7 +612,10 @@ function animateSpriteImages(timestamp) {
   const elements = $$(".item-image-sprite");
   if (!elements.length) return;
   for (const element of elements) {
-    const item = itemFor(element.dataset.spriteItem);
+    const spriteID = element.dataset.spriteItem;
+    const cpu = spriteID?.startsWith("cpu:") ? state.cpus.cpus?.find(cpu => `cpu:${cpu.id}` === spriteID) : null;
+    const detailItem=spriteID?.startsWith("process:") ? cpuDetails.current?.data?.parts?.flatMap(part=>part.items || []).find(item=>`process:${item.row_id}`===spriteID) : null;
+    const item = cpu ? cpu.output : detailItem || subnetMonitor.textureItem(spriteID) || itemFor(spriteID);
     const animation = catalogAnimation(item);
     if (!animation) continue;
     const selected = animationFrameAt(animation, timestamp);
@@ -511,54 +646,76 @@ function itemFor(id) {
   return state.itemCache.get(String(id)) || Object.values(state.draft.receipts).find(r => r.item?.id === String(id))?.item;
 }
 
-function inventoryHoverHTML(item) {
-  if (!item) return "";
-  const label = catalogDisplayName(item);
-  const source = catalogSource(item);
-  const quantity = stockText(item);
-  const status = !item.craftable_observed_at ? "合成能力未确认" : item.craftable ? item.craftable_current_session === false ? "待重新核验" : "可合成" : "不可合成";
-  const sourceHTML = source ? `<span class="inventory-hover-source">${esc(source)}</span>` : "";
-  const catalogHTML = catalogFacts(item).map(([factLabel, value]) => `<div class="inventory-hover-catalog"><dt>${esc(factLabel)}</dt><dd>${esc(value)}</dd></div>`).join("");
-  const tooltips = catalogTooltips(item);
-  const tooltipHTML = tooltips.length
-    ? `<div class="inventory-hover-tooltip"><span>说明</span><ul>${tooltips.map(value => `<li>${esc(value)}</li>`).join("")}</ul></div>`
-    : "";
-  return `<div class="inventory-hover-head"><span class="inventory-hover-media">${itemImage(item)}</span><span><strong class="inventory-hover-title">${esc(label)}</strong>${sourceHTML}</span></div><dl class="inventory-hover-facts"><div><dt>精确数量</dt><dd>${esc(quantity)}</dd></div><div><dt>状态</dt><dd>${esc(status)}</dd></div><div><dt>物品 ID</dt><dd>${esc(item.id)}</dd></div>${catalogHTML}</dl>${tooltipHTML}`;
-}
-
-let inventoryHoverTimer;
+const inventoryHover = { button: null, pointer: { x: 0, y: 0 }, frame: 0, pages: [], page: 0, model: null, advanced: false, size: null };
 
 function hideInventoryHover() {
-  clearTimeout(inventoryHoverTimer);
+  cancelAnimationFrame(inventoryHover.frame);
+  inventoryHover.frame = 0;
+  inventoryHover.button?.removeAttribute("aria-describedby");
+  inventoryHover.button = null;
   const card = $("#inventory-hover-card");
   if (!card) return;
   card.hidden = true;
-  card.removeAttribute("data-placement");
   card.innerHTML = "";
 }
 
-function showInventoryHover(button) {
-  const item = itemFor(button?.dataset.item);
+function positionInventoryHover() {
+  inventoryHover.frame = 0;
+  if (!inventoryHover.button?.isConnected) { hideInventoryHover(); return; }
   const card = $("#inventory-hover-card");
-  const wrap = $("#view-inventory .table-wrap");
-  if (!item || !card || !wrap || matchMedia("(max-width: 800px)").matches) return;
-  clearTimeout(inventoryHoverTimer);
-  inventoryHoverTimer = setTimeout(() => {
-    if (!button.isConnected) return;
-    card.innerHTML = inventoryHoverHTML(item);
-    card.hidden = false;
-    scheduleSpriteAnimation();
-    const buttonRect = button.getBoundingClientRect();
-    const cardRect = card.getBoundingClientRect();
-    const tableRect = wrap.getBoundingClientRect();
-    const left = tableRect.left + (tableRect.width - cardRect.width) / 2;
-    const boundedLeft = Math.min(Math.max(10, left), Math.max(10, window.innerWidth - cardRect.width - 10));
-    const top = Math.max(tableRect.top + 12, buttonRect.top - cardRect.height - 12);
-    const boundedTop = Math.min(Math.max(10, top), Math.max(10, window.innerHeight - cardRect.height - 10));
-    card.style.left = `${boundedLeft}px`;
-    card.style.top = `${boundedTop}px`;
-    card.dataset.placement = "overlay";
-  }, 150);
+  const position = tooltipPosition(inventoryHover.pointer, inventoryHover.size, { width: innerWidth, height: innerHeight });
+  card.style.left = `${position.left}px`;
+  card.style.top = `${position.top}px`;
+}
+
+function renderInventoryHoverPage() {
+  const card = $("#inventory-hover-card");
+  const { model, pages, page } = inventoryHover;
+  const paging = pages.length > 1 ? tooltipLineHTML({ kind: "hint", text: `${page + 1} / ${pages.length} · Z 下一页` }) : "";
+  card.innerHTML = [model.title, ...pages[page], ...model.footers].map(tooltipLineHTML).join("") + paging;
+  inventoryHover.size = card.getBoundingClientRect();
+  positionInventoryHover();
+}
+
+function refreshInventoryHover() {
+  const button = inventoryHover.button;
+  const item = state.items.find(item=>String(item.id)===button?.dataset.item) || itemFor(button?.dataset.item);
+  if (!item || !button?.isConnected) { hideInventoryHover(); return; }
+  const card = $("#inventory-hover-card");
+  const model = inventoryTooltipModel(item, inventoryHover.advanced);
+  if (JSON.stringify(model) === JSON.stringify(inventoryHover.model) && !card.hidden) return;
+  inventoryHover.model = model;
+  // Use the longest content's width for every page, avoiding jumps when pressing Z.
+  card.style.width = "max-content";
+  card.innerHTML = [model.title, ...model.lines, ...model.footers].map(tooltipLineHTML).join("");
+  card.hidden = false;
+  card.style.width = `${card.getBoundingClientRect().width}px`;
+  const rows = [...card.children];
+  const rowHeight = row => {
+    const style = getComputedStyle(row);
+    return row.getBoundingClientRect().height + parseFloat(style.marginTop) + parseFloat(style.marginBottom);
+  };
+  const reserved = rowHeight(rows[0]) + rows.slice(1 + model.lines.length).reduce((height, row) => height + rowHeight(row), 0) + 36;
+  const available = Math.max(18, innerHeight - 16 - reserved);
+  const probe = document.createElement("div");
+  card.append(probe);
+  const measure = line => { probe.innerHTML = tooltipLineHTML(line); return rowHeight(probe.firstElementChild); };
+  const lines = model.lines.flatMap(line => splitTooltipLine(line, fragment => measure(fragment) <= available));
+  const heights = lines.map(measure);
+  inventoryHover.pages = paginateTooltipLines(lines, heights, available);
+  inventoryHover.page = Math.min(inventoryHover.page, inventoryHover.pages.length - 1);
+  renderInventoryHoverPage();
+}
+
+function showInventoryHover(button, event) {
+  if (!(state.items.find(item=>String(item.id)===button?.dataset.item) || itemFor(button?.dataset.item)) || matchMedia("(max-width: 800px)").matches || !matchMedia("(any-hover: hover)").matches) return;
+  if (inventoryHover.button !== button) { hideInventoryHover(); inventoryHover.model = null; inventoryHover.page = 0; }
+  inventoryHover.button = button;
+  inventoryHover.pointer = { x: event.clientX, y: event.clientY };
+  inventoryHover.advanced = event.shiftKey;
+  button.setAttribute("aria-describedby", "inventory-hover-card");
+  refreshInventoryHover();
+  button.querySelectorAll("[title]").forEach(element => element.removeAttribute("title"));
 }
 
 const networkPath = (suffix = "", network = state.network?.id) => `/api/v1/networks/${encodeURIComponent(network)}${suffix}`;
@@ -641,7 +798,8 @@ function renderDashboard() {
 }
 
 function refreshHeader() {
-  $("#member-name").textContent = state.member?.name || "未登录";
+  $("#member-name").textContent = playerName(state.member);
+  $("#context-network").textContent = state.network?.name || "";
   $("#logout").hidden = !state.member;
   const network = state.network;
   const recovery = networkRecoveryState({
@@ -667,28 +825,39 @@ function refreshHeader() {
   picker.title = `${network?.name || "选择网络"} · ${connectionLabel}`;
   $("#network").title = picker.title;
   $("#network-quality").textContent = network ? networkQualityLabel(network.quality) : "";
-  const summary = inventorySummary(state.inventoryStats, age);
+  const summary = inventorySummary(state.inventoryStats, age,state.resourceKind);
   $("#inventory-summary").textContent = network ? (summary ? `${summary}${network.online ? "" : " · OC 离线，显示缓存"}` : "") || `${network.name} · ${network.online ? "在线" : "离线"}` : "尚未连接网络";
   $("#stock-view-label").hidden = state.inventoryScope !== "nesql_plain";
+  $("#inventory-resource-status").textContent = state.resourceKind === "item" ? "" : inventorySummary(state.inventoryStats,age,state.resourceKind);
+  $("#inventory-resource-status").hidden = state.resourceKind === "item";
+  $$("[data-resource-kind]").forEach(button=>button.setAttribute("aria-pressed",String(button.dataset.resourceKind===state.resourceKind)));
+  $("#inventory-craft-filters").hidden = state.resourceKind === "essentia";
   $("#draft-count").textContent = state.draft.entries.length;
   renderDashboard();
   renderConnectionDiagnostics();
 }
 
 function showView(view) {
+  if(view!=="cpus" && $("#cpu-process-dialog").open) $("#cpu-process-dialog").close();
   hideInventoryHover();
+  if (![...coreNavigation,...pluginNavigation,{id:'settings'}].some(entry=>entry.id===view)) return;
   state.view = view;
-  const viewName = $("#sidebar [data-view='" + view + "']")?.getAttribute("aria-label") || "AE Orbit";
+  $('#navigation-dialog').close();
+  const definition = [...coreNavigation,...pluginNavigation].find(entry=>entry.id===view);
+  const viewName = definition?.title || definition?.label || '设置';
+  $('#page-title').textContent = viewName;
   document.title = `${viewName} · AE Orbit`;
   let hasRefresh = false;
   $$("[data-refresh-view]").forEach(button => { button.hidden = button.dataset.refreshView !== view; if (!button.hidden) hasRefresh = true; });
   $(".page-refresh").hidden = !hasRefresh;
-  for (const name of ["dashboard", "inventory", "history", "orders", "cpus", "network", "github", "settings"]) $(`#view-${name}`).hidden = name !== view;
+  for (const name of ["dashboard", "inventory", "history", "orders", "cpus", "network", "plugins", "plugin-lsc", "plugin-qq", "plugin-subnet", "github", "settings"]) $(`#view-${name}`).hidden = name !== view;
   $$("[data-view]").forEach(button => {
     if (button.dataset.view === view) button.setAttribute("aria-current", "page");
     else button.removeAttribute("aria-current");
   });
+  renderNavigationCurrent();
   closeInspector(false);
+  if (view === "settings") renderSettings();
   if (view === "orders") {
     renderJobs();
     renderOrders();
@@ -703,7 +872,11 @@ function showView(view) {
     if (state.network) refreshNetwork();
   }
   if (view === "inventory") refreshInventoryCapacity();
-  if (view === "dashboard") renderDashboard();
+  if (view === "dashboard") { renderDashboard(); void pluginMarket.refresh(); }
+  if (view === "plugins") {pluginMarket.show();subnetMonitor.show();}
+  if (view === "plugin-subnet") subnetMonitor.show();
+  if (view === "plugin-lsc") pluginMarket.showPlugin();
+  if (view === "plugin-qq") qqNotifications.show();
   if (view === "history") { renderInventoryHistory(); if(state.network&&!inventoryHistory.state.series) void inventoryHistory.load(); }
 }
 
@@ -731,17 +904,23 @@ function closeInspector(restore = true) {
 }
 
 function renderInventory() {
+  const hoveredID = inventoryHover.button?.dataset.item;
+  if (hoveredID) hideInventoryHover();
   const tbody = $("#inventory-rows");
-  tbody.innerHTML = state.items.map(item => `<tr data-selected="${state.selected?.id === item.id}" data-id="${esc(item.id)}">
+  tbody.innerHTML = state.items.map(item => `<tr data-resource-kind="${esc(item.kind || 'item')}" data-selected="${state.selected?.id === item.id}" data-id="${esc(item.id)}">
     <td><button class="item-button ${itemHasTexture(item) ? "" : "missing-texture"}" data-item="${esc(item.id)}" aria-label="${esc(`${catalogDisplayName(item)}，库存 ${stockText(item)}`)}">${itemImage(item)}<span class="item-copy"><span class="item-name">${esc(catalogDisplayName(item))}</span><span class="item-meta">${esc(item.name.split(":")[0])}${item.craftable ? " · 可合成" : ""}${!item.exact ? " · 身份待确认" : ""}</span></span></button></td>
-    <td><span class="stock-value ${String(item.quantity).length > 12 ? "long-number" : ""} ${item.current_session ? "" : "stale"}" title="${esc(stockText(item))}">${(quantityKnown(item) ? compactQuantityHTML(item.quantity) : "未查询")}</span><span class="freshness ${item.current_session ? "" : "stale"}">${stockFreshness(item, age)}</span></td>
-    <td><button class="icon-button" data-quick-add="${esc(item.id)}" title="加入清单" aria-label="将${esc(catalogDisplayName(item))}加入清单" ${item.craftable && item.exact && !state.draftBlocked && !state.busy && !state.preparing ? "" : "disabled"}>${inventoryIcon("plus")}</button></td>
+    <td><span class="stock-value ${String(item.quantity).length > 12 ? "long-number" : ""} ${item.current_session ? "" : "stale"}" title="${esc(stockText(item))}">${resourceQuantityHTML(item,true)}</span><span class="freshness ${item.current_session ? "" : "stale"}">${stockFreshness(item, age)}</span></td>
+    <td>${item.group ? `<span class="variant-count" title="${item.group.candidates} 个已登记变种；点击展开">${item.group.stock || item.group.candidates}</span>` : `<button class="icon-button" data-quick-add="${esc(item.id)}" title="加入清单" aria-label="将${esc(catalogDisplayName(item))}加入清单" ${craftingKindSupported(item, state.network?.capabilities) && item.craftable && item.exact && !state.draftBlocked && !state.busy && !state.preparing ? "" : "disabled"}>${inventoryIcon("plus")}</button>`}</td>
   </tr>`).join("");
   $("#inventory-empty").hidden = state.items.length > 0;
   $("#inventory-empty").textContent = state.inventoryLoading ? "正在读取库存…" : !state.member ? "登录后查看库存" : !state.network ? "没有可访问的网络" : "没有匹配的物品";
   renderInventoryPager();
   paint();
   scheduleSpriteAnimation();
+  if (hoveredID) {
+    const button = document.elementFromPoint(inventoryHover.pointer.x, inventoryHover.pointer.y)?.closest(".inventory-table .item-button");
+    if (button?.dataset.item === hoveredID) showInventoryHover(button, { clientX: inventoryHover.pointer.x, clientY: inventoryHover.pointer.y, shiftKey: inventoryHover.advanced });
+  }
 }
 
 function patchInventoryRows() {
@@ -782,7 +961,7 @@ function patchInventoryRows() {
       stock.classList.toggle("long-number", String(item.quantity).length > 12);
       stock.classList.toggle("stale", !item.current_session);
       stock.title = stockText(item);
-      stock.innerHTML = (quantityKnown(item) ? compactQuantityHTML(item.quantity) : "未查询");
+      stock.innerHTML = resourceQuantityHTML(item,true);
     }
     const freshness = $(".freshness", row);
     if (freshness) {
@@ -790,14 +969,17 @@ function patchInventoryRows() {
       freshness.textContent = stockFreshness(item, age);
     }
     const quickAdd = $("[data-quick-add]", row);
+    const variantCount=$('.variant-count',row);
+    if(variantCount && item.group){variantCount.textContent=item.group.stock || item.group.candidates;variantCount.title=`${item.group.candidates} 个已登记变种；点击展开`;}
     if (quickAdd) {
-      quickAdd.disabled = !(item.craftable && item.exact && !state.draftBlocked && !state.busy && !state.preparing);
+      quickAdd.disabled = !(craftingKindSupported(item, state.network?.capabilities) && item.craftable && item.exact && !state.draftBlocked && !state.busy && !state.preparing);
     }
   });
   $("#inventory-empty").hidden = state.items.length > 0;
   renderInventoryPager();
   paint();
   scheduleSpriteAnimation();
+  if (inventoryHover.button) refreshInventoryHover();
   return true;
 }
 
@@ -818,10 +1000,11 @@ function renderInventoryPager() {
 
 function patchSelectedDetail(item) {
   if (!item) return;
+  if(item.group)return;
   const stock = $(".detail-stock", $("#detail-panel"));
   if (stock) {
     stock.classList.toggle("long-number", String(item.quantity ?? "0").length > 12);
-    stock.innerHTML = (quantityKnown(item) ? quantityHTML(item.quantity ?? "0") : "未查询");
+    stock.innerHTML = resourceQuantityHTML(item);
   }
   const facts = $$(".detail-facts .fact", $("#detail-panel"));
   if (facts[0]?.lastElementChild) facts[0].lastElementChild.textContent = stockFreshness(item, age);
@@ -829,6 +1012,7 @@ function patchSelectedDetail(item) {
 
 function detailNeedsRender(before, after) {
   if (!before || !after) return true;
+  if(before.group || after.group)return JSON.stringify(before.group)!==JSON.stringify(after.group) || before.id!==after.id;
   return before.id !== after.id
     || before.label !== after.label
     || before.name !== after.name
@@ -843,25 +1027,52 @@ function detailNeedsRender(before, after) {
 
 function renderDetail() {
   const item = state.selected;
+  if(item?.group){renderVariantGroup(item);return;}
   if (!item) {
     $("#detail-panel").innerHTML = `<div class="detail-empty">${icon("boxes")}<strong>选择一个物品</strong><span>从库存网格中选择物品后，这里会显示数量、状态与合成操作。</span></div>`;
     return;
   }
-  const canAdd = item.craftable && item.exact && !state.draftBlocked && !state.busy && !state.preparing;
-  const reason = !item.exact ? "物品身份待确认" : !item.craftable ? "合成样板尚未确认" : "";
-  $("#detail-panel").innerHTML = `<div class="detail-heading">${itemImage(item)}<div><h2>${esc(catalogDisplayName(item))}</h2><span class="muted">${esc(item.name.split(":")[0])}</span></div></div>
-    <span class="muted">库存数量</span><div class="detail-stock number ${String(item.quantity ?? "0").length > 12 ? "long-number" : ""}">${(quantityKnown(item) ? quantityHTML(item.quantity ?? "0") : "未查询")}</div><span class="item-meta">${esc(item.name)} · ${esc(item.damage)}</span>
+  if (item.kind === "essentia") {
+    $("#detail-panel").innerHTML = `<div class="detail-heading">${itemImage(item)}<div><h2>${esc(catalogDisplayName(item))}</h2><span class="muted">${resourceLabel(item.kind)}</span></div></div><span class="muted">库存数量</span><div class="detail-stock number">${resourceQuantityHTML(item)}</div><span class="item-meta">${esc(item.name)}</span><div class="detail-facts"><div class="fact"><span>库存观测</span><span>${stockFreshness(item,age)}</span></div><div class="fact"><span>查询方式</span><span>按名称精确查询</span></div></div><p class="muted resource-note">此类资源当前仅查看库存。物品、流体与源质分别统计。</p>`;
+    paint();scheduleSpriteAnimation();return;
+  }
+  const canAdd = craftingKindSupported(item, state.network?.capabilities) && item.craftable && item.exact && !state.draftBlocked && !state.busy && !state.preparing;
+  const reason = !craftingKindSupported(item, state.network?.capabilities) ? "请更新主 OC，以启用流体配方核验和下单。" : !item.exact ? "资源身份待确认" : !item.craftable ? "合成样板尚未确认；仅核验精确配方。" : "";
+  $("#detail-panel").innerHTML = `<div class="detail-heading">${itemImage(item)}<div><h2>${esc(catalogDisplayName(item))}</h2><span class="muted">${esc(item.kind === "fluid" ? "流体 · mB" : item.name.split(":")[0])}</span></div></div>
+    <span class="muted">库存数量</span><div class="detail-stock number ${String(item.quantity ?? "0").length > 12 ? "long-number" : ""}">${resourceQuantityHTML(item)}</div><span class="item-meta">${esc(item.name)} · ${esc(item.damage)}</span>
     <div class="detail-facts"><div class="fact"><span>库存观测</span><span>${stockFreshness(item, age)}</span></div><div class="fact"><span>合成样板</span><span>${!item.craftable_observed_at ? "未确认" : item.craftable ? item.craftable_current_session ? "已确认" : "待重新核验" : "不可合成"}</span></div><div class="fact"><span>身份</span><span>${item.exact ? "精确" : "待确认"}</span></div></div>
-    <label class="field-label" for="craft-quantity">合成数量</label><div class="stepper"><button data-step="-1" title="减少数量" aria-label="减少数量">${icon("minus")}</button><input id="craft-quantity" type="text" inputmode="numeric" maxlength="19" value="${esc(state.amount)}" autocomplete="off"><button data-step="1" title="增加数量" aria-label="增加数量">${icon("plus")}</button></div>
+    <label class="field-label" for="craft-quantity">${craftingQuantityLabel(item)}</label><div class="stepper"><button data-step="-1" title="减少数量" aria-label="减少数量">${icon("minus")}</button><input id="craft-quantity" type="text" inputmode="numeric" maxlength="19" value="${esc(state.amount)}" autocomplete="off"><button data-step="1" title="增加数量" aria-label="增加数量">${icon("plus")}</button></div>
     <span class="field-label">合成 CPU</span><button class="cpu-select" id="detail-cpu" ${state.busy || state.preparing || !state.network ? "disabled" : ""} title="${cpuSelectionTitle()}"><span>${esc(state.cpuName || "自动分配")}${state.waitForCPU ? " · 等待" : ""}${!cpuSelectionSupported() ? " · 当前 OC 未启用" : ""}</span>${icon("cpu")}</button>
+    <button class="text-button qq-job-notification" data-job-notification ${state.busy ? 'disabled' : ''}>${icon('bell')}${esc(notificationLabel(jobNotification))}</button>
     <div class="detail-actions"><button class="primary wide" id="add-to-draft" ${canAdd ? "" : "disabled"}>${icon("list-plus")}加入清单</button><button class="secondary wide" id="submit-immediately" ${canAdd && jobs.state.support === "supported" && !state.busy ? "" : "disabled"}>${icon("send")}立即提交</button></div>
-    <p id="detail-feedback" class="detail-feedback" role="status">${esc(reason || submissionStatus())}</p>`;
+    <p class="draft-submitter">下单人：${esc(playerName(state.member))}</p><p id="detail-feedback" class="detail-feedback" role="status">${esc(reason || submissionStatus())}</p>`;
+  if(item.has_tag){
+    const info=item.variant;
+    $('#detail-panel').insertAdjacentHTML('beforeend',`<div class="variant-identity"><span>NBT 变种 · ${esc(info?.hash?.slice(0,12) || '完整身份')}</span><p>${esc(info?.summary?.join(' · ') || '')}</p><button class="text-button" data-variant-data="${esc(item.id)}">查看完整 NBT 数据</button><pre class="variant-data" hidden></pre></div>`);
+  }
   paint();
   scheduleSpriteAnimation();
 }
 
 function selectedDraftIds() {
   return state.draft.entries.filter(e => e.status === "draft" && !state.unchecked.has(e.id)).map(e => e.id);
+}
+
+let variantGroupContext=0;
+async function renderVariantGroup(item,after='',append=false){
+  const token=++variantGroupContext,context=state.context;
+  if(!append)$('#detail-panel').innerHTML=`<div class="detail-heading">${itemImage(item)}<div><h2>${esc(catalogDisplayName(item))}</h2><span class="muted">${item.group.stock} 个有库存变种 · 已查 ${item.group.checked}/${item.group.candidates}</span></div></div><div class="detail-stock number">${quantityHTML(item.group.quantity)} <small>件</small></div><p class="muted">选择具体变种后查看库存与合成。</p><div class="variant-list" role="list"><p>正在读取变种…</p></div><p class="variant-feedback" role="status"></p>`;
+  try{
+    const page=await api.request(networkPath(`/items/${item.id}/variants?view=${state.stockView}${after?`&after=${after}`:''}`));
+    if(token!==variantGroupContext || context!==state.context || state.selected?.id!==item.id || !state.selected.group)return;
+    const html=page.items.map(value=>{
+      state.itemCache.set(value.id,value);
+      return `<button type="button" class="variant-row" data-select-variant="${esc(value.id)}" role="listitem">${itemImage(value)}<span><strong>${esc(value.variant?.custom_name || catalogDisplayName(value))}</strong><small>${value.has_tag?`NBT · ${esc(value.variant?.hash?.slice(0,10)||'变种')}`:'无 NBT'}${value.variant?.summary?.length?' · '+esc(value.variant.summary.join(' · ')):''}</small><small>${stockFreshness(value,age)}${value.craftable?' · 可合成':''}</small></span><b>${esc(stockText(value))}</b></button>`;
+    }).join('');
+    const list=$('.variant-list');if(append)list.insertAdjacentHTML('beforeend',html);else list.innerHTML=html||'<p class="muted">此范围没有已确认的变种，可切换“全部名单候选”。</p>';
+    $('.variant-more')?.remove();if(page.next_cursor)list.insertAdjacentHTML('afterend',`<button class="secondary variant-more" data-variant-more="${esc(page.next_cursor)}" data-base-id="${esc(item.id)}">继续读取变种</button>`);
+    paint();scheduleSpriteAnimation();
+  }catch(error){if(token===variantGroupContext && context===state.context)message('.variant-feedback',errorText(error));}
 }
 
 function submissionStatus() {
@@ -875,22 +1086,42 @@ function renderJobs() {
   const model = jobs.state;
   $("#jobs-panel").hidden = state.taskMode !== "jobs";
   $("#legacy-panel").hidden = state.taskMode !== "orders";
-  $("#job-list").innerHTML = jobListHTML(model, state.jobFilter, dateTime);
-  $("#job-list").setAttribute("aria-busy", String(model.loading));
-  if (model.sync) {
-    const jobsRows = [...model.sync.jobs.values()];
-    const open = jobsRows.filter(row => !row.settled_at);
-    const attention = open.filter(row => row.control === "paused" || row.counts.needs_review !== "0" || row.counts.rejected !== "0" || row.counts.failed !== "0").length;
-    $("#jobs-summary").textContent = `${open.length} 项未完成${attention ? ` · ${attention} 项待处理` : ""}${model.loading ? " · 刷新中" : ""}`;
-  } else {
-    $("#jobs-summary").textContent = model.loading ? "正在读取任务…" : "";
+  const view = $("#view-orders"), scroll = view.scrollTop;
+  const options = { ...state.crafting, filter: state.jobFilter, memberId: state.member?.id || "" };
+  const roster = craftingJobModel(model, options);
+  patchDashboardHTML("#job-list", jobListHTML(model, state.jobFilter, dateTime, options));
+  $("#job-list").setAttribute("aria-busy", String(model.loading || model.historyLoading));
+  for (const key of ["unsettled", "attention", "history"]) $("#crafting-count-" + key).textContent = roster.known ? roster.counts[key] : "—";
+  $$("[data-job-filter]").forEach(button => button.setAttribute("aria-pressed", String(button.dataset.jobFilter === state.jobFilter)));
+  $$("[data-task-mode]").forEach(button => button.setAttribute("aria-pressed", String(button.dataset.taskMode === state.taskMode)));
+  if (state.taskMode === "jobs") {
+    patchDashboardHTML("#crafting-overview", craftingOverviewHTML(roster));
+    $("#crafting-overview").hidden = false;
+    $("#crafting-status").textContent = model.support === "unsupported" ? "后端尚不支持生产任务，新提交已禁用。"
+      : model.error ? "读取失败，保留已有任务记录。" : !roster.known ? "等待任务观测"
+      : !state.network?.online ? "OC 离线 · 已保存的生产任务等待设备恢复" : "来自后端任务记录 · 自动更新";
   }
+  $("#jobs-summary").textContent = roster.known
+    ? (state.jobFilter === "history" ? "已加载 " + roster.counts.history + " 组 · 显示 " + roster.rows.length + " 组" : "显示 " + roster.rows.length + " 组")
+    : model.loading ? "正在读取…" : "";
   const error = state.jobStorageError ? submissionStatus() : model.error ? `任务读取未完成${model.sync ? "，保留上次记录" : ""}。${model.error.status === 403 ? "当前账号无权限。" : errorText(model.error)}` : "";
   message("#jobs-message", error);
   let local;
-  try { local = jobs.local(); $("#job-recoveries").innerHTML = recoveryHTML(local, icon); }
-  catch { $("#job-recoveries").innerHTML = `<p class="error">本机生产任务记录损坏。请保留浏览器数据，勿重复提交。</p>`; }
+  try {
+    local = jobs.local();
+    const recoveries = recoveryHTML(local, icon);
+    patchDashboardHTML("#job-recoveries", recoveries);
+    const section = $("#crafting-recoveries");
+    if (section.hidden && recoveries) section.open = true;
+    section.hidden = !recoveries;
+  }
+  catch {
+    $("#crafting-recoveries").hidden = false;
+    $("#crafting-recoveries").open = true;
+    patchDashboardHTML("#job-recoveries", '<p class="error">本机生产任务记录损坏。请保留浏览器数据，勿重复提交。</p>');
+  }
   const more = $("#job-history-more");
+  $("#crafting-history-note").textContent = state.jobFilter === "history" ? "历史按批次加载，搜索仅匹配已加载记录。" : "";
   more.hidden = state.jobFilter !== "history" || model.support !== "supported" || !model.historyMore;
   more.disabled = model.historyLoading;
   more.innerHTML = `${icon("chevron-down")}${model.historyLoading ? "正在读取…" : model.historyLoaded ? "加载更多历史" : "加载历史记录"}`;
@@ -901,15 +1132,22 @@ function renderJobs() {
   }
   if ($("#job-dialog").open) {
     $("#refresh-job-detail").disabled = model.detailLoading;
-    message("#job-detail-status", model.detailError ? `详情不可用。${model.detailError.status === 404 ? "记录已归档或不存在；本机意图不会解锁。" : errorText(model.detailError)}` : model.detailLoading ? "正在读取详情…" : "");
+    message("#job-detail-status", model.detailError ? `详情不可用。${model.detailError.status === 404 ? "记录已归档或不存在；本机意图不会解锁。" : errorText(model.detailError)}` : model.detailLoading && !model.detail ? "正在读取详情…" : "");
     $("#job-detail-status").dataset.error = String(!!model.detailError);
     $("#job-detail").setAttribute("aria-busy", String(model.detailLoading));
-    if (model.detail && local) $("#job-detail").innerHTML = jobDetailHTML(model.detail, local, model.detailError ? null : state.member,
-      {itemFor,itemImage,quantity:quantityHTML,dateTime,icon,controlsAvailable:!model.detailLoading && !model.detailError});
-    else $("#job-detail").innerHTML = "";
+    if (model.detail && local) {
+      const detailScroll = $("#job-dialog").scrollTop;
+      const identifiersOpen = $(".crafting-detail-identifiers", $("#job-detail"))?.open || false;
+      patchDashboardHTML("#job-detail", jobDetailHTML(model.detail, local, model.detailError ? null : state.member,
+      {itemFor,itemImage,quantity:(amount,item)=>`${quantityHTML(amount)}${resourceUnit(item) ? ` <small>${resourceUnit(item)}</small>` : ""}`,dateTime,icon,controlsAvailable:!model.detailLoading && !model.detailError}));
+      const identifiers = $(".crafting-detail-identifiers", $("#job-detail"));
+      if (identifiers) identifiers.open = identifiersOpen;
+      $("#job-dialog").scrollTop = detailScroll;
+    } else patchDashboardHTML("#job-detail", "");
   }
   renderDashboard();
   paint();
+  view.scrollTop = scroll;
 }
 
 async function refreshJobs() {
@@ -959,13 +1197,13 @@ function renderDraft() {
       const editable = entry.status === "draft" && !state.busy;
       return `<div class="draft-entry" role="listitem" data-draft-id="${esc(entry.id)}" data-selected="${entry.status === "draft" && !state.unchecked.has(entry.id)}" data-status="${entry.status}">
         <div class="draft-entry-top"><input id="draft-check-${esc(entry.id)}" class="draft-check" type="checkbox" aria-label="选择${esc(label)}" data-check="${esc(entry.id)}" ${entry.status === "draft" && !state.unchecked.has(entry.id) ? "checked" : ""} ${editable ? "" : "disabled"}><span class="draft-entry-media" data-texture-key="${esc(draftTextureKey(item))}">${itemImage(item)}</span><div class="draft-entry-name"><label for="draft-check-${esc(entry.id)}" title="${esc(label)}">${esc(label)}</label><span class="draft-entry-stock" title="${esc(stockText(item))}">${esc(draftStockLabel(item))}</span></div><button class="icon-button" data-remove="${esc(entry.id)}" title="移除草稿" aria-label="移除${esc(label)}草稿" ${editable ? "" : "disabled"}>${icon("trash-2")}</button></div>
-        <div class="draft-entry-fields"><label class="draft-quantity-field"><span>合成数量</span><input class="draft-quantity" data-quantity="${esc(entry.id)}" type="text" inputmode="numeric" maxlength="19" aria-label="${esc(label)}合成数量" value="${esc(entry.quantity)}" ${editable ? "" : "disabled"}></label><div class="draft-cpu-field"><span>合成 CPU</span><button class="cpu-select" data-draft-cpu="${esc(entry.id)}" ${!editable || !cpuSelectionSupported() ? "disabled" : ""} title="${cpuSelectionTitle()}"><span>${esc(entry.cpu_name || "自动分配")}${entry.wait_for_cpu ? " · 等待" : ""}${!cpuSelectionSupported() ? " · 未启用" : ""}</span>${icon("cpu")}</button></div></div>
+        <div class="draft-entry-fields"><label class="draft-quantity-field"><span>${craftingQuantityLabel(item)}</span><input class="draft-quantity" data-quantity="${esc(entry.id)}" type="text" inputmode="numeric" maxlength="19" aria-label="${esc(label)}合成数量" value="${esc(entry.quantity)}" ${editable ? "" : "disabled"}></label><div class="draft-cpu-field"><span>合成 CPU</span><button class="cpu-select" data-draft-cpu="${esc(entry.id)}" ${!editable || !cpuSelectionSupported() ? "disabled" : ""} title="${cpuSelectionTitle()}"><span>${esc(entry.cpu_name || "自动分配")}${entry.wait_for_cpu ? " · 等待" : ""}${!cpuSelectionSupported() ? " · 未启用" : ""}</span>${icon("cpu")}</button></div></div>
         ${entry.status === "draft" && (entry.cpu_name || entry.wait_for_cpu) ? `<button class="text-button draft-reset-cpu" data-reset-cpu="${esc(entry.id)}" ${state.busy ? "disabled" : ""}>恢复自动分配</button>` : ""}
         ${entry.status !== "draft" || entry.error ? `<p class="draft-note" data-status="${entry.status}">${entry.status === "submitting" ? "正在提交" : entry.status === "uncertain" ? "受理结果待核对 · 此条目已锁定" : esc(entry.error)}</p>` : ""}
         ${entry.status === "uncertain" ? isJobClaim(entry) ? `<button class="secondary wide" data-job-reconcile="${esc(entry.batch_id.slice(4))}">${icon("refresh-cw")}核对原生产任务</button>` : `<button class="secondary wide" data-reconcile="${esc(entry.id)}">${icon("refresh-cw")}核对原单项订单</button>` : ""}
       </div>`;
     }).join("")}</div>
-    <div class="draft-submit"><div class="draft-total"><span>已选 <strong>${summary.selected}</strong> 项</span><span title="所选条目的合成数量合计">共 <strong class="number">${quantityHTML(summary.quantity)}</strong> 件</span></div><button class="primary" id="submit-draft" ${chosen.length && !state.busy && jobs.state.support === "supported" ? "" : "disabled"}>${icon("send")}${state.busy ? "正在提交生产任务" : `提交 ${chosen.length} 项`}</button><p class="draft-note">${esc(submissionStatus() || "提交后可在合成中心查看进度")}</p></div>`
+    <div class="draft-submit"><button class="text-button qq-job-notification" data-job-notification ${state.busy ? "disabled" : ""}>${icon("bell")}${esc(notificationLabel(jobNotification))}</button><p class="draft-submitter">以 <strong>${esc(playerName(state.member))}</strong> 的身份提交</p><div class="draft-total"><span>已选 <strong>${summary.selected}</strong> 项</span><span title="所选条目的合成数量合计">${summary.quantityByKind ? Object.entries(summary.quantityByKind).map(([kind,amount])=>`<strong class="number">${quantityHTML(amount)}</strong> ${kind === "fluid" ? "mB" : "件"}`).join(" · ") : `共 <strong class="number">${quantityHTML(summary.quantity)}</strong> 件`}</span></div><button class="primary" id="submit-draft" ${chosen.length && !state.busy && jobs.state.support === "supported" ? "" : "disabled"}>${icon("send")}${state.busy ? "正在提交生产任务" : `提交 ${chosen.length} 项`}</button><p class="draft-note">${esc(submissionStatus() || "提交后可在合成中心查看进度")}</p></div>`
     : `<div class="draft-empty">${icon("list-plus")}<strong>清单还是空的</strong><span>点击物品右上角的 +，或在物品详情中加入清单</span></div>`;
   const checkAll = $("#draft-check-all", panel);
   if (checkAll) checkAll.indeterminate = summary.selected > 0 && summary.selected < summary.editable;
@@ -984,7 +1222,7 @@ function draftTextureKey(item) {
 
 function draftStockLabel(item) {
   if (!quantityKnown(item)) return "库存待查询";
-  return `库存 ${formatCompactQuantity(item.quantity)}${item.current_session ? "" : " · 待同步"}`;
+    return `库存 ${formatCompactQuantity(item.quantity)}${resourceUnit(item) ? ` ${resourceUnit(item)}` : ""}${item.current_session ? "" : " · 待同步"}`;
 }
 
 function patchDraftAppearance() {
@@ -1065,6 +1303,7 @@ async function changeDraft(transform, key = state.draftKey) {
 
 async function addItem(item, value, immediately = false) {
   if (!item || state.busy || state.preparing) return;
+  if (!craftingKindSupported(item,state.network?.capabilities)) {toast(item.kind === "fluid" ? "请先更新主 OC，启用流体下单。" : "此类资源当前仅支持查看库存。",true);return;}
   let quantity;
   try { quantity = normalizeQuantity(value, maximum()); }
   catch { message("#detail-feedback", `请输入 1 至 ${formatQuantity(maximum())} 的整数。`); return; }
@@ -1097,8 +1336,8 @@ async function submitDraft(ids = selectedDraftIds()) {
   state.busy = true;
   renderDraft(); renderDetail(); renderInventory();
   try {
-    await jobs.submit(ids);
-    if (context === state.context) { toast(`生产任务已受理 · ${ids.length} 项`, false, "task"); await refreshJobs(); }
+    await jobs.submit(ids, {notification:jobNotification});
+    if (context === state.context) { toast(`${playerName(state.member)} 的生产任务已受理 · ${ids.length} 项`, false, "task"); await refreshJobs(); }
   } catch (error) {
     if (context === state.context) toast(`${errorText(error)} 原清单保持锁定，请到生产任务核对。`, true);
   } finally {
@@ -1175,10 +1414,22 @@ function renderCPUList(model = cpuMonitorModel(state.cpus.cpus || [], state.cpuM
   const list = $("#cpu-list"), scroll = list.scrollTop;
   const active = document.activeElement?.closest(".cpu-monitor-row");
   const activeKey = active && list.contains(active) ? active.dataset.cpuKey : null;
-  list.innerHTML = cpuMonitorListHTML(model, { connected: !!state.network, supported: state.network?.capabilities?.cpu_selection === true, truncated: state.cpus.truncated, expanded: state.cpuMonitor.expanded });
+  list.innerHTML = cpuMonitorListHTML(model, { connected: !!state.network, supported: state.network?.capabilities?.cpu_selection === true, notificationSupported: state.network?.capabilities?.cpu_notifications === true, online: !!state.network?.online, truncated: state.cpus.truncated, expanded: state.cpuMonitor.expanded,
+    outputImage: (output,cpu) => itemImage({...output,id:`cpu:${cpu.id}`,kind:output.has_tag === false && Number.isInteger(output.damage) ? output.kind : "unknown"}) });
   list.scrollTop = scroll;
   if (activeKey) $$(".cpu-monitor-row", list).find(row => row.dataset.cpuKey === activeKey)?.querySelector("summary")?.focus({ preventScroll: true });
   $("#cpu-monitor-count").textContent = model.total ? `${model.visible.length} / ${model.total} 台` : "";
+  paint();
+}
+function renderCPUProcess() {
+  const target=cpuDetails.current;if(!target)return;
+  $("#cpu-process-title").textContent=`${target.name} · 合成过程`;
+  $("#cpu-process-goal").textContent=cpuOutputText(target.data?.cpu || target.cpu);
+  $("#cpu-process-status").textContent=cpuDetailStatus(target);
+  const columns=$("#cpu-process-columns");
+  const scroll=new Map($$("[data-cpu-process-scroll]",columns).map(node=>[node.dataset.cpuProcessScroll,node.scrollTop]));
+  columns.innerHTML=cpuDetailColumnsHTML(target.data,{search:$("#cpu-process-search").value,age,image:item=>itemImage({...item,id:`process:${item.row_id}`,kind:item.has_tag===false&&Number.isInteger(item.damage)?item.kind:"unknown"})});
+  $$("[data-cpu-process-scroll]",columns).forEach(node=>{node.scrollTop=scroll.get(node.dataset.cpuProcessScroll)||0;});
   paint();
 }
 async function refreshCPUs() {
@@ -1233,12 +1484,6 @@ function renderOrders() {
     (state.orderFilter === "active" && activeStates.has(order.state)) ||
     (state.orderFilter === "attention" && attentionStates.has(order.state)) ||
     (state.orderFilter === "done" && endedStates.has(order.state)));
-  const groups = new Map();
-  for (const order of orders) {
-    const key = state.orderGroup === "cpu" ? order.cpu_name || "自动分配" : order.batch_id || `single:${order.id}`;
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(order);
-  }
   const snapshot = state.orderSnapshot;
   const limit = snapshot?.limited_states.length ? snapshot.recent_only ? " · 仅最近 200 项" : ` · ${snapshot.limited_states.map(value => stateNames[value]).join("、")}各仅最近 200 项` : "";
   $("#orders-summary").textContent = !state.network ? "尚未连接网络" : snapshot
@@ -1250,18 +1495,18 @@ function renderOrders() {
   }
   $("#order-list").setAttribute("aria-busy", String(state.ordersLoading));
   if (state.taskMode === "orders") $("#refresh-orders").disabled = state.ordersLoading;
-  const counts = orders.reduce((result, order) => {
-    result[order.state] = (result[order.state] || 0) + 1;
-    return result;
-  }, {});
-  const summary = groups.size ? `<div class="network-toolbar" aria-label="任务摘要"><span>共 ${formatQuantity(orders.length)} 项 · ${formatQuantity(groups.size)} 个${state.orderGroup === "cpu" ? " CPU 分组" : "提交批次"}</span><span class="muted">${formatQuantity(counts.queued || 0)} 排队 · ${formatQuantity((counts.running || 0) + (counts.computing || 0))} 执行中 · ${formatQuantity(counts.needs_review || 0)} 待核对</span></div>` : "";
-  const groupsHTML = groups.size ? [...groups].map(([key, rows]) => `<section class="order-group"><div class="group-heading"><h2>${state.orderGroup === "cpu" ? esc(key) : `${key.startsWith("single:") ? "单项任务" : "提交批次"} · ${esc(dateTime(rows[0].created_at))}`}</h2><span class="muted">${rows.length} 项</span></div><div class="network-table order-table"><div class="network-table-head"><span>物品</span><span>数量</span><span>CPU 策略</span><span>提交时间</span><span>状态</span><span></span></div>${rows.map(order => {
-    const item = itemFor(order.item_id);
-    const itemName = item?.label || `物品 #${order.item_id}`;
-    const status = order.state === "queued" && order.wait_for_cpu ? "等待指定 CPU" : stateNames[order.state] || order.state;
-    return `<div class="network-table-row order-table-row"><span class="network-item-cell">${itemImage(item)}<button class="task-main" data-order="${esc(order.id)}"><span class="task-title">${esc(itemName)}</span><span class="task-sub">${esc(order.id)}</span></button></span><span class="number">× ${formatQuantity(order.quantity)}</span><span>${esc(order.cpu_name || "自动分配")}</span><span class="muted">${esc(age(order.created_at))}</span><span class="task-state" data-state="${esc(order.state)}">${esc(status)}${order.state === "needs_review" ? " · 需人工核对" : ""}</span>${order.state === "queued" ? `<button class="icon-button" data-cancel="${esc(order.id)}" title="撤回未派发任务" aria-label="撤回未派发任务">${icon("x")}</button>` : `<span></span>`}</div>`;
-  }).join("")}</div></section>`).join("") : `<div class="empty">${!snapshot ? state.ordersLoading ? "正在读取任务…" : state.ordersError ? "任务读取失败" : "尚未读取任务" : `暂无${state.orderFilter === "active" ? "未完成" : state.orderFilter === "attention" ? "待处理" : ""}任务`}</div>`;
-  $("#order-list").innerHTML = summary + groupsHTML;
+  const terms = state.crafting.orderSearch.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
+  const visible = orders.filter(order => terms.every(term => [itemFor(order.item_id)?.label, itemFor(order.item_id)?.name, order.id, order.owner_name, order.cpu_name, stateNames[order.state]].join(" ").toLocaleLowerCase().includes(term)));
+  const view = $("#view-orders"), scroll = view.scrollTop;
+  const groupsHTML = visible.length ? craftingOrdersHTML(visible, { group: state.orderGroup, itemFor, itemImage, age, dateTime, member:state.member })
+    : '<div class="crafting-empty">' + icon("list-checks") + '<strong>' + (!snapshot ? state.ordersLoading ? "正在读取订单…" : state.ordersError ? "订单读取失败" : "等待订单观测" : orders.length ? "没有匹配的订单" : "当前筛选没有订单") + '</strong><span>搜索仅匹配已读取的订单；可调整条件或从左侧刷新。</span></div>';
+  patchDashboardHTML("#order-list", groupsHTML);
+  if (snapshot && state.crafting.orderSearch) $("#orders-summary").textContent += " · 匹配 " + visible.length + " 项";
+  if (state.taskMode === "orders") {
+    $("#crafting-overview").hidden = true;
+    $("#crafting-status").textContent = "单项订单按提交批次或 CPU 分组 · 搜索仅匹配已读取记录";
+  }
+  view.scrollTop = scroll;
   renderDashboard();
   paint();
 }
@@ -1349,8 +1594,8 @@ function showOrder(id) {
 
 function renderOrderDetail(order, history) {
   const item = itemFor(order.item_id);
-  $("#order-facts").innerHTML = `<div class="detail-heading">${itemImage(item)}<h2>${esc(item?.label || `物品 #${order.item_id}`)}</h2></div><div class="order-detail-facts"><div class="fact"><span>数量</span><span class="number">${formatQuantity(order.quantity)}</span></div><div class="fact"><span>状态</span><span>${esc(stateNames[order.state] || order.state)}</span></div><div class="fact"><span>CPU 策略</span><span>${esc(order.cpu_name || "自动分配")}</span></div><div class="fact"><span>提交时间</span><span>${esc(dateTime(order.created_at))}</span></div><div class="fact"><span>过期时间</span><span>${esc(dateTime(order.expires_at))}</span></div></div>${order.reason ? `<p class="error">${esc(order.reason)}</p>` : ""}`;
-  $("#order-actions").innerHTML = order.state === "queued" ? `<div class="order-actions"><button class="secondary" data-cancel-detail="${esc(order.id)}">${icon("x")}撤回未派发任务</button></div>` : "";
+  $("#order-facts").innerHTML = `<div class="detail-heading">${itemImage(item)}<h2>${esc(item?.label || `物品 #${order.item_id}`)}</h2></div><div class="order-detail-facts"><div class="fact"><span>数量</span><span class="number">${formatQuantity(order.quantity)} ${resourceUnit(item)}</span></div><div class="fact"><span>状态</span><span>${esc(stateNames[order.state] || order.state)}</span></div><div class="fact"><span>CPU 策略</span><span>${esc(order.cpu_name || "自动分配")}</span></div><div class="fact"><span>下单人</span><span>${esc(submitterName(order))}</span></div><div class="fact"><span>提交时间</span><span>${esc(dateTime(order.created_at))}</span></div><div class="fact"><span>过期时间</span><span>${esc(dateTime(order.expires_at))}</span></div></div>${order.reason ? `<p class="error">${esc(order.reason)}</p>` : ""}`;
+  $("#order-actions").innerHTML = order.state === "queued" && (state.member?.admin || state.member?.id === order.user_id) ? `<div class="order-actions"><button class="secondary" data-cancel-detail="${esc(order.id)}">${icon("x")}撤回未派发任务</button></div>` : "";
   const review = $("#order-review");
   if (order.state === "needs_review" && state.member?.admin) {
     // Keep the live form connected so background reads cannot discard an edit.
@@ -1396,7 +1641,7 @@ function renderNetwork() {
   const feedback = $("#network-feedback");
   if (feedback) {
     const status = networkRefreshState({ loading: state.networkLoading, error: state.networkError, hasSnapshot: state.networkSnapshotReady });
-    feedback.hidden = status.hidden;
+    feedback.hidden = status.hidden || state.networkLoading && state.networkSnapshotReady;
     feedback.dataset.state = status.tone;
     feedback.innerHTML = status.hidden ? "" : `<span>${esc(status.text)}</span>${status.retry ? `<button type="button" class="secondary" data-network-retry><i data-lucide="refresh-cw"></i>重试</button>` : ""}`;
   }
@@ -1416,7 +1661,7 @@ function renderNetwork() {
       network: state.network,
       devices: state.devices,
       streamState: state.streamState,
-      loading: state.networkLoading,
+      loading: state.networkLoading && !state.networkSnapshotReady,
       error: state.networkError,
       errorKind: state.networkErrorKind,
       hasSnapshot: state.networkSnapshotReady,
@@ -1427,61 +1672,44 @@ function renderNetwork() {
     recovery.dataset.state = status.key;
     recovery.innerHTML = networkRecoveryHTML(status);
   }
+  $("#network-empty").hidden = !!network;
+  $("#network-info").hidden = !network;
   if (!network) {
     $("#network-summary").textContent = "尚未连接网络";
-    $("#network-info").innerHTML = `<div class="empty empty-state"><i data-lucide="wifi-off"></i><strong>尚未连接网络</strong><span>添加或选择一个网络后查看 OC 节点、服务能力与同步状态。</span><button class="secondary" data-view="settings">打开设置</button></div>`;
     renderDashboard();
     paint();
     return;
   }
   $("#network-summary").textContent = network.name;
-  const caps = network.capabilities || {};
-  const services = network.services || {};
-  const deviceSummary = networkDeviceSummary(state.devices);
-  const dashboard = networkDashboardSummary(network, state.devices);
-  const bridgeMode = network.bridge_mode === "cooperative" ? "多 OC 协作" : network.bridge_mode === "single" ? "单 OC" : network.bridge_mode || "标准";
-  const healthLabel = dashboard.health === "healthy"
-    ? "网络健康"
-    : dashboard.health === "degraded"
-      ? "存在同步告警"
-      : dashboard.health === "waiting" ? "等待节点" : "网络离线";
-  const healthTone = dashboard.health === "healthy" ? "ok" : dashboard.health === "waiting" ? "idle" : "warn";
-  const healthIcon = dashboard.health === "healthy" ? "check" : dashboard.health === "offline" ? "wifi-off" : "circle-alert";
-  const capabilityRows = networkCapabilityRows(caps, services);
-  const facts = [
-    ["最近通信", dateTime(network.last_seen), "网络或 OC 节点最近一次心跳"],
-    ["最近库存观测", dateTime(network.last_inventory), "库存同步最近一次收到的时间"],
-    ["最近 CPU 观测", dateTime(services.cpu_observed_at), "CPU 状态快照最近更新时间"],
-    ["单次最大合成量", formatQuantity(caps.max_craft_quantity), "当前 OC 报告的上限"],
-    ["数据质量", networkQualityLabel(network.quality), "服务端对当前快照的判断"],
-    ["数量读取器", `${formatQuantity(services.quantity_readers || 0)} 个`, "参与库存数量读取的 OC 节点"],
-  ];
-  const deviceCards = state.devices.length ? state.devices.map(device => {
-    const status = deviceState(device);
-    const health = healthSummary(device.health);
-    const details = [
-      `通信 · ${age(device.last_seen)}`,
-      `库存 · ${age(device.last_inventory)}`,
-      health.diagnostics + health.readFailures > 0 ? `${health.diagnostics + health.readFailures} 项诊断` : "无诊断",
-    ];
-    return `<article class="device-card" data-state="${status.key}"><div class="device-card-head"><span class="device-icon">${icon(device.role === "primary" ? "radio-tower" : "boxes")}</span><span class="state-label ${status.tone}"><i class="status-dot" data-tone="${status.tone === "online" ? "ok" : status.tone === "busy" ? "warn" : "idle"}></i>${status.label}</span></div><div class="device-card-title"><h3>${esc(device.name || device.id)}</h3><span>${esc(roleLabel(device.role))}</span></div><div class="device-card-meta">${details.map(detail => `<span>${esc(detail)}</span>`).join("")}</div><small class="device-card-session">会话 ${esc(device.session_id || "未建立")}</small></article>`;
-  }).join("") : `<div class="empty">暂无设备观测</div>`;
-  const deviceRows = state.devices.length ? state.devices.map(device => {
-    const status = deviceState(device);
-    return `<div class="network-table-row"><span><strong>${esc(device.name || device.id)}</strong><small class="task-sub">${esc(device.id)}</small></span><span>${esc(roleLabel(device.role))}</span><span class="state-label ${status.tone}">${status.label}</span><span>${esc(age(device.last_seen))}</span><span>${esc(age(device.last_inventory))}</span><span class="muted">${esc(device.session_id || "未建立会话")}</span></div>`;
-  }).join("") : `<div class="empty">暂无设备观测</div>`;
-  const deviceStatus = deviceSummary.total ? `${deviceSummary.online} / ${deviceSummary.total} 在线${deviceSummary.stale ? ` · ${deviceSummary.stale} 台滞后` : ""}` : "暂无设备观测";
-  const capabilityHTML = capabilityRows.map(row => `<div class="network-capability" data-state="${esc(row.tone)}"><span class="network-capability-icon">${icon(row.tone === "ok" ? "check" : "minus")}</span><span><strong>${esc(row.label)}</strong><small>${esc(row.detail)}</small></span><b>${esc(row.value)}</b></div>`).join("");
-  const factHTML = facts.map(([label, value, detail]) => `<div class="network-fact"><span>${esc(label)}</span><strong>${esc(value)}</strong><small>${esc(detail)}</small></div>`).join("");
-  const metricHTML = [
-    ["OC 节点", dashboard.total ? `${dashboard.online} / ${dashboard.total}` : "—", dashboard.total ? (dashboard.stale ? `${dashboard.stale} 台数据滞后` : "在线节点") : "等待节点上报", dashboard.total && dashboard.offline === 0 && dashboard.stale === 0 ? "ok" : dashboard.total ? "warn" : "idle"],
-    ["桥接模式", bridgeMode, network.online ? "实时心跳" : "等待 OC 恢复", network.online ? "ok" : "warn"],
-    ["服务能力", `${dashboard.serviceCount} / 5`, caps.cpu_selection ? "包含严格 CPU 指定" : "基础能力可用", dashboard.serviceCount >= 3 ? "ok" : "idle"],
-    ["事件流", state.streamState === "connected" ? "已连接" : state.streamState === "reconnecting" ? "重连中" : "已关闭", "浏览器实时刷新", state.streamState === "connected" ? "ok" : "warn"],
-  ].map(([label, value, detail, tone]) => `<div class="network-metric" data-state="${esc(tone)}"><span>${esc(label)}</span><strong>${esc(value)}</strong><small>${esc(detail)}</small></div>`).join("");
-  $("#network-info").innerHTML = `<section class="network-hero"><div class="network-hero-copy"><span class="network-eyebrow">当前网络</span><div class="network-title-row"><h2>${esc(network.name)}</h2><span class="network-health" data-state="${esc(healthTone)}">${icon(healthIcon)}${esc(healthLabel)}</span></div><p class="network-id">${esc(network.id)} · ${esc(deviceStatus)}</p></div><div class="network-hero-meta"><span>最近通信</span><strong>${esc(dashboard.lastCommunication ? age(dashboard.lastCommunication) : "未观测")}</strong><small>${network.online ? "网络正在接收 OC 心跳" : "等待 OpenComputers 恢复"}</small></div></section><section class="network-metrics" aria-label="网络摘要">${metricHTML}</section><div class="network-dashboard-grid"><section class="network-panel network-capabilities-panel"><div class="network-panel-heading"><div><span class="network-eyebrow">能力矩阵</span><h2>服务能力</h2></div><span class="network-panel-count">${dashboard.serviceCount} / 5</span></div><div class="network-capabilities">${capabilityHTML}</div></section><section class="network-panel network-facts-panel"><div class="network-panel-heading"><div><span class="network-eyebrow">同步观测</span><h2>运行事实</h2></div><i data-lucide="activity" aria-hidden="true"></i></div><div class="network-facts">${factHTML}</div></section></div><section class="network-panel network-devices-panel" aria-label="OC 节点"><div class="network-panel-heading"><div><span class="network-eyebrow">设备编排</span><h2>OC 节点</h2><span class="muted">每台设备的连接、角色与库存同步状态</span></div><span class="network-panel-count">${esc(deviceStatus)}</span></div><div class="device-cards">${deviceCards}</div><div class="network-device-table"><div class="network-table-head"><span>设备</span><span>角色</span><span>状态</span><span>最近通信</span><span>库存观测</span><span>会话</span></div>${deviceRows}</div></section>`;
+  const view = $("#view-network"), scroll = view.scrollTop;
+  patchDashboardHTML("#network-overview", networkOverviewHTML(network, state.devices, state.streamState, { age }));
+  renderNetworkNodes();
+  const identifiersOpen = $(".network-identifiers", $("#network-sidebar"))?.open || false;
+  patchDashboardHTML("#network-sidebar", networkSidebarHTML(network, state.streamState, { dateTime }));
+  const identifiers = $(".network-identifiers", $("#network-sidebar"));
+  if (identifiers) identifiers.open = identifiersOpen;
   renderDashboard();
   paint();
+  view.scrollTop = scroll;
+}
+
+function renderNetworkNodes() {
+  const model = networkNodeModel(state.devices, state.networkNodes);
+  const view = $("#view-network"), scroll = view.scrollTop;
+  const focusedRow = document.activeElement?.closest(".network-node");
+  const focusedKey = focusedRow?.dataset.nodeKey;
+  $("#network-nodes-count").textContent = model.visible.length === model.counts.all
+    ? model.counts.all + " 台节点"
+    : "显示 " + model.visible.length + " / " + model.counts.all + " 台";
+  for (const key of ["all", "online", "attention"]) $("#network-nodes-" + key).textContent = model.counts[key];
+  $$("[data-network-node-filter]").forEach(button => button.setAttribute("aria-pressed", String(button.dataset.networkNodeFilter === state.networkNodes.filter)));
+  patchDashboardHTML("#network-nodes-list", networkNodesHTML(model, { expanded: state.networkNodes.expanded, age, dateTime }));
+  if (focusedKey) {
+    const row = $$(".network-node", $("#network-nodes-list")).find(node => node.dataset.nodeKey === focusedKey);
+    if (row) $("summary", row)?.focus({ preventScroll: true });
+  }
+  paint();
+  view.scrollTop = scroll;
 }
 
 function networkRecoveryHTML(status) {
@@ -1641,11 +1869,11 @@ function inventoryWindowAnchor() {
 }
 
 function inventoryQuerySpec(limit) {
-  return { search: state.search, sort: state.sort, filter: state.filter, limit, view: state.stockView, scope: state.inventoryScope };
+  return { search: state.search, sort: state.sort, filter: state.filter, limit, view: state.stockView, scope: state.inventoryScope,kind:state.resourceKind,grouped:state.resourceKind==='item' };
 }
 
 function inventoryPageKey(cursor, spec) {
-  return JSON.stringify([spec.search, spec.sort, spec.filter, spec.limit, spec.view, spec.scope, cursor, spec.anchor || "", spec.page || ""]);
+  return JSON.stringify([spec.search, spec.sort, spec.filter, spec.limit, spec.view, spec.scope, cursor, spec.anchor || "", spec.page || "",spec.kind]);
 }
 
 function cachedInventoryPage(cursor, spec, fresh = false) {
@@ -1700,6 +1928,8 @@ function requestInventoryPage(cursor, limit, signal, spec = inventoryQuerySpec(l
   const epoch = inventoryCacheEpoch;
   const query = new URLSearchParams({ q: spec.search, sort: spec.sort, limit: String(spec.limit), consistency: "window", pagination: "pages" });
   if (spec.filter) query.set("craftable", spec.filter);
+  query.set("kind",spec.kind || "item");
+  if(spec.grouped)query.set('grouped','true');
   if (spec.scope === "nesql_plain") query.set("view", spec.view);
   if (cursor) query.set("cursor", cursor);
   if (spec.anchor) query.set("anchor", spec.anchor);
@@ -1757,6 +1987,8 @@ function prefetchInventoryPages(pageIndex, generation, limit) {
 async function requestInventoryBlock(start, pages, spec, signal, epoch) {
   const query = new URLSearchParams({ q: spec.search, sort: spec.sort, limit: String(Math.min(200, pages * spec.limit)), page_size: String(spec.limit), consistency: "window", pagination: "pages", page: String(start + 1) });
   if (spec.filter) query.set("craftable", spec.filter);
+  query.set("kind",spec.kind || "item");
+  if(spec.grouped)query.set('grouped','true');
   if (spec.scope === "nesql_plain") query.set("view", spec.view);
   const value = await api.request(networkPath(`/items?${query}`), { signal });
   if (epoch !== inventoryCacheEpoch || signal.aborted) return value;
@@ -1838,7 +2070,7 @@ function applyInventoryPage(destination, page) {
   const focusedItem = document.activeElement?.dataset?.item || document.activeElement?.dataset?.quickAdd;
   const focusKind = document.activeElement?.dataset?.quickAdd ? "data-quick-add" : "data-item";
   const windowX = window.scrollX, windowY = window.scrollY;
-  hideInventoryHover();
+  if (navigated) hideInventoryHover();
   if (page.total != null && state.inventoryTotal != null && page.total !== state.inventoryTotal) invalidateInventoryPageNumbers(page.total, page.pageCount);
   state.page = page.pageNumber ? page.pageNumber - 1 : destination.page;
   state.inventoryPageCount = page.pageCount || state.inventoryPageCount;
@@ -1851,10 +2083,10 @@ function applyInventoryPage(destination, page) {
   state.inventoryScope = page.scope;
   state.cursors[state.page] = { cursor: state.cursor, anchor: inventoryWindowAnchor() };
   state.cursors.length = state.page + 1;
-  state.items.forEach(item => state.itemCache.set(String(item.id), item));
+  state.items.forEach(item => {if(!item.group)state.itemCache.set(String(item.id), item);});
   patchDraftAppearance();
-  const selected = state.itemCache.get(String(state.selected?.id));
-  if (selected) state.selected = selected;
+  const selected = state.selected?.group ? state.items.find(item=>item.id===state.selected.id) : state.itemCache.get(String(state.selected?.id));
+  if (selected && (!selected.group || state.selected?.group)) state.selected = selected;
   cacheInventoryPage(state.cursor, { ...inventoryQuerySpec(state.inventoryLimit), anchor: destination.anchor || "", page: destination.absolute ? state.page + 1 : "" }, page);
   cacheInventoryPage("", { ...inventoryQuerySpec(state.inventoryLimit), anchor: inventoryWindowAnchor() }, page);
   if (destination.absolute || !destination.anchor) cacheInventoryPage("", { ...inventoryQuerySpec(state.inventoryLimit), page: state.page + 1 }, page);
@@ -2008,10 +2240,10 @@ async function refreshInventoryWindow(force = false) {
     state.anchorCursor = value.anchorCursor || state.anchorCursor;
     state.cursors[state.page] = { cursor: state.cursor, anchor: inventoryWindowAnchor() };
     cacheInventoryPage("", { ...inventoryQuerySpec(state.inventoryLimit), anchor: inventoryWindowAnchor() }, value);
-    state.items.forEach(item => state.itemCache.set(String(item.id), item));
+    state.items.forEach(item => {if(!item.group)state.itemCache.set(String(item.id), item);});
     patchDraftAppearance();
     const selected = state.items.find(item => String(item.id) === String(state.selected?.id)) || state.itemCache.get(String(state.selected?.id));
-    if (selected) state.selected = selected;
+    if (selected && (!selected.group || state.selected?.group)) state.selected = selected;
     if (!patchInventoryRows()) renderInventory();
     if (scroll) scroll.scrollTop = scrollTop;
     if (window.scrollY!==windowY) window.scrollTo(windowX,windowY);
@@ -2105,6 +2337,8 @@ function connectStream() {
 }
 
 async function switchNetwork(id) {
+  $("#cpu-process-dialog").close();
+  void cpuDetails.close();
   if (state.busy || state.preparing) { $("#network").value = state.network?.id || ""; toast("请等待本轮提交结束。"); return; }
   clearTimeout(historySearchTimer);clearTimeout(historyWheelTimer);inventoryHistory.reset();
   state.context++;
@@ -2125,12 +2359,15 @@ async function switchNetwork(id) {
   state.streamState = "closed";
   cpuCallback = null;
   for (const dialog of ["cpu-dialog", "order-dialog", "job-dialog"]) if ($(`#${dialog}`).open) $(`#${dialog}`).close();
+  qqNotifications.reset(); integrationSettings.reset(); jobNotification=null;
   state.network = network || null;
+  subnetMonitor.networkChanged();
   state.inventoryStats = null;
   state.inventoryTrend = [];
   state.inventoryTrendKey = "";
   state.inventoryScope = "";
   state.stockView = "stock";
+  state.resourceKind="item";
   $("#stock-view").value = "stock";
   state.itemCache.clear();
   state.selected = null;
@@ -2143,11 +2380,19 @@ async function switchNetwork(id) {
   state.inventoryLoading = false;
   state.orders = [];
   state.orderSnapshot = null;
+  state.crafting = { search: "", sort: "newest", owner: state.member?.admin ? "all" : "mine", orderSearch: "" };
+  $("#crafting-search").value = "";
+  $("#crafting-order-search").value = "";
+  $("#crafting-sort").value = "newest";
+  $("#crafting-owner").value = state.crafting.owner;
   state.ordersLoading = false;
   state.ordersError = false;
   state.activeOrderCount = 0;
   state.activeOrdersTruncated = false;
   state.devices = [];
+  state.networkNodes = { search: "", filter: "all", role: "all", expanded: new Set() };
+  $("#network-nodes-search").value = "";
+  $("#network-nodes-role").value = "all";
   state.networkLoading = false;
   state.networkError = "";
   state.networkErrorKind = "";
@@ -2182,20 +2427,121 @@ async function switchNetwork(id) {
 }
 
 function showLogin() {
+  $("#cpu-process-dialog").close();void cpuDetails.close();
   if (!$("#auth-dialog").open) $("#auth-dialog").showModal();
 }
+
+$("#auth-dialog").addEventListener("click", event => {
+  const mode = event.target.closest("[data-login-mode]")?.dataset.loginMode;
+  if (!mode || $("#login-button").disabled) return;
+  state.loginMode = mode;
+  $("#player-login-fields").hidden = mode === "token";
+  $("#token-login-fields").hidden = mode !== "token";
+  $("#player-register-fields").hidden = mode !== "register";
+  $("#token").required = mode === "token";
+  for (const id of ["#login-game-id", "#login-password"]) { $(id).required = mode !== "token"; $(id).disabled = mode === "token"; }
+  for (const id of ["#login-confirm-password", "#login-invitation"]) { $(id).required = mode === "register"; $(id).disabled = mode !== "register"; }
+  $("#login-password").autocomplete = mode === "register" ? "new-password" : "current-password";
+  $("#login-password").minLength = mode === "register" ? 10 : 1;
+  $("#login-error").textContent = "";
+  $("#login-button").innerHTML = `${icon("log-in")}${mode === "register" ? "注册并登录" : "登录"}`;
+  $$("[data-login-mode]").forEach(button => button.setAttribute("aria-pressed", String(button.dataset.loginMode === mode)));
+  paint();
+});
+
+async function refreshPlayerTeam() {
+  if (!state.member?.admin) return;
+  const memberID = state.member.id;
+  try {
+    const [members, invitations] = await Promise.all([api.request("/api/v1/members"),api.request("/api/v1/player-invitations")]);
+    if (state.member?.id !== memberID) return;
+    state.teamMembers = members; state.teamInvitations = invitations;
+    if (state.settingsSection === "account") renderSettings();
+  } catch (error) { toast(errorText(error),true); }
+}
+
+$("#settings-detail").addEventListener("submit", async event => {
+  const form = event.target;
+  if (!["player-profile-form","player-invite-form","player-reset-form"].includes(form.id)) return;
+  event.preventDefault();
+  if (state.busy || state.preparing) { toast("请等待当前提交结束。",true); return; }
+  const button = $("button[type=submit]",form); button.disabled = true;
+  const errorTarget = $(".error",form); if (errorTarget) errorTarget.textContent = "";
+  try {
+    if (form.id === "player-profile-form") {
+      const value = await api.request("/api/v1/me/player",{method:"PUT",body:{game_id:$("#profile-game-id").value.trim(),current_password:$("#profile-current-password")?.value || "",password:$("#profile-password").value}});
+      await acceptSession(value.member,value.csrf,value.expires_at); renderSettings(); toast("玩家身份已保存，旧订单署名保留。");
+    } else if (form.id === "player-invite-form") {
+      const value = await api.request("/api/v1/player-invitations",{method:"POST",body:{network_id:$("#invite-network").value,can_craft:$("#invite-permission").value === "craft",max_uses:Number($("#invite-uses").value)}});
+      state.teamInvitations.unshift(value.invitation);
+      $("#player-invite-code").textContent = value.code; $("#player-invite-result").hidden = false;
+    } else {
+      const id = $("#player-reset-member").value;
+      const member = await api.request(`/api/v1/members/${encodeURIComponent(id)}/player`,{method:"PUT",body:{game_id:$("#player-reset-game-id").value.trim(),password:$("#player-reset-password").value}});
+      $("#player-reset-password").value = "";
+      if (member.id === state.member.id) { showLogin(); toast("凭据已更新，请重新登录。"); }
+      else { await refreshPlayerTeam(); toast("成员身份与密码已重设。"); }
+    }
+  } catch (error) { if (errorTarget) errorTarget.textContent = errorText(error); }
+  finally { if (button.isConnected) button.disabled = false; }
+});
+
+$("#settings-detail").addEventListener("click", async event => {
+  const edit = event.target.closest("[data-edit-player]");
+  if (edit) {
+    const member = state.teamMembers.find(m=>m.id===edit.dataset.editPlayer); if (!member) return;
+    $("#player-reset-form").hidden=false; $("#player-reset-member").value=member.id;
+    $("#player-reset-name").textContent=`重设 ${playerName(member)}`;
+    $("#player-reset-game-id").value=member.game_id || ""; $("#player-reset-password").value="";
+    $("#player-reset-game-id").focus(); return;
+  }
+  if (event.target.closest("#copy-player-invite")) {
+    const code = $("#player-invite-code");
+    try {
+      if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(code.textContent);
+      else {
+        const range = document.createRange(); range.selectNodeContents(code);
+        const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range);
+        if (!document.execCommand("copy")) throw new Error("copy unavailable");
+        selection.removeAllRanges();
+      }
+      toast("邀请码已复制");
+    } catch {
+      const range = document.createRange(); range.selectNodeContents(code);
+      const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range);
+      toast("已选中邀请码，请手动复制。",true);
+    }
+    return;
+  }
+  const invite = event.target.closest("[data-revoke-invite]");
+  const member = event.target.closest("[data-revoke-player]");
+  if (!invite && !member) return;
+  if (member && !confirm("停用此成员？他的历史订单保留，未继续派发的任务将按权限变化暂停。")) return;
+  try {
+    await api.request(invite ? `/api/v1/player-invitations/${encodeURIComponent(invite.dataset.revokeInvite)}` : `/api/v1/members/${encodeURIComponent(member.dataset.revokePlayer)}`,{method:"DELETE"});
+    await refreshPlayerTeam(); toast(invite ? "邀请码已撤销" : "成员已停用");
+  } catch (error) { toast(errorText(error),true); }
+});
 
 async function acceptSession(member, csrf, expiresAt = "", persist = true) {
   await switchNetwork("");
   const context = state.context;
+  integrationSettings.reset();
   state.member = member;
+  navigationInstallations = [];
+  navigationPreferences = loadNavigation(localStorage,member.id);
+  renderNavigation();
+  api.setMember(member.id);
   api.setCSRF(csrf);
+  pluginMarket.sessionChanged(); subnetMonitor.sessionChanged();
   state.session = { member: member.id, csrf, expiresAt };
   if (persist) {
     try { saveSession(localStorage, sessionStorage, state.session, state.settings.rememberSession); }
     catch { toast("会话无法保存，请检查浏览器存储。", true); }
   }
-  $("#token").value = "";
+  for (const id of ["#token","#login-password","#login-confirm-password","#login-invitation"]) $(id).value = "";
+  state.teamMembers=[]; state.teamInvitations=[];
+  if (!member.game_id) toast("可在设置 → 玩家与团队绑定游戏 ID；管理员可生成团队邀请码。");
   $("#network").innerHTML = `<option value="">正在读取网络</option>`;
   $("#network").disabled = true;
   refreshHeader();
@@ -2222,9 +2568,10 @@ $("#login-form").addEventListener("submit", async event => {
   $("#login-button").disabled = true;
   $("#login-error").textContent = "";
   try {
-    const value = await api.request("/api/v1/session", { method: "POST", body: { token: $("#token").value.trim() }, login: true });
+    const request = loginPayload(state.loginMode, {token:$("#token").value,gameID:$("#login-game-id").value,password:$("#login-password").value,confirmPassword:$("#login-confirm-password").value,invitation:$("#login-invitation").value});
+    const value = await api.request(request.path, { method: "POST", body: request.body, login: true });
     await acceptSession(value.member, value.csrf, value.expires_at);
-  } catch (error) { $("#login-error").textContent = errorText(error); }
+  } catch (error) { $("#login-error").textContent = error?.message || "登录未完成，请核对信息。"; }
   finally { $("#login-button").disabled = false; }
 });
 $("#auth-dialog").addEventListener("cancel", event => event.preventDefault());
@@ -2233,15 +2580,21 @@ $("#logout").addEventListener("click", async () => {
   try {
     await api.request("/api/v1/session", { method: "DELETE" });
     state.stream?.close(); clearInterval(streamTimer); clearTimeout(streamRefreshTimer);
-    api.setCSRF(""); state.member = null; state.networks = [];
+    api.setCSRF(""); api.setMember(""); state.member = null; state.networks = [];
     clearSession(localStorage, sessionStorage);
     state.session = null;
+    navigationPreferences = loadNavigation(localStorage, "");
+    qqNotifications.reset(); integrationSettings.reset(); jobNotification=null;
+    pluginMarket.sessionChanged(); subnetMonitor.sessionChanged();
     $("#network").innerHTML = `<option value="">未连接</option>`;
     await switchNetwork("");
     showLogin();
   } catch (error) { toast(errorText(error), true); }
 });
 $("#network").addEventListener("change", event => switchNetwork(event.target.value));
+for (const id of ["#refresh-plugins", "#refresh-plugin-lsc"]) $(id).addEventListener("click", () => {void pluginMarket.refresh();void subnetMonitor.refresh();});
+$('#refresh-plugin-subnet').addEventListener('click',()=>subnetMonitor.show());
+$('#refresh-plugin-qq').addEventListener('click',()=>qqNotifications.show());
 $("#notifications").addEventListener("click", () => { refreshHeader(); renderCPUs(); renderNetwork(); $("#sync-dialog").showModal(); });
 $("#refresh-dashboard").addEventListener("click", () => {
   renderDashboard();
@@ -2258,6 +2611,13 @@ $("#search").addEventListener("compositionend", event => {
 });
 $("#sort").addEventListener("change", event => { state.sort = event.target.value; loadInventory(true); });
 $("#stock-view").addEventListener("change", event => { state.stockView = event.target.value; loadInventory(true); });
+$("#inventory-resource-tabs").addEventListener("click", event => {
+  const kind=event.target.closest("[data-resource-kind]")?.dataset.resourceKind;
+  if (!kind || kind===state.resourceKind)return;
+  state.resourceKind=kind;state.filter="";state.selected=null;
+  $$("[data-filter]").forEach(button=>button.setAttribute("aria-pressed",String(button.dataset.filter==="")));
+  renderDetail();refreshHeader();void loadInventory(true);
+});
 $("#refresh-inventory").addEventListener("click", () => { void (state.inventoryQueryPending ? loadInventory(true) : refreshInventoryWindow(true)); void refreshInventoryStats(); });
 $("#refresh-history").addEventListener('click',()=>{if(state.network)void inventoryHistory.refresh()});
 $("#history-search").addEventListener('input',event=>{clearTimeout(historySearchTimer);if(event.isComposing)return;$("#history-search-results").hidden=false;event.target.setAttribute('aria-expanded','true');historySearchTimer=setTimeout(()=>inventoryHistory.search(event.target.value.trim()),220)});
@@ -2309,6 +2669,25 @@ $("#task-mode").addEventListener("change", event => {
   state.taskMode = event.target.value; renderJobs(); renderOrders();
   if (state.taskMode === "jobs") refreshJobs(); else refreshOrders();
 });
+$("#crafting-search").addEventListener("input", event => { state.crafting.search = event.target.value; renderJobs(); });
+$("#crafting-order-search").addEventListener("input", event => { state.crafting.orderSearch = event.target.value; renderOrders(); });
+$("#crafting-sort").addEventListener("change", event => { state.crafting.sort = event.target.value; renderJobs(); });
+$("#crafting-owner").addEventListener("change", event => { state.crafting.owner = event.target.value; renderJobs(); });
+$("#view-orders").addEventListener("click", event => {
+  const button = event.target.closest("button");
+  if (!button) return;
+  if (button.dataset.taskMode) {
+    $("#task-mode").value = button.dataset.taskMode;
+    $("#task-mode").dispatchEvent(new Event("change"));
+  } else if ("craftingNew" in button.dataset) {
+    showView("inventory");
+    $("#search").focus();
+  } else if ("craftingSearchReset" in button.dataset) {
+    state.crafting.search = ""; state.crafting.owner = "all";
+    $("#crafting-search").value = ""; $("#crafting-owner").value = "all";
+    renderJobs();
+  }
+});
 $("#job-history-more").addEventListener("click", () => jobs.history());
 $("#refresh-job-detail").addEventListener("click", () => refreshJobDetail());
 $("#job-dialog").addEventListener("close", () => jobs.closeDetail());
@@ -2317,6 +2696,22 @@ $("#refresh-order-detail").addEventListener("click", () => refreshOrderDetail())
 $("#order-dialog").addEventListener("cancel", () => invalidateOrderDetail());
 $("#order-dialog").addEventListener("close", () => { if (!$("#order-dialog").open) invalidateOrderDetail(); });
 $("#refresh-cpus").addEventListener("click", () => refreshCPUs());
+$("#cpu-list").addEventListener("click",event=>{
+  const notify=event.target.closest('[data-cpu-notify]');if(notify){const cpu=state.cpus.cpus?.find(c=>c.id===notify.dataset.cpuNotify);if(cpu)void qqNotifications.cpuReminder(cpu,state.cpus.session_id||state.network?.session_id).catch(e=>toast(e.message,true));return;}
+  const button=event.target.closest("[data-cpu-process]");if(!button)return;
+  const index=(state.cpus.cpus||[]).findIndex(cpu=>cpu.id===button.dataset.cpuProcess);
+  const cpu=state.cpus.cpus?.[index];if(!cpu||!state.network)return;
+  $("#cpu-process-search").value="";
+  $("#cpu-process-dialog").showModal();
+  cpuDetails.open({network:state.network.id,session:state.cpus.session_id||state.network.session_id,cpu,name:cpu.name?.trim()||`未命名 CPU ${index+1}`});
+});
+$("#cpu-process-search").addEventListener("input",renderCPUProcess);
+$("#cpu-process-dialog").addEventListener("close",()=>{if(!$("#cpu-process-dialog").open)void cpuDetails.close();});
+$("#cpu-process-reconnect").addEventListener("click",()=>{
+  const target=cpuDetails.current;if(!target)return;
+  if(target.stopped){$("#cpu-process-status").textContent=target.error || "请关闭后重新选择 CPU";return;}
+  void cpuDetails.refresh().catch(error=>{ $("#cpu-process-status").textContent=error.message; });
+});
 $("#cpu-monitor-search").addEventListener("input", event => {
   state.cpuMonitor.search = event.target.value;
   $("#cpu-list").scrollTop = 0;
@@ -2346,6 +2741,38 @@ $("#view-cpus").addEventListener("click", event => {
   renderCPUs();
 });
 $("#refresh-network").addEventListener("click", () => refreshNetwork());
+$("#network-nodes-search").addEventListener("input", () => {
+  state.networkNodes.search = $("#network-nodes-search").value;
+  renderNetworkNodes();
+});
+$("#network-nodes-role").addEventListener("change", event => {
+  state.networkNodes.role = event.target.value;
+  renderNetworkNodes();
+});
+$("#network-nodes-list").addEventListener("toggle", event => {
+  const row = event.target;
+  if (!row.matches?.(".network-node") || !row.isConnected) return;
+  if (row.open) state.networkNodes.expanded.add(row.dataset.nodeKey);
+  else state.networkNodes.expanded.delete(row.dataset.nodeKey);
+}, true);
+$("#view-network").addEventListener("click", async event => {
+  const button = event.target.closest("button");
+  if (!button) return;
+  if (button.dataset.networkNodeFilter) {
+    state.networkNodes.filter = button.dataset.networkNodeFilter;
+    renderNetworkNodes();
+  } else if ("networkNodesReset" in button.dataset) {
+    state.networkNodes.search = "";
+    state.networkNodes.filter = "all";
+    state.networkNodes.role = "all";
+    $("#network-nodes-search").value = "";
+    $("#network-nodes-role").value = "all";
+    renderNetworkNodes();
+  } else if ("copyNetworkId" in button.dataset && state.network) {
+    try { await navigator.clipboard.writeText(state.network.id); toast("网络 ID 已复制"); }
+    catch { toast("请手动选择并复制网络 ID。", true); }
+  }
+});
 $("#add-network").addEventListener("click", () => openNetworkDialog());
 $("#network-form").addEventListener("submit", createNetwork);
 $("#network-dialog").addEventListener("cancel", event => { if (state.networkCreateBusy) event.preventDefault(); });
@@ -2372,6 +2799,9 @@ $("#settings-detail").addEventListener("change", async event => {
       applyTexturePackURL(state.settings.texturePackURL, false).catch(() => {});
     } else if (input.value === "local") {
       try {
+        if(texturePack.status().loaded){
+          state.texturePackError="";refreshTexturePackState();renderSettings();return;
+        }
         const bytes = await loadCachedTexturePack();
         if (!bytes) throw new Error("未找到已保存的本地纹理包。");
         await texturePack.loadArchive(bytes, "本地纹理包");
@@ -2409,6 +2839,7 @@ $("#settings-detail").addEventListener("click", async event => {
     texturePack.clear();
     clearCachedTexturePack().catch(() => {});
     state.texturePackError = "";
+    state.texturePackWarning = "";
     state.settings = saveSettings(localStorage, { ...state.settings, textureSource: "server", texturePackURL: "" });
     refreshTexturePackState();
     renderSettings();
@@ -2465,6 +2896,7 @@ $("#settings-sections").addEventListener("click", event => {
   const button = event.target.closest("[data-settings-section]");
   if (!button) return;
   state.settingsSection = button.dataset.settingsSection;
+  if (state.settingsSection === "account") refreshPlayerTeam();
   $("#settings-sections").querySelectorAll("[data-settings-section]").forEach(item => {
     item.setAttribute("aria-selected", String(item === button));
     item.setAttribute("aria-current", String(item === button));
@@ -2475,12 +2907,40 @@ $("#settings-sections").addEventListener("click", event => {
 document.addEventListener("mouseover", event => {
   const button = event.target.closest(".inventory-table .item-button");
   if (!button || (event.relatedTarget instanceof Node && button.contains(event.relatedTarget))) return;
-  showInventoryHover(button);
+  showInventoryHover(button, event);
+});
+document.addEventListener("mousemove", event => {
+  const button = event.target.closest(".inventory-table .item-button");
+  if (!button) return;
+  if (inventoryHover.button !== button) { showInventoryHover(button, event); return; }
+  inventoryHover.pointer = { x: event.clientX, y: event.clientY };
+  if (!inventoryHover.frame) inventoryHover.frame = requestAnimationFrame(positionInventoryHover);
 });
 document.addEventListener("mouseout", event => {
   const button = event.target.closest(".inventory-table .item-button");
   if (button && !(event.relatedTarget instanceof Node && button.contains(event.relatedTarget))) hideInventoryHover();
 });
+document.addEventListener("keydown", event => {
+  if (!inventoryHover.button || $$("dialog[open]").length) return;
+  if (event.key === "Shift") {
+    if (!inventoryHover.advanced) { inventoryHover.advanced = true; refreshInventoryHover(); }
+    return;
+  }
+  if (event.target.closest("input,textarea,select,[contenteditable]")) return;
+  if (event.key === "Escape") hideInventoryHover();
+  else if (event.code === "KeyZ" && !event.ctrlKey && !event.metaKey && !event.altKey && inventoryHover.pages.length > 1) {
+    event.preventDefault();
+    inventoryHover.page = (inventoryHover.page + 1) % inventoryHover.pages.length;
+    renderInventoryHoverPage();
+  }
+});
+document.addEventListener("keyup", event => {
+  if (event.key === "Shift" && inventoryHover.button && inventoryHover.advanced) {
+    inventoryHover.advanced = false; refreshInventoryHover();
+  }
+});
+window.addEventListener("blur", hideInventoryHover);
+document.addEventListener("scroll", hideInventoryHover, true);
 document.addEventListener("click", async event => {
   const button = event.target.closest("button");
   if (!button || button.disabled) return;
@@ -2517,12 +2977,21 @@ document.addEventListener("click", async event => {
   }
   if (data.item) {
     hideInventoryHover();
-    state.selected = state.itemCache.get(data.item); state.amount = "1";
+    const item=state.items.find(item=>item.id===data.item) || state.itemCache.get(data.item);
+    if(item?.group){state.selected=item;renderVariantGroup(item);openInspector('detail');return;}
+    state.selected = state.itemCache.get(data.item); state.amount = state.selected?.kind === "fluid" ? "1000" : "1";
     renderDetail();
     $$("tr[data-id]").forEach(row => row.dataset.selected = String(row.dataset.id === data.item));
     openInspector("detail");
   }
-  if (data.quickAdd) { const item = state.itemCache.get(data.quickAdd); if (item) await addItem(item, "1"); }
+  if (data.quickAdd) { const item = state.itemCache.get(data.quickAdd); if (item) await addItem(item, item.kind === "fluid" ? "1000" : "1"); }
+  if(data.selectVariant){variantGroupContext++;state.selected=state.itemCache.get(data.selectVariant);state.amount='1';renderDetail();return;}
+  if(data.variantMore){await renderVariantGroup(state.selected,data.variantMore,true);return;}
+  if(data.variantData){
+    const itemID=data.variantData;button.disabled=true;
+    try{const value=await api.request(networkPath(`/items/${itemID}/variant-data`));if(state.selected?.id===itemID){const pre=$('.variant-data');pre.textContent=JSON.stringify(value.typed_data,null,2);pre.hidden=false;}}
+    catch(error){toast(errorText(error),true);}finally{if(button.isConnected)button.disabled=false;}return;
+  }
   if (data.step) {
     try { state.amount = (BigInt($("#craft-quantity").value || 1) + BigInt(data.step)).toString(); state.amount = normalizeQuantity(state.amount, maximum()); }
     catch { state.amount = data.step === "-1" ? "1" : String(maximum()); }
@@ -2531,6 +3000,7 @@ document.addEventListener("click", async event => {
   if (button.id === "add-to-draft" || button.id === "submit-immediately") {
     await addItem(state.selected, $("#craft-quantity").value, button.id === "submit-immediately");
   }
+  if (button.hasAttribute("data-job-notification")) { try { jobNotification=await qqNotifications.choose(jobNotification); renderDetail(); renderDraft(); } catch(error) { if(error.message!=="已取消设置")toast(error.message,true); } return; }
   if (button.id === "detail-cpu") chooseCPU((name, wait) => { state.cpuName = name; state.waitForCPU = wait; renderDetail(); });
   if (data.remove) await changeDraft(current => ({ ...current, entries: removeDraft(current.entries, data.remove) }));
   if (button.id === "submit-draft") submitDraft();
@@ -2540,6 +3010,7 @@ document.addEventListener("click", async event => {
     state.jobFilter = data.jobFilter;
     $$("[data-job-filter]").forEach(b=>b.setAttribute("aria-pressed",String(b===button)));
     renderJobs();
+    if (state.jobFilter === "history" && !jobs.state.historyLoaded) void jobs.history();
   }
   if (data.job) showJob(data.job);
   if (data.jobReconcile || data.jobRetry) {
@@ -2653,7 +3124,44 @@ document.addEventListener("keydown", event => {
     if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
   }
 });
+document.addEventListener('click',event=>{
+  const button = event.target.closest('button'); if (!button) return;
+  if (button.hasAttribute('data-navigation-more')) openNavigationDrawer();
+  if (button.hasAttribute('data-navigation-settings')) { state.settingsSection='navigation'; showView('settings'); }
+  if (button.dataset.navigationMove) {
+    updateNavigation(moveNavigation(navigationPreferences,button.dataset.navigationMove,Number(button.dataset.direction),navigationAvailable()),`[data-navigation-move="${button.dataset.navigationMove}"][data-direction="${button.dataset.direction}"]`);
+  }
+  if (button.hasAttribute('data-navigation-reset')) updateNavigation(null,'[data-navigation-reset]');
+});
+document.addEventListener('change',event=>{
+  const id=event.target.dataset.navigationPlacement;
+  if(id) updateNavigation(placeNavigation(navigationPreferences,id,event.target.value),`[data-navigation-placement="${id}"]`);
+});
+let navigationDragId='';
+document.addEventListener('dragstart',event=>{
+  const id=event.target.closest('[data-navigation-drag]')?.dataset.navigationDrag;
+  if(!id) return; navigationDragId=id;event.dataTransfer.setData('text/plain',id);event.dataTransfer.effectAllowed='move';
+});
+document.addEventListener('dragover',event=>{
+  const row=event.target.closest('[data-navigation-row]');if(!row||!navigationDragId)return;
+  event.preventDefault();event.dataTransfer.dropEffect='move';row.dataset.dragOver='true';
+});
+document.addEventListener('dragleave',event=>{const row=event.target.closest('[data-navigation-row]');if(row&&!row.contains(event.relatedTarget))delete row.dataset.dragOver;});
+document.addEventListener('dragend',()=>{navigationDragId='';$$('[data-drag-over]').forEach(row=>delete row.dataset.dragOver);});
+document.addEventListener('drop',event=>{
+  const target=event.target.closest('[data-navigation-row]')?.dataset.navigationRow;if(!target||!navigationDragId)return;
+  event.preventDefault();const entries=orderedNavigation(navigationPreferences,navigationAvailable());
+  const from=entries.findIndex(row=>row.id===navigationDragId),to=entries.findIndex(row=>row.id===target);
+  let preferences=navigationPreferences;
+  for(let step=0;step<Math.abs(to-from);step++) preferences=moveNavigation(preferences,navigationDragId,to<from?-1:1,navigationAvailable());
+  navigationDragId='';updateNavigation(preferences);
+});
+new ResizeObserver(()=>renderNavigation()).observe($('#sidebar'));
 window.addEventListener("storage", event => {
+  if (event.key === navigationKey(state.member?.id)) {
+    navigationPreferences = loadNavigation(localStorage,state.member?.id);renderNavigation();
+    if(state.view==='settings'&&state.settingsSection==='navigation')renderSettings();
+  }
   if ((event.key === state.draftKey || event.key?.startsWith("ae-orbit:jobs:v1:")) && !state.busy) {
     try { state.draft = jobs.local().draft; state.jobStorageError = false; } catch { state.jobStorageError = true; }
     state.draftBlocked = !!state.draft.warning || state.jobStorageError; renderDraft(); renderDetail(); renderJobs();
@@ -2669,6 +3177,8 @@ window.addEventListener("resize", () => {
   inventoryResizeTimer = setTimeout(() => refreshInventoryCapacity(), 120);
 });
 document.addEventListener("visibilitychange", () => {
+  if(document.visibilityState!=="visible"){$("#cpu-process-dialog").close();cpuDetails.close();}
+  if (document.visibilityState !== "visible") hideInventoryHover();
   if (document.visibilityState === "visible" && state.member && state.network) { refreshNetwork(); refreshInventoryObservation(); refreshOrders(false); refreshJobs(); }
 });
 document.addEventListener("error", event => {

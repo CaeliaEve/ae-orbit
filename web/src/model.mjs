@@ -118,6 +118,7 @@ function snapshot(item) {
     label: text(item.label, 512),
     exact: item.exact,
     craftable: item.craftable,
+    ...(item.has_tag === true ? {has_tag:true} : {}),
   };
 }
 

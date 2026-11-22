@@ -37,3 +37,9 @@ test("draft summary counts only selected editable intent with exact integer tota
   assert.deepEqual(draftSelectionSummary(entries, new Set(["c"])), { editable: 3, selected: 2, quantity: "18446744073709551614" });
   assert.deepEqual(draftSelectionSummary([], new Set()), { editable: 0, selected: 0, quantity: "0" });
 });
+test("mixed resource draft keeps item and fluid totals separate",()=>{
+ const summary=draftSelectionSummary([{id:"item",status:"draft",quantity:"64",item:{kind:"item"}},{id:"fluid",status:"draft",quantity:"1000",item:{kind:"fluid"}}],new Set());
+ assert.deepEqual(summary.quantityByKind,{item:"64",fluid:"1000"});
+ const entries=addDraft([],{...item,kind:"fluid",name:"water"},"1000");
+ assert.equal(entries[0].item.kind,"fluid");assert.equal(entries[0].quantity,"1000");
+});

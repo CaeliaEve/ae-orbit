@@ -65,6 +65,12 @@ func run(parent context.Context) error {
 			if err != nil && ctx.Err() == nil {
 				slog.Error("inventory history recording failed", "error", err)
 			}
+			work, stop = context.WithTimeout(ctx, 10*time.Second)
+			err = db.PruneMonitorHistory(work)
+			stop()
+			if err != nil && ctx.Err() == nil {
+				slog.Error("monitoring history retention failed", "error", err)
+			}
 			select {
 			case <-ctx.Done():
 				return
@@ -85,6 +91,24 @@ func run(parent context.Context) error {
 				stop()
 				if err != nil && ctx.Err() == nil {
 					slog.Error("maintenance failed", "error", err)
+				}
+				work, stop = context.WithTimeout(ctx, 10*time.Second)
+				err = db.MaintainSubnets(work)
+				stop()
+				if err != nil && ctx.Err() == nil {
+					slog.Error("subnet maintenance failed", "error", err)
+				}
+				work, stop = context.WithTimeout(ctx, 10*time.Second)
+				err = db.MaintainMonitoring(work)
+				stop()
+				if err != nil && ctx.Err() == nil {
+					slog.Error("monitoring maintenance failed", "error", err)
+				}
+				work, stop = context.WithTimeout(ctx, 10*time.Second)
+				err = db.MaintainQQ(work)
+				stop()
+				if err != nil && ctx.Err() == nil {
+					slog.Error("QQ maintenance failed", "error", err)
 				}
 			}
 		}

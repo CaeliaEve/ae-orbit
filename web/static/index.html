@@ -19,21 +19,24 @@
         <a class="brand" href="/" aria-label="AE Orbit"><img class="brand-mark" src="/assets/brand/ae-orbit-mark.svg" alt=""><span>AE Orbit</span></a>
         <button id="sidebar-toggle" class="icon-button" type="button" aria-label="收起导航" title="收起导航" aria-controls="sidebar" aria-expanded="true"><i data-lucide="panel-left-close"></i><img class="sidebar-toggle-mark" src="/assets/brand/ae-orbit-mark.svg" alt=""></button>
       </div>
+      <div id="navigation-primary" class="navigation-primary">
       <button data-view="dashboard" aria-label="工作台" title="工作台" aria-current="page"><i data-lucide="layout-dashboard"></i><span>工作台</span></button>
       <button data-view="inventory" aria-label="库存" title="库存"><i data-lucide="boxes"></i><span>库存</span></button>
       <button data-view="history" aria-label="库存历史" title="库存历史"><i data-lucide="activity"></i><span>库存历史</span></button>
       <button data-view="orders" aria-label="合成中心" title="合成中心"><i data-lucide="list-checks"></i><span>合成中心</span><span id="order-count" class="nav-count"></span></button>
       <button data-view="cpus" aria-label="CPU 监控" title="CPU 监控"><i data-lucide="cpu"></i><span>CPU 监控</span></button>
       <button data-view="network" aria-label="网络管理" title="网络管理"><i data-lucide="radio-tower"></i><span>网络管理</span></button>
-      <div class="sidebar-secondary"><button data-view="github" aria-label="GitHub" title="GitHub"><i data-lucide="github"></i><span>GitHub</span></button></div>
+      <button data-view="plugins" aria-label="插件市场" title="插件市场"><i data-lucide="puzzle"></i><span>插件市场</span></button>
+      <button data-view="github" aria-label="GitHub" title="GitHub"><i data-lucide="github"></i><span>GitHub</span></button>
+      </div>
+      <div id="navigation-parking" hidden></div>
+      <button id="navigation-more" data-navigation-more aria-label="更多功能" title="更多功能" aria-haspopup="dialog"><i data-lucide="ellipsis"></i><span>更多</span></button>
       <button data-view="settings" aria-label="设置" title="设置"><i data-lucide="settings"></i><span>设置</span></button>
-      <div id="sidebar-tools" class="sidebar-tools" aria-label="网络与页面操作"></div>
-      <div class="sidebar-foot"><span id="member-name">未登录</span><span id="network-quality"></span></div>
+
     </nav>
     <div class="content">
       <header id="global-controls" class="topbar">
         <div class="topbar-spacer"><a class="mobile-brand" href="/" aria-label="AE Orbit"><img src="/assets/brand/ae-orbit-mark.svg" alt=""></a></div>
-        <label class="network-picker" title="选择网络"><i data-lucide="network"></i><select id="network" aria-label="选择网络"><option value="">未连接</option></select></label>
         <div class="page-refresh">
           <button class="icon-button" data-refresh-view="dashboard" id="refresh-dashboard" title="刷新工作台" aria-label="刷新工作台"><i data-lucide="refresh-cw"></i></button>
           <button class="icon-button" data-refresh-view="inventory" id="refresh-inventory" title="刷新库存列表" aria-label="刷新库存列表" hidden><i data-lucide="refresh-cw"></i></button>
@@ -41,8 +44,12 @@
           <button class="icon-button" data-refresh-view="orders" id="refresh-orders" title="刷新任务" aria-label="刷新任务" hidden><i data-lucide="refresh-cw"></i></button>
           <button class="icon-button" data-refresh-view="cpus" id="refresh-cpus" title="刷新 CPU 状态" aria-label="刷新 CPU 状态" hidden><i data-lucide="refresh-cw"></i></button>
           <button class="icon-button" data-refresh-view="network" id="refresh-network" title="刷新网络状态" aria-label="刷新网络状态" hidden><i data-lucide="refresh-cw"></i></button>
+          <button class="icon-button" data-refresh-view="plugins" id="refresh-plugins" title="刷新插件市场" aria-label="刷新插件市场" hidden><i data-lucide="refresh-cw"></i></button>
+          <button class="icon-button" data-refresh-view="plugin-lsc" id="refresh-plugin-lsc" title="刷新储能监控" aria-label="刷新储能监控" hidden><i data-lucide="refresh-cw"></i></button>
+          <button class="icon-button" data-refresh-view="plugin-qq" id="refresh-plugin-qq" title="刷新 QQ 联动" aria-label="刷新 QQ 联动" hidden><i data-lucide="refresh-cw"></i></button>
+          <button class="icon-button" data-refresh-view="plugin-subnet" id="refresh-plugin-subnet" title="刷新子网监控" aria-label="刷新子网监控" hidden><i data-lucide="refresh-cw"></i></button>
         </div>
-        <button class="icon-button" id="notifications" title="网络与同步状态" aria-label="查看网络与同步状态"><i data-lucide="activity"></i></button><button class="icon-button" id="logout" title="退出登录" aria-label="退出登录" hidden><i data-lucide="log-out"></i></button>
+        <strong id="page-title">工作台</strong><span id="context-network" class="context-network" title="当前网络"></span>
       </header>
     <main id="main">
       <section id="view-dashboard" class="view">
@@ -55,6 +62,7 @@
           <button class="dashboard-metric" data-view="orders"><span class="dashboard-metric-label"><i data-lucide="list-checks" aria-hidden="true"></i><span id="dashboard-job-label">未结束生产任务</span></span><strong id="dashboard-job-count">—</strong><span id="dashboard-job-meta">等待任务观测</span></button>
         </div>
         <div class="dashboard-workspace">
+          <section id="dashboard-energy-widgets" class="dashboard-energy-widgets" aria-label="已添加的储能监控" hidden></section>
           <section class="dashboard-trend-section" aria-labelledby="dashboard-trend-title"><div class="dashboard-section-heading"><div><h2 id="dashboard-trend-title">库存趋势 <button class="text-button" data-view="history" title="查看长期库存历史" aria-label="查看长期库存历史"><i data-lucide="arrow-up-right" aria-hidden="true"></i></button></h2><span id="dashboard-trend-change" class="dashboard-caption">正在积累时间采样</span></div><div class="dashboard-ranges" role="group" aria-label="库存趋势时间范围"><button data-trend-hours="1" aria-pressed="false">1 小时</button><button data-trend-hours="6" aria-pressed="false">6 小时</button><button data-trend-hours="24" aria-pressed="true">24 小时</button></div></div><div id="dashboard-trend" class="trend-chart" aria-label="库存总量时间趋势图"></div></section>
           <section class="dashboard-observations" aria-labelledby="dashboard-observations-title"><div class="dashboard-section-heading"><h2 id="dashboard-observations-title">同步观测</h2><button class="text-button" data-view="network">网络详情 <i data-lucide="arrow-up-right" aria-hidden="true"></i></button></div><div id="dashboard-observation-list"></div></section>
           <section class="dashboard-tasks" aria-labelledby="dashboard-tasks-title"><div class="dashboard-section-heading"><div><h2 id="dashboard-tasks-title">生产任务</h2><span id="dashboard-tasks-note" class="dashboard-caption">未结束任务 · 最近提交优先</span></div><button class="text-button" data-view="orders">合成中心 <i data-lucide="arrow-up-right" aria-hidden="true"></i></button></div><div id="dashboard-task-list"></div></section>
@@ -71,9 +79,9 @@
       </section>
       <section id="view-inventory" class="view" hidden>
         <h1 class="sr-only">库存</h1>
-        <div class="inventory-toolbar">
-          <div class="search-row"><label class="search"><i data-lucide="search"></i><input id="search" type="search" maxlength="128" placeholder="中文 / 拼音 / 首字母 / @modid" title="例如：钢锭、gangding、gd、@gregtech gangding；空格分隔条件，@ 后填写完整 Mod ID" aria-label="搜索物品" autocomplete="off"></label><button id="open-draft" class="secondary"><i data-lucide="list-plus"></i><span>清单</span><span id="draft-count">0</span></button></div>
-          <div class="filters"><div class="segments" role="group" aria-label="合成能力筛选"><button data-filter="" aria-pressed="true">不限合成能力</button><button data-filter="true" aria-pressed="false">可合成</button><button data-filter="false" aria-pressed="false">未确认可合成</button></div><label id="stock-view-label" class="sort" hidden><span>显示</span><select id="stock-view" aria-label="库存范围"><option value="stock">已确认有库存</option><option value="all">全部 NESQL 无 NBT 候选</option></select></label><label class="sort"><span>排序</span><select id="sort" aria-label="库存排序"><option value="name">物品名称</option><option value="quantity">库存数量</option></select></label></div>
+        <div class="inventory-toolbar"><div id="inventory-resource-tabs" class="inventory-resource-tabs" role="group" aria-label="库存类型"><button type="button" data-resource-kind="item" aria-pressed="true">物品</button><button type="button" data-resource-kind="fluid" aria-pressed="false">流体</button><button type="button" data-resource-kind="essentia" aria-pressed="false">源质</button></div><p id="inventory-resource-status" class="inventory-resource-status" role="status" hidden></p>
+          <div class="search-row"><label class="search"><i data-lucide="search"></i><input id="search" type="search" maxlength="128" placeholder="中文 / 拼音 / 首字母 / @modid" title="例如：钢锭、gangding、gd、@gregtech gangding；空格分隔条件，@ 后填写完整 Mod ID" aria-label="搜索库存" autocomplete="off"></label><button id="open-draft" class="secondary"><i data-lucide="list-plus"></i><span>清单</span><span id="draft-count">0</span></button></div>
+          <div class="filters"><div id="inventory-craft-filters" class="segments" role="group" aria-label="合成能力筛选"><button data-filter="" aria-pressed="true">不限合成能力</button><button data-filter="true" aria-pressed="false">可合成</button><button data-filter="false" aria-pressed="false">未确认可合成</button></div><label id="stock-view-label" class="sort" hidden><span>显示</span><select id="stock-view" aria-label="库存范围"><option value="stock">已确认有库存</option><option value="all">全部名单候选</option></select></label><label class="sort"><span>排序</span><select id="sort" aria-label="库存排序"><option value="name">名称</option><option value="quantity">库存数量</option></select></label></div>
         </div>
         <div class="workbench">
           <div class="catalog">
@@ -92,10 +100,22 @@
       </section>
       <section id="view-orders" class="view" hidden>
         <h1 class="sr-only">合成中心</h1>
-        <div class="task-mode-toolbar"><label class="sort"><span>任务类型</span><select id="task-mode" aria-label="任务类型"><option value="jobs">生产任务</option><option value="orders">单项订单</option></select></label></div>
-        <div id="jobs-panel"><div class="filters"><div class="segments" role="group" aria-label="生产任务筛选"><button data-job-filter="unsettled" aria-pressed="true">未完成</button><button data-job-filter="attention" aria-pressed="false">待处理</button><button data-job-filter="history" aria-pressed="false">历史</button></div><span id="jobs-summary" class="muted" role="status"></span></div><p id="jobs-message" class="inline-message" role="status" hidden></p><div id="job-recoveries" class="aux-list"></div><div id="job-list" class="aux-list"></div><div class="job-history-footer"><button id="job-history-more" class="secondary" hidden><i data-lucide="chevron-down"></i>加载历史记录</button></div></div>
-        <div id="legacy-panel" hidden><div class="filters"><div class="segments" role="group" aria-label="任务筛选"><button data-order-filter="active" aria-pressed="true">未完成</button><button data-order-filter="attention" aria-pressed="false">待处理</button><button data-order-filter="done" aria-pressed="false">已结束</button><button data-order-filter="all" aria-pressed="false">全部</button></div><label class="sort"><span>分组</span><select id="order-group" aria-label="任务分组"><option value="batch">提交批次</option><option value="cpu">CPU</option></select></label><span id="orders-summary" class="muted"></span></div>
-        <div id="orders-message" class="inline-message" role="status" hidden></div><div id="order-list" class="aux-list"></div></div>
+        <div class="crafting-heading"><div class="crafting-mode-tabs" role="group" aria-label="合成任务类型"><button type="button" data-task-mode="jobs" aria-pressed="true">生产任务</button><button type="button" data-task-mode="orders" aria-pressed="false">单项订单</button></div><button type="button" class="secondary crafting-new" data-crafting-new><i data-lucide="plus" aria-hidden="true"></i>添加合成</button><label class="sr-only">任务类型<select id="task-mode" aria-label="任务类型"><option value="jobs">生产任务</option><option value="orders">单项订单</option></select></label></div>
+        <div id="crafting-overview"></div>
+        <div id="crafting-status" class="crafting-status" role="status"></div>
+        <div id="jobs-panel">
+          <div class="crafting-toolbar"><label class="crafting-search"><i data-lucide="search" aria-hidden="true"></i><input id="crafting-search" type="search" maxlength="128" aria-label="搜索生产任务名称、ID、所有者或状态" placeholder="搜索任务名称、ID 或状态" autocomplete="off"></label><label class="crafting-select"><span class="sr-only">任务归属</span><select id="crafting-owner" aria-label="任务归属"><option value="all">全部任务</option><option value="mine">我的任务</option></select></label><label class="crafting-select"><span class="sr-only">任务排序</span><select id="crafting-sort" aria-label="任务排序"><option value="newest">最新提交</option><option value="oldest">最早提交</option><option value="attention">待处理优先</option></select></label></div>
+          <div class="crafting-filter-row"><div class="crafting-filters" role="group" aria-label="生产任务筛选"><button data-job-filter="unsettled" aria-pressed="true">未结束 <span id="crafting-count-unsettled">0</span></button><button data-job-filter="attention" aria-pressed="false">待处理 <span id="crafting-count-attention">0</span></button><button data-job-filter="history" aria-pressed="false">历史 <span id="crafting-count-history">0</span></button></div><span id="jobs-summary" role="status"></span></div>
+          <p id="jobs-message" class="inline-message" role="status" hidden></p>
+          <details id="crafting-recoveries" class="crafting-recoveries" hidden><summary><span><i data-lucide="circle-alert" aria-hidden="true"></i>本机提交与控制记录</span><i data-lucide="chevron-down" aria-hidden="true"></i></summary><div id="job-recoveries"></div></details>
+          <div id="job-list" aria-label="生产任务列表"></div>
+          <div class="job-history-footer"><span id="crafting-history-note"></span><button id="job-history-more" class="secondary" hidden><i data-lucide="chevron-down"></i>加载历史记录</button></div>
+        </div>
+        <div id="legacy-panel" hidden>
+          <div class="crafting-toolbar"><label class="crafting-search"><i data-lucide="search" aria-hidden="true"></i><input id="crafting-order-search" type="search" maxlength="128" aria-label="搜索已读取订单的物品、ID 或 CPU" placeholder="搜索物品、订单 ID 或 CPU" autocomplete="off"></label><label class="crafting-select"><span class="sr-only">订单分组</span><select id="order-group" aria-label="订单分组"><option value="batch">提交批次</option><option value="cpu">CPU 分组</option></select></label></div>
+          <div class="crafting-filter-row"><div class="crafting-filters" role="group" aria-label="单项订单筛选"><button data-order-filter="active" aria-pressed="true">未完成</button><button data-order-filter="attention" aria-pressed="false">待处理</button><button data-order-filter="done" aria-pressed="false">已结束</button><button data-order-filter="all" aria-pressed="false">全部</button></div><span id="orders-summary" role="status"></span></div>
+          <div id="orders-message" class="inline-message" role="status" hidden></div><div id="order-list" aria-label="单项订单列表"></div>
+        </div>
       </section>
       <section id="view-cpus" class="view" hidden>
         <h1 class="sr-only">CPU 监控</h1>
@@ -108,12 +128,31 @@
         </div>
         <div id="cpu-list" class="aux-list"></div>
       </section>
+      <section id="view-plugins" class="view plugin-view" hidden></section>
+      <section id="view-plugin-lsc" class="view plugin-view" hidden aria-label="蓝波顿储能监控"></section>
+      <section id="view-plugin-subnet" class="view plugin-view" hidden aria-label="子 ME 网络库存监控"></section>
+      <section id="view-plugin-qq" class="view plugin-view" hidden aria-label="QQ 通知联动"></section>
       <section id="view-network" class="view" hidden>
         <h1 class="sr-only">网络管理</h1>
-        <div class="network-toolbar"><span>已配置网络</span><button class="primary" id="add-network" type="button"><i data-lucide="plus"></i>添加网络</button></div>
+        <div class="network-toolbar"><span>网络管理</span><button class="secondary" id="add-network" type="button"><i data-lucide="plus"></i>添加网络</button></div>
         <div id="network-feedback" class="inline-message" role="status" hidden></div>
         <div id="network-recovery" class="network-recovery" role="status" aria-live="polite" hidden></div>
-        <div id="network-info" class="network-dashboard"></div>
+        <div id="network-empty" class="network-nodes-empty" hidden><i data-lucide="network" aria-hidden="true"></i><strong>尚未选择网络</strong><span>从左侧选择一个网络，或添加新的网络。</span></div>
+        <div id="network-info" class="network-dashboard">
+          <section id="network-overview" aria-label="当前网络概况"></section>
+          <div class="network-management-layout">
+            <section class="network-roster" aria-labelledby="network-nodes-title">
+              <div class="network-section-heading"><h2 id="network-nodes-title">OC 节点</h2><span id="network-nodes-count" role="status"></span></div>
+              <div class="network-nodes-toolbar">
+                <label class="network-node-search"><i data-lucide="search" aria-hidden="true"></i><input id="network-nodes-search" type="search" maxlength="128" placeholder="搜索节点名称或 ID" aria-label="搜索 OC 节点名称、ID 或会话" autocomplete="off"></label>
+                <label class="network-role-select"><span class="sr-only">节点角色</span><select id="network-nodes-role" aria-label="节点角色"><option value="all">全部角色</option><option value="primary">主设备</option><option value="quantity_worker">数量助手</option></select></label>
+                <div class="network-node-filters" role="group" aria-label="OC 节点状态"><button type="button" data-network-node-filter="all" aria-pressed="true">全部 <span id="network-nodes-all">0</span></button><button type="button" data-network-node-filter="online" aria-pressed="false">在线 <span id="network-nodes-online">0</span></button><button type="button" data-network-node-filter="attention" aria-pressed="false">需关注 <span id="network-nodes-attention">0</span></button></div>
+              </div>
+              <div id="network-nodes-list" aria-label="OC 节点列表"></div>
+            </section>
+            <aside id="network-sidebar" class="network-management-sidebar" aria-label="网络能力与同步记录"></aside>
+          </div>
+        </div>
       </section>
       <section id="view-github" class="view" hidden>
         <h1 class="sr-only">GitHub</h1>
@@ -121,21 +160,22 @@
       </section>
       <section id="view-settings" class="view" hidden>
         <h1 class="sr-only">设置</h1>
-        <div class="settings-layout"><section class="panel settings-panel"><div class="panel-heading"><div><h2>偏好设置</h2><span class="muted">设置会保存在当前浏览器</span></div><i data-lucide="settings"></i></div><div id="settings-sections" class="settings-sections" role="tablist" aria-label="设置分类"><button class="settings-row" type="button" role="tab" data-settings-section="display" aria-selected="true" aria-controls="settings-detail" aria-current="true"><i data-lucide="monitor"></i><span><strong>显示</strong><small>密度与库存网格布局</small></span><i data-lucide="chevron-right"></i></button><button class="settings-row" type="button" role="tab" data-settings-section="notifications" aria-selected="false" aria-controls="settings-detail" aria-current="false"><i data-lucide="bell"></i><span><strong>通知</strong><small>任务、网络与同步提醒</small></span><i data-lucide="chevron-right"></i></button><button class="settings-row" type="button" role="tab" data-settings-section="textures" aria-selected="false" aria-controls="settings-detail" aria-current="false"><i data-lucide="package"></i><span><strong>纹理资源</strong><small>按需加载或导入纹理包</small></span><i data-lucide="chevron-right"></i></button><button class="settings-row" type="button" role="tab" data-settings-section="connection" aria-selected="false" aria-controls="settings-detail" aria-current="false"><i data-lucide="radio-tower"></i><span><strong>连接与凭据</strong><small>自动重连与会话保存</small></span><i data-lucide="chevron-right"></i></button></div></section><section id="settings-detail" class="panel settings-detail" role="tabpanel" aria-live="polite"></section></div>
+        <div class="settings-layout"><section class="panel settings-panel"><div class="panel-heading"><div><h2>偏好设置</h2><span class="muted">设置会保存在当前浏览器</span></div><i data-lucide="settings"></i></div><div id="settings-sections" class="settings-sections" role="tablist" aria-label="设置分类"><button class="settings-row" type="button" role="tab" data-settings-section="display" aria-selected="true" aria-controls="settings-detail" aria-current="true"><i data-lucide="monitor"></i><span><strong>显示</strong><small>密度与库存网格布局</small></span><i data-lucide="chevron-right"></i></button><button class="settings-row" type="button" role="tab" data-settings-section="navigation" aria-selected="false" aria-controls="settings-detail"><i data-lucide="panel-left-close"></i><span><strong>导航布局</strong><small>常用入口、更多与排序</small></span><i data-lucide="chevron-right"></i></button><button class="settings-row" type="button" role="tab" data-settings-section="notifications" aria-selected="false" aria-controls="settings-detail" aria-current="false"><i data-lucide="bell"></i><span><strong>通知</strong><small>任务、网络与同步提醒</small></span><i data-lucide="chevron-right"></i></button><button class="settings-row" type="button" role="tab" data-settings-section="textures" aria-selected="false" aria-controls="settings-detail" aria-current="false"><i data-lucide="package"></i><span><strong>纹理资源</strong><small>按需加载或导入纹理包</small></span><i data-lucide="chevron-right"></i></button><button class="settings-row" type="button" role="tab" data-settings-section="account" aria-selected="false" aria-controls="settings-detail"><i data-lucide="user-round"></i><span><strong>玩家与团队</strong><small>身份、邀请码与账号恢复</small></span><i data-lucide="chevron-right"></i></button><button class="settings-row" type="button" role="tab" data-settings-section="connection" aria-selected="false" aria-controls="settings-detail" aria-current="false"><i data-lucide="radio-tower"></i><span><strong>API 与集成</strong><small>只读密钥、权限与连接测试</small></span><i data-lucide="chevron-right"></i></button></div></section><section id="settings-detail" class="panel settings-detail" role="tabpanel" aria-live="polite"></section></div>
       </section>
     </main>
     </div>
   </div>
   </div>
-  <nav class="mobile-nav" aria-label="手机导航">
-    <button data-view="dashboard" aria-current="page"><i data-lucide="layout-dashboard"></i><span>工作台</span></button>
-    <button data-view="inventory"><i data-lucide="boxes"></i><span>库存</span></button>
-    <button data-view="history"><i data-lucide="activity"></i><span>历史</span></button>
-    <button data-view="orders"><i data-lucide="list-checks"></i><span>合成</span></button>
-    <button data-view="cpus"><i data-lucide="cpu"></i><span>CPU</span></button>
-    <button data-view="network"><i data-lucide="radio-tower"></i><span>网络</span></button>
-    <button data-view="settings"><i data-lucide="settings"></i><span>设置</span></button>
-  </nav>
+  <nav class="mobile-nav" aria-label="手机导航"></nav>
+  <dialog id="navigation-dialog" aria-labelledby="navigation-dialog-title">
+    <div class="dialog-heading"><h2 id="navigation-dialog-title">更多功能</h2><button class="icon-button" data-close="navigation-dialog" aria-label="关闭更多功能"><i data-lucide="x"></i></button></div>
+    <div id="navigation-drawer-items" class="navigation-drawer-items"></div>
+    <button class="text-button" data-navigation-settings><i data-lucide="sliders-horizontal"></i>自定义导航</button>
+  </dialog>
+  <div id="settings-control-parking" hidden>
+    <div id="connection-controls" class="connection-controls"><label class="network-picker" title="选择网络"><i data-lucide="network"></i><select id="network" aria-label="选择网络"><option value="">未连接</option></select></label><span id="network-quality"></span><button class="secondary" id="notifications" title="网络与同步状态" aria-label="查看网络与同步状态"><i data-lucide="activity"></i>同步详情</button></div>
+    <div id="account-controls" class="account-controls"><span id="member-name">未登录</span><button class="secondary" id="logout" title="退出登录" aria-label="退出登录" hidden><i data-lucide="log-out"></i>退出登录</button></div>
+  </div>
   <div id="sheet-backdrop" class="sheet-backdrop" hidden></div>
   <div id="toast" role="status" class="toast" hidden></div>
   <input id="texture-pack-file" type="file" accept=".zip,application/zip" hidden>
@@ -144,7 +184,7 @@
     <dl class="sync-details"><div><dt>连接状态</dt><dd id="connection" class="connection" role="status" aria-live="polite" aria-atomic="true">未登录</dd></div><div><dt>最近同步</dt><dd id="dashboard-sync">等待同步</dd></div><div><dt>库存观测</dt><dd id="inventory-summary">尚未连接网络</dd></div><div><dt>CPU 观测</dt><dd id="cpu-summary">尚未连接网络</dd></div><div><dt>当前网络</dt><dd id="network-summary">尚未连接网络</dd></div></dl>
   </dialog>
   <dialog id="auth-dialog" aria-labelledby="auth-title">
-    <form id="login-form" class="login-form"><div class="dialog-heading"><h2 id="auth-title">连接 AE Orbit</h2><img class="auth-logo" src="/assets/brand/ae-orbit-mark.svg" alt=""></div><label for="token">访问令牌</label><input id="token" type="password" required autocomplete="off" maxlength="512"><label class="remember-session"><input id="remember-session" type="checkbox"><span>记住本次会话</span></label><p id="login-error" class="error" role="alert"></p><button type="submit" class="primary" id="login-button"><i data-lucide="log-in"></i>登录</button></form>
+    <form id="login-form" class="login-form"><div class="dialog-heading"><h2 id="auth-title">连接 AE Orbit</h2><img class="auth-logo" src="/assets/brand/ae-orbit-mark.svg" alt=""></div><div class="player-login-modes" role="group" aria-label="登录方式"><button type="button" data-login-mode="player" aria-pressed="true">玩家登录</button><button type="button" data-login-mode="register" aria-pressed="false">加入团队</button><button type="button" data-login-mode="token" aria-pressed="false">令牌登录</button></div><div id="player-login-fields"><label for="login-game-id">游戏 ID</label><input id="login-game-id" required minlength="3" maxlength="16" pattern="[A-Za-z0-9_]{3,16}" autocomplete="username" placeholder="例如 CaeliaEve"><label for="login-password">密码</label><input id="login-password" type="password" required maxlength="256" autocomplete="current-password"><div id="player-register-fields" hidden><label for="login-confirm-password">确认密码</label><input id="login-confirm-password" type="password" maxlength="256" autocomplete="new-password"><label for="login-invitation">团队邀请码</label><input id="login-invitation" type="password" maxlength="256" autocomplete="off"><p class="muted">请向管理员索取邀请码。注册后用自己的游戏 ID 和密码登录。</p></div></div><div id="token-login-fields" hidden><label for="token">访问令牌</label><input id="token" type="password" autocomplete="off" maxlength="512"><p class="muted">已有令牌继续可用。团队玩家请使用独立账号。</p></div><label class="remember-session"><input id="remember-session" type="checkbox"><span>记住本次会话</span></label><p id="login-error" class="error" role="alert"></p><button type="submit" class="primary" id="login-button"><i data-lucide="log-in"></i>登录</button></form>
   </dialog>
   <dialog id="network-dialog" aria-labelledby="network-dialog-title">
     <form id="network-form" class="network-form">
@@ -162,6 +202,13 @@
   </dialog>
   <dialog id="cpu-dialog" aria-labelledby="cpu-title">
     <div class="dialog-heading"><h2 id="cpu-title">选择合成 CPU</h2><button class="icon-button" data-close="cpu-dialog" title="关闭" aria-label="关闭 CPU 选择"><i data-lucide="x"></i></button></div><div id="cpu-options"></div><p id="cpu-choice-error" class="error" role="alert"></p>
+  </dialog>
+  <dialog id="cpu-process-dialog" aria-labelledby="cpu-process-title">
+    <div class="dialog-heading"><div><h2 id="cpu-process-title">合成过程</h2><p id="cpu-process-goal" class="muted"></p></div><div class="dialog-tools"><button class="icon-button" id="cpu-process-reconnect" title="刷新详情连接" aria-label="刷新详情连接"><i data-lucide="refresh-cw"></i></button><button class="icon-button" data-close="cpu-process-dialog" title="关闭" aria-label="关闭合成过程"><i data-lucide="x"></i></button></div></div>
+    <div class="cpu-process-toolbar"><label class="search-field"><i data-lucide="search" aria-hidden="true"></i><input id="cpu-process-search" type="search" placeholder="筛选本次清单" aria-label="筛选合成过程物品"></label><span>每次读取一栏 · 三栏约 30 秒一轮</span></div>
+    <p id="cpu-process-status" class="cpu-process-status" role="status"></p>
+    <div id="cpu-process-columns" class="cpu-process-columns"></div>
+    <p class="cpu-process-footnote">三栏来自各自时刻的观测；“等待返回”不代表机器正在运行。关闭面板后停止后续采集。</p>
   </dialog>
   <dialog id="order-dialog" aria-labelledby="order-title">
     <div class="dialog-heading"><h2 id="order-title">任务详情</h2><div class="dialog-tools"><button class="icon-button" id="refresh-order-detail" title="刷新任务详情" aria-label="刷新任务详情"><i data-lucide="refresh-cw"></i></button><button class="icon-button" data-close="order-dialog" title="关闭" aria-label="关闭任务详情"><i data-lucide="x"></i></button></div></div><p id="order-detail-status" class="detail-status" role="status" hidden></p><div id="order-detail"></div>

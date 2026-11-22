@@ -27,7 +27,7 @@ func (s *Store) PollV2(ctx context.Context, d Device, p protocol.Poll) (protocol
 		if err != nil {
 			return err
 		}
-		if d.Role != "primary" && (p.CPUs != nil || len(p.Reports) > 0 || len(p.Hints) > 0 || p.CPUsTruncated) {
+		if d.Role != "primary" && (len(p.CPUWatches) > 0 || p.CPUDetail != nil || p.CPUs != nil || len(p.Reports) > 0 || len(p.Hints) > 0 || p.CPUsTruncated) {
 			return ErrForbidden
 		}
 		var last protocol.Quantity
@@ -80,6 +80,18 @@ func (s *Store) PollV2(ctx context.Context, d Device, p protocol.Poll) (protocol
 		}
 		ready := !plain || (caps.NativeScanDisabled && caps.EventsDisabled && caps.ExactQuantities)
 		if d.Role == "primary" {
+			if len(p.CPUWatches) > 0 && !caps.CPUNotifications {
+				return ErrCapability
+			}
+			if err = acceptQQCPUWatches(ctx, tx, d.NetworkID, p.SessionID, p.CPUWatches); err != nil {
+				return err
+			}
+			if p.CPUDetail != nil && !caps.CPUDetails {
+				return ErrCapability
+			}
+			if err = s.acceptCPUDetail(ctx, tx, d, p.SessionID, p.CPUDetail); err != nil {
+				return err
+			}
 			if err = s.acceptReports(ctx, tx, d.NetworkID, p); err != nil {
 				return err
 			}
@@ -104,6 +116,16 @@ func (s *Store) PollV2(ctx context.Context, d Device, p protocol.Poll) (protocol
 			}
 		}
 		ack.Ack = p.Sequence
+		if d.Role == "primary" && ready && caps.CPUNotifications {
+			ack.CPUWatches, err = s.cpuWatchAssignments(ctx, tx, d.NetworkID, p.SessionID)
+			if err != nil {
+				return err
+			}
+			encoded, _ := json.Marshal(ack)
+			if len(encoded) > responseBytes {
+				ack.CPUWatches = nil
+			}
+		}
 		slots, queueBytes := 0, 0
 		if ready && caps.Inventory && (caps.ExactQuantities || d.Role == "primary") && p.ReadSlots != nil && p.ReadBytes != nil {
 			slots, queueBytes = *p.ReadSlots, *p.ReadBytes
@@ -111,6 +133,16 @@ func (s *Store) PollV2(ctx context.Context, d Device, p protocol.Poll) (protocol
 		ack.ScanBudget, ack.GrantID, ack.GrantTTLMillis, err = s.acquisitionGrant(ctx, tx, d, p.SessionID, group, slots, queueBytes, 2)
 		if err != nil {
 			return err
+		}
+		if d.Role == "primary" && ready && caps.CPUDetails && ack.ScanBudget > 0 {
+			ack.CPUDetail, err = s.cpuDetailAssignment(ctx, tx, d, p.SessionID)
+			if err != nil {
+				return err
+			}
+			encoded, _ := json.Marshal(ack)
+			if len(encoded) > responseBytes {
+				ack.CPUDetail = nil
+			}
 		}
 		if caps.ExactQuantities && ack.ScanBudget > 0 && slots > 0 && queueBytes > 0 {
 			if err = s.cooperativeReads(ctx, tx, d, p.SessionID, responseBytes, slots, queueBytes, plain, &ack); err != nil {
@@ -182,6 +214,8 @@ func (s *Store) acceptReadHints(ctx context.Context, tx pgx.Tx, network string, 
 }
 
 func (s *Store) filterCooperativeReplay(ctx context.Context, tx pgx.Tx, d Device, session string, ack *protocol.PollAck) error {
+	ack.CPUWatches = nil // A lost acknowledgement is retried on a new poll.
+	ack.CPUDetail = nil  // Replay never grants another native list invocation.
 	commands := []protocol.Command{}
 	for _, c := range ack.Commands {
 		var live bool
@@ -241,9 +275,11 @@ func (s *Store) filterCooperativeReplay(ctx context.Context, tx pgx.Tx, d Device
 
 type cooperativeCandidate struct {
 	protocol.ReadAssignment
-	RequestID        string
-	ExpiresAt        time.Time
-	NextQuantityTurn int
+	RequestID           string
+	ExpiresAt           time.Time
+	NextQuantityTurn    int
+	NextResourceTurn    int
+	NextFluidRecipeTurn int
 }
 
 const noActiveCooperativeQuantity = `NOT EXISTS(SELECT 1 FROM cooperative_read_fields f
@@ -268,14 +304,30 @@ func (s *Store) cooperativeCandidates(ctx context.Context, tx pgx.Tx, d Device, 
 			return nil, nil
 		}
 		kind = "quantity_recipe"
+		var caps protocol.Capabilities
+		var encoded []byte
+		if err := tx.QueryRow(ctx, "SELECT capabilities FROM devices WHERE id=$1", d.ID).Scan(&encoded); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(encoded, &caps); err != nil {
+			return nil, err
+		}
 		query = `SELECT ` + columns + `r.token,now()+interval '30 seconds'
 			FROM inventory_rechecks r JOIN item_definitions d ON d.network_id=r.network_id AND d.id=r.item_id
-			WHERE r.network_id=$1 AND ` + catalogScopeSQL + ` AND d.kind='item' AND d.exact AND r.next_attempt_at<=now() AND ` + noActiveCooperativeQuantity + ` AND ` + noActiveCooperativeRecipe + `
+			WHERE r.network_id=$1 AND ` + catalogScopeSQL + ` AND ` + craftSupportedSQL(caps) + ` AND d.exact AND r.next_attempt_at<=now() AND ` + noActiveCooperativeQuantity + ` AND ` + noActiveCooperativeRecipe + `
 			ORDER BY r.next_attempt_at,r.item_id LIMIT 32`
 	case "refresh":
+		var caps protocol.Capabilities
+		var encoded []byte
+		if err := tx.QueryRow(ctx, "SELECT capabilities FROM devices WHERE id=$1", d.ID).Scan(&encoded); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(encoded, &caps); err != nil {
+			return nil, err
+		}
 		query = `SELECT ` + columns + `r.token,least(r.expires_at,now()+interval '30 seconds')
 			FROM inventory_refreshes r JOIN item_definitions d ON d.network_id=r.network_id AND d.id=r.item_id
-			WHERE r.network_id=$1 AND ` + catalogScopeSQL + ` AND d.kind='item' AND d.exact AND r.confirmed_at IS NULL AND r.expires_at>now()+interval '1 millisecond'
+			WHERE r.network_id=$1 AND ` + catalogScopeSQL + ` AND (` + exactItemSQL(caps) + ` OR ` + resourceSupportedSQL(caps) + `) AND d.exact AND r.confirmed_at IS NULL AND r.expires_at>now()+interval '1 millisecond'
 			AND r.next_attempt_at<=now() AND ` + noActiveCooperativeQuantity + `
 			ORDER BY r.next_attempt_at,r.item_id LIMIT 32`
 	default:
@@ -309,13 +361,13 @@ func (s *Store) cooperativeCandidates(ctx context.Context, tx pgx.Tx, d Device, 
 	defer rows.Close()
 	result := []cooperativeCandidate{}
 	for rows.Next() {
-		c := cooperativeCandidate{}
+		c := cooperativeCandidate{NextResourceTurn: -1, NextQuantityTurn: -1, NextFluidRecipeTurn: -1}
 		c.Kind, c.Purpose = kind, category
 		if err = rows.Scan(&c.ID, &c.Item.Kind, &c.Item.Name, &c.Item.Damage, &c.Item.NBT,
 			&c.Item.Label, &c.Item.Exact, &c.RequestID, &c.ExpiresAt); err != nil {
 			return nil, err
 		}
-		if c.Item.Kind == "item" && c.Item.Exact {
+		if c.Item.Exact && (c.Item.Kind == "item" || category == "refresh" || category == "order") {
 			result = append(result, c)
 		}
 	}
@@ -340,8 +392,8 @@ func (s *Store) cooperativeReads(ctx context.Context, tx pgx.Tx, d Device, sessi
 	if _, err := tx.Exec(ctx, "INSERT INTO cooperative_rotation(network_id) VALUES($1) ON CONFLICT DO NOTHING", d.NetworkID); err != nil {
 		return err
 	}
-	var opportunity, background, quantityTurn int
-	if err := tx.QueryRow(ctx, "SELECT opportunity,background_turn,plain_quantity_turn FROM cooperative_rotation WHERE network_id=$1", d.NetworkID).Scan(&opportunity, &background, &quantityTurn); err != nil {
+	var opportunity, background, quantityTurn, resourceTurn, fluidRecipeTurn int
+	if err := tx.QueryRow(ctx, "SELECT opportunity,background_turn,plain_quantity_turn,resource_turn,fluid_recipe_turn FROM cooperative_rotation WHERE network_id=$1", d.NetworkID).Scan(&opportunity, &background, &quantityTurn, &resourceTurn, &fluidRecipeTurn); err != nil {
 		return err
 	}
 	budget := ack.ScanBudget
@@ -364,6 +416,17 @@ func (s *Store) cooperativeReads(ctx context.Context, tx pgx.Tx, d Device, sessi
 	var cold []cooperativeCandidate
 	if plain {
 		cold, err = s.plainBackgroundCandidates(ctx, tx, d, quantityTurn)
+		if err == nil {
+			var caps protocol.Capabilities
+			var encoded []byte
+			if err = tx.QueryRow(ctx, "SELECT capabilities FROM bridge_sessions WHERE id=$1", session).Scan(&encoded); err != nil {
+				return err
+			}
+			if err = json.Unmarshal(encoded, &caps); err != nil {
+				return err
+			}
+			cold, err = s.mergeResourceCandidates(ctx, tx, d, caps, cold, resourceTurn, fluidRecipeTurn)
+		}
 	} else {
 		cold, err = s.cooperativeCandidates(ctx, tx, d, "background", d.Role == "primary" && background%2 == 1)
 	}
@@ -457,6 +520,12 @@ func (s *Store) cooperativeReads(ctx context.Context, tx pgx.Tx, d Device, sessi
 		if plain && category == "background" && c.NextQuantityTurn >= 0 {
 			quantityTurn = c.NextQuantityTurn
 		}
+		if plain && category == "background" && c.NextResourceTurn >= 0 {
+			resourceTurn = c.NextResourceTurn
+		}
+		if plain && category == "background" && c.NextFluidRecipeTurn >= 0 {
+			fluidRecipeTurn = c.NextFluidRecipeTurn
+		}
 		seen[c.ID] = true
 		fieldNames := []string{"quantity"}
 		if c.Kind == "quantity_recipe" {
@@ -498,8 +567,10 @@ func (s *Store) cooperativeReads(ctx context.Context, tx pgx.Tx, d Device, sessi
 	// discovery/quantity/recipe rotation through their polling cadence.
 	_, err = tx.Exec(ctx, `UPDATE cooperative_rotation SET opportunity=$2,
 		background_turn=(background_turn+CASE WHEN $3 THEN 1 ELSE 0 END)%2,
-		plain_quantity_turn=CASE WHEN $4 THEN $5 ELSE plain_quantity_turn END WHERE network_id=$1`,
-		d.NetworkID, opportunity, d.Role == "primary", plain, quantityTurn)
+		plain_quantity_turn=CASE WHEN $4 THEN $5 ELSE plain_quantity_turn END,
+		resource_turn=CASE WHEN $4 THEN $6 ELSE resource_turn END,
+		fluid_recipe_turn=CASE WHEN $4 THEN $7 ELSE fluid_recipe_turn END WHERE network_id=$1`,
+		d.NetworkID, opportunity, d.Role == "primary", plain, quantityTurn, resourceTurn, fluidRecipeTurn)
 	return err
 }
 
@@ -523,6 +594,9 @@ func cooperativeReadMemory(read protocol.ReadAssignment) (int, error) {
 	// adapter:key retains registry name, NUL, decimal metadata, NUL, and an
 	// optional fixed-width canonical NBT SHA-256 hex digest.
 	keyBytes := len(read.Item.Name) + len(strconv.Itoa(read.Item.Damage)) + 2
+	if read.Item.Kind == "fluid" || read.Item.Kind == "essentia" {
+		keyBytes = len(read.Item.Kind) + len(read.Item.Name) + 2
+	}
 	if read.Item.NBT != "" {
 		keyBytes += 64
 	}

@@ -33,12 +33,24 @@ func (s *Store) CreateSession(ctx context.Context, memberToken string) (BrowserS
 	if err != nil {
 		return result, err
 	}
+	return s.createMemberSession(ctx, m, nil)
+}
+
+func (s *Store) createMemberSession(ctx context.Context, m protocol.Member, passwordHash []byte) (BrowserSession, error) {
+	var result BrowserSession
 	result = BrowserSession{Member: m, Token: newToken("ac_session_"), CSRF: newToken("ac_csrf_"), ExpiresAt: time.Now().UTC().Add(24 * time.Hour)}
 	hash, csrf := hashToken(result.Token), hashToken(result.CSRF)
-	err = s.transaction(ctx, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, "SELECT id FROM members WHERE id=$1 FOR UPDATE", m.ID); err != nil {
+	err := s.transaction(ctx, func(tx pgx.Tx) error {
+		var revoked bool
+		var currentHash []byte
+		var authVersion int64
+		if err := tx.QueryRow(ctx, "SELECT revoked,password_hash,name,is_admin,game_id,auth_version FROM members WHERE id=$1 FOR UPDATE", m.ID).Scan(&revoked, &currentHash, &result.Member.Name, &result.Member.Admin, &result.Member.GameID, &authVersion); err != nil {
 			return err
 		}
+		if revoked || authVersion != m.AuthVersion || (passwordHash != nil && subtle.ConstantTimeCompare(passwordHash, currentHash) != 1) {
+			return ErrUnauthorized
+		}
+		result.Member.PasswordLogin = len(currentHash) > 0
 		if _, err := tx.Exec(ctx, "INSERT INTO web_sessions(token_hash,member_id,csrf_hash,expires_at) VALUES($1,$2,$3,$4)", hash[:], m.ID, csrf[:], result.ExpiresAt); err != nil {
 			return err
 		}
@@ -53,8 +65,8 @@ func (s *Store) AuthSession(ctx context.Context, token string) (SessionAuth, err
 		return result, ErrUnauthorized
 	}
 	hash := hashToken(token)
-	err := s.pool.QueryRow(ctx, `SELECT m.id,m.name,m.is_admin,s.csrf_hash,s.expires_at FROM web_sessions s JOIN members m ON m.id=s.member_id
-        WHERE s.token_hash=$1 AND s.expires_at>now() AND NOT m.revoked`, hash[:]).Scan(&result.Member.ID, &result.Member.Name, &result.Member.Admin, &result.CSRFHash, &result.ExpiresAt)
+	err := s.pool.QueryRow(ctx, `SELECT m.id,m.name,m.is_admin,m.game_id,m.password_hash IS NOT NULL,s.csrf_hash,s.expires_at FROM web_sessions s JOIN members m ON m.id=s.member_id
+		WHERE s.token_hash=$1 AND s.expires_at>now() AND NOT m.revoked`, hash[:]).Scan(&result.Member.ID, &result.Member.Name, &result.Member.Admin, &result.Member.GameID, &result.Member.PasswordLogin, &result.CSRFHash, &result.ExpiresAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = ErrUnauthorized
 	}
@@ -89,7 +101,7 @@ func (s *Store) Members(ctx context.Context, adminID string) ([]protocol.Member,
 	if err := s.RequireAdmin(ctx, adminID); err != nil {
 		return nil, err
 	}
-	rows, err := s.pool.Query(ctx, "SELECT id,name,is_admin FROM members WHERE NOT revoked ORDER BY name LIMIT 1000")
+	rows, err := s.pool.Query(ctx, "SELECT id,name,is_admin,game_id,password_hash IS NOT NULL FROM members WHERE NOT revoked ORDER BY name LIMIT 1000")
 	if err != nil {
 		return nil, err
 	}
@@ -97,7 +109,7 @@ func (s *Store) Members(ctx context.Context, adminID string) ([]protocol.Member,
 	result := []protocol.Member{}
 	for rows.Next() {
 		var m protocol.Member
-		if err = rows.Scan(&m.ID, &m.Name, &m.Admin); err != nil {
+		if err = rows.Scan(&m.ID, &m.Name, &m.Admin, &m.GameID, &m.PasswordLogin); err != nil {
 			return nil, err
 		}
 		result = append(result, m)

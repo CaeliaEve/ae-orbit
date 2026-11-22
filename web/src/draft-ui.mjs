@@ -10,5 +10,8 @@ export function draftSelectionSummary(entries, unchecked) {
   const editable = entries.filter(entry => entry.status === "draft");
   const selected = editable.filter(entry => !unchecked.has(entry.id));
   return { editable: editable.length, selected: selected.length,
-    quantity: selected.reduce((sum, entry) => sum + BigInt(entry.quantity), 0n).toString() };
+    quantity: selected.reduce((sum, entry) => sum + BigInt(entry.quantity), 0n).toString(),
+    ...(selected.some(entry=>entry.item?.kind === "fluid") ? { quantityByKind: selected.reduce((totals,entry)=>{
+      const kind=entry.item?.kind || "item";totals[kind]=(BigInt(totals[kind] || "0")+BigInt(entry.quantity)).toString();return totals;
+    },{}) } : {}) };
 }

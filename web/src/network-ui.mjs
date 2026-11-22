@@ -1,3 +1,5 @@
+import { networkDeviceSummary } from "./device-status.mjs";
+
 const MAX_LENGTH = 128;
 const sources = new Set(["oc", "simulator"]);
 
@@ -43,18 +45,7 @@ export function networkRefreshState({ loading = false, error = "", hasSnapshot =
 
 export function networkDashboardSummary(network = {}, devices = [], now = Date.now()) {
   const rows = Array.isArray(devices) ? devices : [];
-  let online = 0;
-  let offline = 0;
-  let stale = 0;
-  for (const device of rows) {
-    if (device?.revoked || device?.online === false) offline += 1;
-    else {
-      online += 1;
-      const seen = timestamp(device?.last_seen);
-      if (seen && now - seen > 90_000) stale += 1;
-    }
-  }
-  const total = rows.length;
+  const { total, online, offline, stale } = networkDeviceSummary(rows, now);
   const health = !network?.online ? "offline" : !total ? "waiting" : offline || stale ? "degraded" : "healthy";
   const capabilities = network?.capabilities && typeof network.capabilities === "object" ? network.capabilities : {};
   const serviceCount = ["inventory", "recipes", "craft", "cpu_output", "cpu_selection"].filter(key => capabilities[key] === true).length;
@@ -72,19 +63,19 @@ export function networkDashboardSummary(network = {}, devices = [], now = Date.n
 export function networkCapabilityRows(capabilities = {}, services = {}) {
   const readers = Number.isFinite(Number(services?.quantity_readers)) ? Number(services.quantity_readers) : 0;
   const rows = [
-    ["inventory", "库存同步", "可用", "当前网络未声明", "ok"],
-    ["recipes", "配方读取", "可用", "当前网络未声明", "ok"],
-    ["craft", "合成下单", "可用", "支持生产任务", "ok"],
-    ["cpu_output", "CPU 输出", "可用", "可读取最终产物", "ok"],
-    ["cpu_selection", "严格指定 CPU", "可用", "需 OC 支持唯一 CPU 名称", "ok"],
+    ["inventory", "库存同步", "同步已确认的物品数量"],
+    ["recipes", "配方读取", "读取可合成配方"],
+    ["craft", "合成下单", "支持生产任务"],
+    ["cpu_output", "CPU 输出", "可读取最终产物"],
+    ["cpu_selection", "严格指定 CPU", "按唯一 CPU 名称指定"],
   ];
-  return rows.map(([key, label, enabled, disabled, tone]) => ({
+  return rows.map(([key, label, detail]) => ({
     key,
     label,
-    value: capabilities[key] === true ? enabled : "不可用",
-    tone: capabilities[key] === true ? tone : "idle",
+    value: capabilities[key] === true ? "可用" : "不可用",
+    tone: capabilities[key] === true ? "ok" : "idle",
     detail: capabilities[key] === true
-      ? key === "inventory" && readers ? `${readers} 个数量读取器` : disabled
-      : disabled,
+      ? key === "inventory" && readers ? `${readers} 个数量读取器` : detail
+      : key === "cpu_selection" ? "需 OC 支持唯一 CPU 名称" : "当前网络未声明",
   }));
 }

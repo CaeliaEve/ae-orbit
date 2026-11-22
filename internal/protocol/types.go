@@ -50,11 +50,18 @@ type Definition struct {
 }
 
 type Capabilities struct {
+	ExactNBT           bool     `json:"exact_nbt,omitempty"`
+	MaxNBTBytes        int      `json:"max_nbt_bytes,omitempty"`
+	CraftFluids        bool     `json:"craft_fluids,omitempty"`
+	Fluids             bool     `json:"fluids,omitempty"`
+	Essentia           bool     `json:"essentia,omitempty"`
 	NativeScanDisabled bool     `json:"native_scan_disabled,omitempty"`
 	EventsDisabled     bool     `json:"events_disabled,omitempty"`
 	Inventory          bool     `json:"inventory"`
 	QuantityRefresh    bool     `json:"quantity_refresh,omitempty"`
 	Craft              bool     `json:"craft"`
+	CPUDetails         bool     `json:"cpu_details,omitempty"`
+	CPUNotifications   bool     `json:"cpu_notifications,omitempty"`
 	CPUOutput          bool     `json:"cpu_output"`
 	CPUSelection       bool     `json:"cpu_selection"`
 	ExactQuantities    bool     `json:"exact_quantities"`
@@ -184,6 +191,9 @@ type Item struct {
 	// NBT is an internal identity input for catalog matching. It is never
 	// serialized into browser responses.
 	NBT                     string       `json:"-"`
+	HasTag                  bool         `json:"has_tag,omitempty"`
+	Group                   *ItemGroup   `json:"group,omitempty"`
+	Variant                 *VariantInfo `json:"variant,omitempty"`
 	Catalog                 *CatalogItem `json:"catalog,omitempty"`
 	Quantity                Quantity     `json:"quantity"`
 	QuantityKnown           *bool        `json:"quantity_known,omitempty"`
@@ -204,6 +214,7 @@ type CatalogItem struct {
 	ImageURL        string         `json:"image_url,omitempty"`
 	ImageKey        string         `json:"image_key,omitempty"`
 	ImageState      string         `json:"image_state"`
+	BaseFallback    bool           `json:"base_fallback,omitempty"`
 	Width           int            `json:"width,omitempty"`
 	Height          int            `json:"height,omitempty"`
 	Frames          []CatalogFrame `json:"frames,omitempty"`
@@ -233,6 +244,8 @@ type ItemPage struct {
 }
 
 type ItemQuery struct {
+	Grouped     bool
+	Kind        string
 	View        string
 	Search      string
 	Sort        string
@@ -245,6 +258,18 @@ type ItemQuery struct {
 	Page        int
 	LastPage    bool
 	PageSize    int
+}
+
+type ItemGroup struct {
+	Candidates int    `json:"candidates"`
+	Checked    int    `json:"checked"`
+	Stock      int    `json:"stock"`
+	Quantity   string `json:"quantity"`
+}
+type VariantInfo struct {
+	Hash       string   `json:"hash"`
+	CustomName string   `json:"custom_name,omitempty"`
+	Summary    []string `json:"summary,omitempty"`
 }
 
 type ItemLookup struct {
@@ -268,9 +293,13 @@ type ItemRefresh struct {
 }
 
 type Stack struct {
-	Name     string   `json:"name"`
-	Label    string   `json:"label"`
-	Quantity Quantity `json:"quantity"`
+	Name     string       `json:"name"`
+	Label    string       `json:"label"`
+	Quantity Quantity     `json:"quantity"`
+	Kind     string       `json:"kind,omitempty"`
+	Damage   *int         `json:"damage,omitempty"`
+	HasTag   *bool        `json:"has_tag,omitempty"`
+	Catalog  *CatalogItem `json:"catalog,omitempty"`
 }
 
 type CPU struct {
@@ -333,19 +362,21 @@ type InventoryTelemetry struct {
 }
 
 type Poll struct {
-	SessionID        string     `json:"session_id"`
-	Sequence         Quantity   `json:"sequence"`
-	Reports          []Report   `json:"reports"`
-	CPUs             *[]CPU     `json:"cpus,omitempty"`
-	CPUsTruncated    bool       `json:"cpus_truncated,omitempty"`
-	Health           *Health    `json:"health,omitempty"`
-	RecheckSlots     *int       `json:"recheck_slots,omitempty"`
-	RecheckBytes     *int       `json:"recheck_bytes,omitempty"`
-	RefreshSlots     *int       `json:"refresh_slots,omitempty"`
-	RefreshBytes     *int       `json:"refresh_bytes,omitempty"`
-	ReadSlots        *int       `json:"read_slots,omitempty"`
-	ReadBytes        *int       `json:"read_bytes,omitempty"`
-	Hints            []ReadHint `json:"hints,omitempty"`
+	CPUWatches       []CPUWatchResult `json:"cpu_watches,omitempty"`
+	CPUDetail        *CPUDetailResult `json:"cpu_detail,omitempty"`
+	SessionID        string           `json:"session_id"`
+	Sequence         Quantity         `json:"sequence"`
+	Reports          []Report         `json:"reports"`
+	CPUs             *[]CPU           `json:"cpus,omitempty"`
+	CPUsTruncated    bool             `json:"cpus_truncated,omitempty"`
+	Health           *Health          `json:"health,omitempty"`
+	RecheckSlots     *int             `json:"recheck_slots,omitempty"`
+	RecheckBytes     *int             `json:"recheck_bytes,omitempty"`
+	RefreshSlots     *int             `json:"refresh_slots,omitempty"`
+	RefreshBytes     *int             `json:"refresh_bytes,omitempty"`
+	ReadSlots        *int             `json:"read_slots,omitempty"`
+	ReadBytes        *int             `json:"read_bytes,omitempty"`
+	Hints            []ReadHint       `json:"hints,omitempty"`
 	legacyReadFields bool
 	v2ReadFields     bool
 }
@@ -367,7 +398,7 @@ func (p *Poll) UnmarshalJSON(data []byte) error {
 			wire.legacyReadFields = true
 		}
 	}
-	for _, key := range []string{"read_slots", "read_bytes", "hints"} {
+	for _, key := range []string{"read_slots", "read_bytes", "hints", "cpu_detail"} {
 		if _, ok := fields[key]; ok {
 			wire.v2ReadFields = true
 		}
@@ -409,15 +440,17 @@ type Verification struct {
 }
 
 type PollAck struct {
-	Ack            Quantity          `json:"ack"`
-	Commands       []Command         `json:"commands"`
-	Verify         []Verification    `json:"verify"`
-	PollMillis     int               `json:"poll_millis"`
-	ScanBudget     int               `json:"scan_budget"`
-	Refresh        []QuantityRefresh `json:"refresh,omitempty"`
-	Reads          []ReadAssignment  `json:"reads,omitempty"`
-	GrantID        string            `json:"grant_id,omitempty"`
-	GrantTTLMillis int               `json:"grant_ttl_millis,omitempty"`
+	CPUWatches     []CPUWatchAssignment `json:"cpu_watches,omitempty"`
+	CPUDetail      *CPUDetailAssignment `json:"cpu_detail,omitempty"`
+	Ack            Quantity             `json:"ack"`
+	Commands       []Command            `json:"commands"`
+	Verify         []Verification       `json:"verify"`
+	PollMillis     int                  `json:"poll_millis"`
+	ScanBudget     int                  `json:"scan_budget"`
+	Refresh        []QuantityRefresh    `json:"refresh,omitempty"`
+	Reads          []ReadAssignment     `json:"reads,omitempty"`
+	GrantID        string               `json:"grant_id,omitempty"`
+	GrantTTLMillis int                  `json:"grant_ttl_millis,omitempty"`
 }
 
 func (p PollAck) MarshalJSON() ([]byte, error) {
@@ -431,14 +464,16 @@ func (p PollAck) MarshalJSON() ([]byte, error) {
 		commands = []Command{}
 	}
 	return json.Marshal(struct {
-		Ack            Quantity         `json:"ack"`
-		Commands       []Command        `json:"commands"`
-		PollMillis     int              `json:"poll_millis"`
-		ScanBudget     int              `json:"scan_budget"`
-		Reads          []ReadAssignment `json:"reads"`
-		GrantID        string           `json:"grant_id,omitempty"`
-		GrantTTLMillis int              `json:"grant_ttl_millis,omitempty"`
-	}{p.Ack, commands, p.PollMillis, p.ScanBudget, p.Reads, p.GrantID, p.GrantTTLMillis})
+		CPUWatches     []CPUWatchAssignment `json:"cpu_watches,omitempty"`
+		CPUDetail      *CPUDetailAssignment `json:"cpu_detail,omitempty"`
+		Ack            Quantity             `json:"ack"`
+		Commands       []Command            `json:"commands"`
+		PollMillis     int                  `json:"poll_millis"`
+		ScanBudget     int                  `json:"scan_budget"`
+		Reads          []ReadAssignment     `json:"reads"`
+		GrantID        string               `json:"grant_id,omitempty"`
+		GrantTTLMillis int                  `json:"grant_ttl_millis,omitempty"`
+	}{p.CPUWatches, p.CPUDetail, p.Ack, commands, p.PollMillis, p.ScanBudget, p.Reads, p.GrantID, p.GrantTTLMillis})
 }
 
 type QuantityRefresh struct {
@@ -462,6 +497,7 @@ type Order struct {
 	ID         string    `json:"id"`
 	NetworkID  string    `json:"network_id"`
 	UserID     string    `json:"user_id"`
+	OwnerName  string    `json:"owner_name,omitempty"`
 	ItemID     Quantity  `json:"item_id"`
 	Quantity   Quantity  `json:"quantity"`
 	State      string    `json:"state"`
@@ -518,9 +554,12 @@ type DeviceView struct {
 }
 
 type Member struct {
-	ID    string `json:"id"`
-	Name  string `json:"name"`
-	Admin bool   `json:"admin"`
+	ID            string `json:"id"`
+	Name          string `json:"name"`
+	Admin         bool   `json:"admin"`
+	GameID        string `json:"game_id,omitempty"`
+	PasswordLogin bool   `json:"password_login,omitempty"`
+	AuthVersion   int64  `json:"-"`
 }
 
 type Grant struct {

@@ -75,6 +75,9 @@ func (s *Store) decodeCursor(value string) (pageCursor, error) {
 }
 
 func (s *Store) Items(ctx context.Context, userID, networkID string, q protocol.ItemQuery) (protocol.ItemPage, error) {
+	if q.Grouped {
+		return s.GroupedItems(ctx, userID, networkID, q)
+	}
 	page := protocol.ItemPage{Items: []protocol.Item{}}
 	if err := s.RequireAccess(ctx, userID, networkID, false); err != nil {
 		return page, err
@@ -84,6 +87,9 @@ func (s *Store) Items(ctx context.Context, userID, networkID string, q protocol.
 	}
 	if q.Sort == "" {
 		q.Sort = "name"
+	}
+	if q.Kind != "" && q.Kind != "item" && q.Kind != "fluid" && q.Kind != "essentia" {
+		return page, ErrInvalid
 	}
 	if q.Consistency == "" {
 		q.Consistency = "strict"
@@ -122,6 +128,10 @@ func (s *Store) Items(ctx context.Context, userID, networkID string, q protocol.
 		return page, err
 	}
 	plain := enabledAt != nil
+	if plain && q.Kind == "" {
+		q.Kind = "item"
+	}
+	resource := q.Kind == "fluid" || q.Kind == "essentia"
 	if q.View == "" {
 		if plain {
 			q.View = "stock"
@@ -140,7 +150,7 @@ func (s *Store) Items(ctx context.Context, userID, networkID string, q protocol.
 	if q.View == "stock" && q.Consistency != "window" {
 		q.Consistency = "strict"
 	}
-	queryBytes, _ := json.Marshal([]any{networkID, q.Search, q.Sort, q.Craftable, q.Consistency, q.View, enabledAt})
+	queryBytes, _ := json.Marshal([]any{networkID, q.Search, q.Sort, q.Craftable, q.Consistency, q.View, enabledAt, q.Kind})
 	fingerprint := sha256.Sum256(queryBytes)
 	queryKey := hex.EncodeToString(fingerprint[:])
 	boundary := q.Cursor
@@ -163,16 +173,27 @@ func (s *Store) Items(ctx context.Context, userID, networkID string, q protocol.
 	}
 	args := []any{networkID, session}
 	conditions := []string{"d.network_id=$1"}
+	if q.Kind != "" {
+		args = append(args, q.Kind)
+		conditions = append(conditions, fmt.Sprintf("d.kind=$%d", len(args)))
+	}
 	label := "d.label"
 	indexed := "d.search_label"
 	join := "JOIN inventory i ON i.network_id=d.network_id AND i.item_id=d.id"
 	if plain {
 		label = "c.label"
 		indexed = "c.search_text"
-		join = "JOIN plain_catalog_candidates c ON c.network_id=d.network_id AND c.item_id=d.id LEFT JOIN inventory i ON i.network_id=d.network_id AND i.item_id=d.id AND i.observed_at>="
+		candidates := "item_catalog_candidates"
+		if resource {
+			candidates = "resource_catalog_candidates"
+		}
+		join = "JOIN " + candidates + " c ON c.network_id=d.network_id AND c.item_id=d.id LEFT JOIN inventory i ON i.network_id=d.network_id AND i.item_id=d.id AND i.observed_at>="
 		args = append(args, enabledAt)
-		join += "$3"
-		conditions = append(conditions, "d.kind='item' AND d.exact AND d.nbt=''")
+		join += fmt.Sprintf("$%d", len(args))
+		conditions = append(conditions, "d.exact")
+		if resource {
+			conditions = append(conditions, "d.nbt=''")
+		}
 		if q.View != "all" {
 			conditions = append(conditions, "i.item_id IS NOT NULL")
 		}
@@ -314,16 +335,18 @@ func (s *Store) Items(ctx context.Context, userID, networkID string, q protocol.
 }
 
 type InventoryStatistics struct {
-	Scope             string     `json:"scope,omitempty"`
-	Candidates        string     `json:"candidates,omitempty"`
-	Checked           string     `json:"checked,omitempty"`
-	Zero              string     `json:"zero,omitempty"`
-	Pending           string     `json:"pending,omitempty"`
-	OldestObservation *time.Time `json:"oldest_observation,omitempty"`
-	LastObservation   *time.Time `json:"last_observation,omitempty"`
-	Entries           string     `json:"entries"`
-	Craftable         string     `json:"craftable"`
-	TotalQuantity     string     `json:"total_quantity"`
+	Variants          *VariantStatistics   `json:"variants,omitempty"`
+	Resources         []ResourceStatistics `json:"resources,omitempty"`
+	Scope             string               `json:"scope,omitempty"`
+	Candidates        string               `json:"candidates,omitempty"`
+	Checked           string               `json:"checked,omitempty"`
+	Zero              string               `json:"zero,omitempty"`
+	Pending           string               `json:"pending,omitempty"`
+	OldestObservation *time.Time           `json:"oldest_observation,omitempty"`
+	LastObservation   *time.Time           `json:"last_observation,omitempty"`
+	Entries           string               `json:"entries"`
+	Craftable         string               `json:"craftable"`
+	TotalQuantity     string               `json:"total_quantity"`
 }
 
 func (s *Store) InventoryStats(ctx context.Context, userID, networkID string) (InventoryStatistics, error) {
@@ -345,6 +368,12 @@ func (s *Store) InventoryStats(ctx context.Context, userID, networkID string) (I
 			LEFT JOIN inventory i ON i.network_id=c.network_id AND i.item_id=c.item_id AND i.observed_at>=p.enabled_at
 			WHERE c.network_id=$1`, networkID).Scan(&result.Entries, &result.Craftable, &result.TotalQuantity,
 			&result.Candidates, &result.Checked, &result.Zero, &result.Pending, &result.OldestObservation, &result.LastObservation)
+		if err == nil {
+			result.Resources, err = s.resourceStats(ctx, networkID)
+		}
+		if err == nil {
+			result.Variants, err = s.variantStats(ctx, networkID)
+		}
 		return result, err
 	}
 	err := s.pool.QueryRow(ctx, `SELECT count(*)::text,count(*) FILTER(WHERE craftable)::text,coalesce(sum(quantity),0)::text FROM inventory WHERE network_id=$1`, networkID).Scan(&result.Entries, &result.Craftable, &result.TotalQuantity)

@@ -47,6 +47,8 @@ type Server struct {
 	started        time.Time
 	performance    httpMetrics
 	eventMetrics   streamMetrics
+	playerLogin    loginLimiter
+	variantImport  sync.Mutex
 }
 
 func New(db *store.Store, options Options) *Server {
@@ -55,6 +57,7 @@ func New(db *store.Store, options Options) *Server {
 		value = db.Catalog()
 	}
 	s := &Server{db: db, catalog: value, options: options, mux: http.NewServeMux(), requests: make(chan struct{}, options.MaxConcurrent), streams: make(chan struct{}, options.MaxStreams), deviceInFlight: map[string]int{}, started: time.Now()}
+	s.playerLogin = loginLimiter{clients: make(map[string]loginAttempt), active: make(chan struct{}, 2)}
 	s.routes()
 	return s
 }
@@ -101,6 +104,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_, pattern := s.mux.Handler(r)
 		if pattern == "POST /api/v1/networks/{network}/inventory-profile/nesql-plain" && budget < time.Minute {
 			budget = time.Minute
+		}
+		if pattern == "POST /api/v1/networks/{network}/inventory-profile/variants" && budget < 3*time.Minute {
+			budget = 3 * time.Minute
+		}
+		if pattern == "PUT /api/v1/monitoring/groups/{group}/subnets/plugin" && budget < 3*time.Minute {
+			budget = 3 * time.Minute
 		}
 		if pattern == "GET /api/v1/networks/{network}/inventory-history/export" && budget < 5*time.Minute {
 			budget = 5 * time.Minute

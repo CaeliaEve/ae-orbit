@@ -3,6 +3,7 @@ package api
 import (
 	"errors"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 
@@ -41,17 +42,27 @@ func (s *Server) texturePack(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) enrichCatalog(network string, items []protocol.Item) {
-	if s.catalog == nil {
-		return
-	}
 	for index := range items {
-		match, state, ok := s.catalog.Lookup(items[index].Name, items[index].Damage, items[index].NBT)
+		items[index].HasTag = items[index].NBT != ""
+		items[index].Variant = variantInfo(items[index])
+		if s.catalog == nil {
+			continue
+		}
+		match, state, ok := s.catalog.LookupResource(items[index].Kind, items[index].Name, items[index].Damage, items[index].NBT)
+		fallback := !ok && items[index].NBT != ""
+		if fallback {
+			match, state, ok = s.catalog.LookupResource(items[index].Kind, items[index].Name, items[index].Damage, "")
+		}
 		if !ok {
 			continue
 		}
 		public := match.Public(state)
+		public.BaseFallback = fallback
+		if items[index].Variant != nil && items[index].Variant.CustomName != "" {
+			public.LocalizedName = items[index].Variant.CustomName
+		}
 		if state == "available" {
-			public.ImageURL = catalog.ImageURLPath(network, items[index].ID)
+			public.ImageURL = catalog.ImageURLPath(network, items[index].ID) + "?v=" + url.QueryEscape(public.ImageKey)
 		}
 		items[index].Catalog = &public
 	}
@@ -77,11 +88,70 @@ func (s *Server) catalogImage(w http.ResponseWriter, r *http.Request, member pro
 		return
 	}
 	item := result.Items[0]
-	match, state, ok := s.catalog.Lookup(item.Name, item.Damage, item.NBT)
+	match, state, ok := s.catalog.LookupResource(item.Kind, item.Name, item.Damage, item.NBT)
+	if !ok && item.NBT != "" {
+		match, state, ok = s.catalog.LookupResource(item.Kind, item.Name, item.Damage, "")
+	}
 	if !ok || state != "available" {
 		fail(w, store.ErrNotFound)
 		return
 	}
+	s.serveCatalogImage(w, r, match)
+}
+
+func (s *Server) enrichCPUOutputs(network string, cpus []protocol.CPU) {
+	for index := range cpus {
+		output := cpus[index].Output
+		if output == nil {
+			continue
+		}
+		match, kind, state, ok := s.catalog.LookupCPUOutput(*output)
+		if !ok {
+			continue
+		}
+		public := match.Public(state)
+		public.BaseFallback = output.HasTag != nil && *output.HasTag || match.NBT != ""
+		if public.BaseFallback {
+			// The artwork can be shared; the exported variant's name/tooltips
+			// cannot identify an output whose actual tag was never transmitted.
+			public.Tooltips = nil
+			public.LocalizedName = output.Name
+			if output.Label != "" {
+				public.LocalizedName = output.Label
+			}
+		}
+		if state == "available" {
+			public.ImageURL = "/api/v1/networks/" + url.PathEscape(network) + "/catalog/cpus/" + url.PathEscape(match.Key) + "/image?v=" + url.QueryEscape(public.ImageKey)
+		}
+		output.Catalog = &public
+		if output.Kind == "" {
+			output.Kind = kind
+		}
+	}
+}
+
+// Output images are authorized through the current CPU snapshot, without
+// creating inventory identities or issuing any additional game queries.
+func (s *Server) cpuOutputImage(w http.ResponseWriter, r *http.Request, member protocol.Member) {
+	view, err := s.db.CPUs(r.Context(), member.ID, r.PathValue("network"))
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	for _, cpu := range view.CPUs {
+		if cpu.Output == nil {
+			continue
+		}
+		match, _, state, ok := s.catalog.LookupCPUOutput(*cpu.Output)
+		if ok && state == "available" && match.Key == r.PathValue("cpu") && r.URL.Query().Get("v") == match.ImagePath {
+			s.serveCatalogImage(w, r, match)
+			return
+		}
+	}
+	fail(w, store.ErrNotFound)
+}
+
+func (s *Server) serveCatalogImage(w http.ResponseWriter, r *http.Request, match catalog.Item) {
 	data, digest, err := s.catalog.Image(match)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {

@@ -1,0 +1,46 @@
+local monitor=require('aeorbit.monitor')
+local lists,proxies={},{}
+local function components(lower,upper,generic)
+ return {
+  list=function(name,exact)
+   assert(exact and (name=='lsc' or name=='LSC' or name=='gt_machine'),'only bounded exact controller discovery is allowed')
+   lists[#lists+1]=name
+   local xs=name=='lsc' and lower or name=='LSC' and upper or generic or {}
+   local index=0
+   return function()index=index+1;return xs[index] end
+  end,
+  proxy=function(address)
+   proxies[address]=(proxies[address] or 0)+1
+   if address=='unsupported' then return {getStoredEU=function()error('numeric read forbidden')end} end
+   local proxy={getStoredEUString=function()error('discovery must not sample')end,getEUCapacityString=function()error('discovery must not sample')end}
+   if address=='capacitor' then proxy.type='gt_machine';proxy.getName=function()return 'multimachine.supercapacitor'end end
+   if address=='ordinary' then proxy.type='gt_machine';proxy.getName=function()return 'basicmachine.batterybuffer'end end
+   if address=='broken' then proxy.type='gt_machine';proxy.getName=function()error('unavailable')end end
+   return proxy
+  end,
+ }
+end
+local found=monitor.discover(components({'lower','shared','unsupported'},{'upper','shared'}))
+assert(#found==4 and found[1].address=='lower' and found[4].address=='upper')
+for _,c in ipairs(found)do assert(c.type=='LSC') end
+assert(found[1].supported and not found[3].supported)
+assert(proxies.shared==1 and #lists==3,'aliases must not duplicate a controller')
+assert(#monitor.discover(components({},{}))==0)
+local many={};for i=1,100 do many[i]='device-'..i end
+found=monitor.discover(components(many,{'extra'}))
+assert(#found==32 and found[32].address=='device-32' and not proxies.extra,'discovery budget exceeded')
+local checks,yields=0,0
+found=monitor.discover(components({}, {}, {'ordinary','capacitor','unknown','broken'}),function()checks=checks+1 end,function()yields=yields+1 end)
+assert(#found==1 and found[1].address=='capacitor' and found[1].type=='LSC' and found[1].supported)
+assert(checks==4 and yields==4,'discovery must remain cancellable and cooperative')
+assert(select(3,monitor.sample({type='gt_machine',getName=function()return 'ordinary'end,getStoredEUString=function()error('wrong machine sampled')end,getEUCapacityString=function()error('wrong machine sampled')end}))=='controller_mismatch')
+assert(select(3,monitor.sample({type='gt_machine'}))=='controller_mismatch')
+assert(select(3,monitor.sample({type='gt_energycontainer'}))=='controller_mismatch')
+local a,b=monitor.sample({type='gt_machine',getName=function()return 'multimachine.supercapacitor'end,getStoredEUString=function()return '12345678901234567890'end,getEUCapacityString=function()return '99999999999999999999'end})
+assert(a=='12345678901234567890' and b=='99999999999999999999')
+local cancelled=pcall(function()monitor.discover(components({},{},{'capacitor'}),function()error('interrupted')end)end)
+assert(not cancelled,'discovery swallowed cancellation')
+-- The budget counts inspected generic machines, even when none qualify.
+local before=proxies['device-33'] or 0
+found=monitor.discover(components({},{},many))
+assert(#found==0 and (proxies['device-33'] or 0)==before)

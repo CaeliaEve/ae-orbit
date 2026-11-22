@@ -36,7 +36,7 @@ func (d Definition) Key() string {
 }
 
 func (d Definition) Validate() error {
-	if d.Kind != "item" && d.Kind != "fluid" {
+	if d.Kind != "item" && d.Kind != "fluid" && d.Kind != "essentia" {
 		return fmt.Errorf("unsupported resource kind")
 	}
 	if !textOK(d.Name, 1, 256) || !textOK(d.Label, 0, 512) || d.Damage < 0 || d.Damage > 2147483647 {
@@ -44,6 +44,9 @@ func (d Definition) Validate() error {
 	}
 	if !d.Exact {
 		return fmt.Errorf("item identity is not exact")
+	}
+	if d.Kind == "essentia" && (d.Damage != 0 || d.NBT != "") {
+		return fmt.Errorf("invalid essentia identity")
 	}
 	if len(d.NBT) > 16384 {
 		return fmt.Errorf("NBT exceeds identity budget")
@@ -123,17 +126,33 @@ func (h Hello) validate(version int) error {
 	if !textOK(h.Capabilities.Enumeration, 0, 64) {
 		return fmt.Errorf("invalid enumeration capability")
 	}
+	if h.Capabilities.MaxNBTBytes < 0 || h.Capabilities.MaxNBTBytes > 12288 || h.Capabilities.ExactNBT && h.Capabilities.MaxNBTBytes < 1 {
+		return fmt.Errorf("invalid NBT capability budget")
+	}
 	return nil
 }
 
 func (p Poll) Validate(maxCPUs, maxReports int) error {
-	if p.v2ReadFields || p.ReadSlots != nil || p.ReadBytes != nil || p.Hints != nil {
+	if len(p.CPUWatches) > 0 || p.CPUDetail != nil || p.v2ReadFields || p.ReadSlots != nil || p.ReadBytes != nil || p.Hints != nil {
 		return fmt.Errorf("v2 fields require protocol 2")
 	}
 	return p.validate(maxCPUs, maxReports)
 }
 
 func (p Poll) ValidateV2(maxCPUs, maxReports int) error {
+	if len(p.CPUWatches) > 4 {
+		return fmt.Errorf("CPU watches exceed budget")
+	}
+	seenWatches := map[string]bool{}
+	for _, r := range p.CPUWatches {
+		if err := r.Validate(); err != nil {
+			return err
+		}
+		if seenWatches[r.TargetID] {
+			return fmt.Errorf("duplicate CPU watch")
+		}
+		seenWatches[r.TargetID] = true
+	}
 	if p.legacyReadFields || p.RecheckSlots != nil || p.RecheckBytes != nil || p.RefreshSlots != nil || p.RefreshBytes != nil {
 		return fmt.Errorf("legacy read capacities are not supported in protocol 2")
 	}
@@ -149,6 +168,11 @@ func (p Poll) ValidateV2(maxCPUs, maxReports int) error {
 			if err := hint.Item.Validate(); err != nil {
 				return err
 			}
+		}
+	}
+	if p.CPUDetail != nil {
+		if err := p.CPUDetail.Validate(); err != nil {
+			return err
 		}
 	}
 	return p.validate(maxCPUs, maxReports)
@@ -183,6 +207,12 @@ func (p Poll) validate(maxCPUs, maxReports int) error {
 			seen[c.ID] = true
 			if c.Output != nil && (!textOK(c.Output.Name, 0, 256) || !textOK(c.Output.Label, 0, 512) || c.Output.Quantity < 0) {
 				return fmt.Errorf("invalid CPU output")
+			}
+			if o := c.Output; o != nil {
+				if o.Kind != "" && o.Kind != "item" && o.Kind != "fluid" && o.Kind != "essentia" ||
+					o.Damage != nil && (*o.Damage < 0 || *o.Damage > 2147483647 || o.Kind != "" && o.Kind != "item" && *o.Damage != 0) || o.Catalog != nil {
+					return fmt.Errorf("invalid CPU output identity")
+				}
 			}
 		}
 	}

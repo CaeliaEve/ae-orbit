@@ -39,3 +39,34 @@ test("monitor empty states distinguish missing observations from empty filters",
   assert.match(cpuMonitorListHTML(model), /没有匹配的 CPU/);
   assert.match(cpuMonitorListHTML(model), /data-cpu-monitor-reset/);
 });
+
+test("CPU output textures use catalog names, preserve fluid units and escape text", () => {
+  const cpus = [{id:"1",name:"流体 CPU",busy:true,storage:"4096",coprocessors:1,
+    output:{kind:"fluid",name:"water",label:"Water",quantity:"1000",catalog:{localized_name:'水 <script>',image_url:"/verified.png"}}},
+    {id:"2",name:"空闲 CPU",busy:false,storage:"4096",coprocessors:1}];
+  const calls=[];
+  const html=cpuMonitorListHTML(cpuMonitorModel(cpus),{outputImage:(output,cpu)=>{calls.push(cpu.id);return '<img class="item-image" src="/verified.png" alt="">';}});
+  assert.deepEqual(calls,["1"]);
+  assert.match(html,/cpu-output-media/);
+  assert.match(html,/src="\/verified.png"/);
+  assert.match(html,/水 &lt;script&gt;/);
+  assert.match(html,/1,000 mB/);
+  assert.doesNotMatch(html,/<script>/);
+  assert.equal(cpuMonitorModel(cpus,{search:"水"}).visible.length,1);
+});
+
+
+test("CPU NBT output reuses verified artwork and retains the observed custom name",()=>{
+ const cpus=[{id:"1",name:"Custom",busy:true,storage:"4096",coprocessors:1,output:{kind:"item",name:"minecraft:paper",label:"棕基板被动",quantity:"64",has_tag:true,damage:0,catalog:{localized_name:"棕基板被动",base_fallback:true,image_url:"/paper.png"}}}];
+ const html=cpuMonitorListHTML(cpuMonitorModel(cpus),{outputImage:()=>'<img class="item-image" src="/paper.png" alt="">'});
+ assert.match(html,/src="\/paper.png"/);assert.match(html,/棕基板被动/);assert.match(html,/使用基础纹理/);assert.match(html,/NBT 变种外观未单独确认/);
+});
+
+test('unnamed and duplicate CPUs can notify with native target support; legacy explains upgrade',()=>{
+ const model=cpuMonitorModel([{id:'1:1',name:'',busy:true,storage:'4096',coprocessors:1},{id:'1:2',name:'Same',busy:true,storage:'4096',coprocessors:1},{id:'1:3',name:'Same',busy:true,storage:'4096',coprocessors:1}]);
+ const old=cpuMonitorListHTML(model);
+ assert.match(old,/data-cpu-notify="1:1" disabled/);assert.match(old,/更新主 OC/);
+ const current=cpuMonitorListHTML(model,{notificationSupported:true,truncated:true});
+ assert.doesNotMatch(current,/data-cpu-notify="[^"]+" disabled/);
+ assert.match(cpuMonitorListHTML(model,{notificationSupported:true,online:false}),/OC 离线，暂时不能设置/);
+});

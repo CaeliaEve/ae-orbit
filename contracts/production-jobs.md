@@ -175,3 +175,6 @@ is implied by local validation.
 Deployment requires explicit approval, a database backup and stopping the old
 writer first. Run one backend writer only. Rollback after accepted jobs requires
 a compatible backend or deliberate paired restore; do not silently orphan intent.
+
+
+Fluid entries use registered no-NBT fluid identities and exact mB quantities. The primary must negotiate `craft_fluids`; quantity-worker inventory capabilities alone cannot authorize recipe reads or orders. Item and fluid entries may share a job, while retaining per-entry identity, CPU policy and idempotency. Essentia remains inventory-only.

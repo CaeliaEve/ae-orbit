@@ -123,12 +123,13 @@ func (s *Store) admitProductionJobs(ctx context.Context, tx pgx.Tx, networkID st
 		var waitForCPU bool
 		err = tx.QueryRow(ctx, `SELECT e.id,e.item_id,e.quantity,e.cpu_name,e.wait_for_cpu FROM production_job_entries e
 			WHERE e.job_id=$1 AND e.state='pending' AND e.order_id=''
+			AND NOT EXISTS(SELECT 1 FROM item_definitions d WHERE d.network_id=e.network_id AND d.id=e.item_id AND NOT (`+craftSupportedSQL(caps)+`))
 			AND (NOT $2 OR EXISTS(SELECT 1 FROM item_definitions requested
 				LEFT JOIN item_aliases a ON a.network_id=requested.network_id AND a.alias_id=requested.id
 				JOIN item_definitions d ON d.network_id=requested.network_id AND d.id=coalesce(a.canonical_id,requested.id)
 				JOIN inventory i ON i.network_id=d.network_id AND i.item_id=d.id
 				JOIN network_inventory_profiles profile ON profile.network_id=d.network_id
-				WHERE requested.network_id=e.network_id AND requested.id=e.item_id AND `+catalogScopeSQL+`
+				WHERE requested.network_id=e.network_id AND requested.id=e.item_id AND `+craftSupportedSQL(caps)+` AND `+catalogScopeSQL+`
 				AND i.observed_at>=profile.enabled_at AND i.craftable_observed_at>=profile.enabled_at))
 			ORDER BY e.ordinal LIMIT 1 FOR UPDATE OF e`, j.id, plain).Scan(&entryID, &item, &quantity, &cpuName, &waitForCPU)
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -163,7 +164,7 @@ func (s *Store) admitProductionJobs(ctx context.Context, tx pgx.Tx, networkID st
 			reason = "crafting identity missing"
 		}
 		if identityErr == nil {
-			err = tx.QueryRow(ctx, `SELECT i.craftable,d.exact FROM inventory i JOIN item_definitions d ON d.network_id=i.network_id AND d.id=i.item_id WHERE i.network_id=$1 AND i.item_id=$2 AND `+catalogScopeSQL+` AND `+catalogObservedSQL, networkID, int64(canonical)).Scan(&craftable, &exact)
+			err = tx.QueryRow(ctx, `SELECT i.craftable,d.exact FROM inventory i JOIN item_definitions d ON d.network_id=i.network_id AND d.id=i.item_id WHERE i.network_id=$1 AND i.item_id=$2 AND `+craftSupportedSQL(caps)+` AND `+catalogScopeSQL+` AND `+catalogObservedSQL, networkID, int64(canonical)).Scan(&craftable, &exact)
 			if errors.Is(err, pgx.ErrNoRows) {
 				reason = "crafting identity missing"
 			} else if err != nil {

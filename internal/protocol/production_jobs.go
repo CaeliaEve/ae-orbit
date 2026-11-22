@@ -20,11 +20,12 @@ type ProductionJobControlInput struct {
 }
 
 type ProductionJobEntryInput struct {
-	EntryKey   string   `json:"entry_key"`
-	ItemID     Quantity `json:"item_id"`
-	Quantity   Quantity `json:"quantity"`
-	CPUName    string   `json:"cpu_name,omitempty"`
-	WaitForCPU bool     `json:"wait_for_cpu,omitempty"`
+	EntryKey     string          `json:"entry_key"`
+	ItemID       Quantity        `json:"item_id"`
+	Quantity     Quantity        `json:"quantity"`
+	CPUName      string          `json:"cpu_name,omitempty"`
+	WaitForCPU   bool            `json:"wait_for_cpu,omitempty"`
+	Notification *QQNotification `json:"notification,omitempty"`
 }
 
 type ProductionJobInput struct {
@@ -80,6 +81,9 @@ func (in ProductionJobInput) Normalize() (ProductionJobInput, error) {
 			return ProductionJobInput{}, fmt.Errorf("invalid production job entry")
 		}
 		seen[entry.EntryKey] = true
+		if entry.Notification != nil && entry.Notification.Validate() != nil {
+			return ProductionJobInput{}, fmt.Errorf("invalid notification target")
+		}
 	}
 	if in.TTLSeconds == 0 {
 		in.TTLSeconds = 3600
@@ -123,6 +127,7 @@ type ProductionJobSummary struct {
 	ID             string              `json:"id"`
 	NetworkID      string              `json:"network_id"`
 	OwnerID        string              `json:"owner_id"`
+	OwnerName      string              `json:"owner_name,omitempty"`
 	Name           string              `json:"name"`
 	ManifestDigest string              `json:"manifest_digest"`
 	Control        string              `json:"control"`
@@ -138,24 +143,33 @@ type ProductionJobSummary struct {
 }
 
 type ProductionJobEntry struct {
-	ID              string     `json:"id"`
-	EntryKey        string     `json:"entry_key"`
-	Ordinal         int        `json:"ordinal"`
-	RequestedItemID Quantity   `json:"requested_item_id"`
-	ItemID          Quantity   `json:"item_id"`
-	Quantity        Quantity   `json:"quantity"`
-	CPUName         string     `json:"cpu_name,omitempty"`
-	WaitForCPU      bool       `json:"wait_for_cpu,omitempty"`
-	State           string     `json:"state"`
-	Reason          string     `json:"reason,omitempty"`
-	OrderID         string     `json:"order_id,omitempty"`
-	AttemptID       string     `json:"attempt_id,omitempty"`
-	TerminalAt      *time.Time `json:"terminal_at,omitempty"`
+	Notification    *QQNotification `json:"notification,omitempty"`
+	ID              string          `json:"id"`
+	EntryKey        string          `json:"entry_key"`
+	Ordinal         int             `json:"ordinal"`
+	RequestedItemID Quantity        `json:"requested_item_id"`
+	ItemID          Quantity        `json:"item_id"`
+	Quantity        Quantity        `json:"quantity"`
+	CPUName         string          `json:"cpu_name,omitempty"`
+	WaitForCPU      bool            `json:"wait_for_cpu,omitempty"`
+	State           string          `json:"state"`
+	Reason          string          `json:"reason,omitempty"`
+	OrderID         string          `json:"order_id,omitempty"`
+	AttemptID       string          `json:"attempt_id,omitempty"`
+	TerminalAt      *time.Time      `json:"terminal_at,omitempty"`
 }
 
 type ProductionJobDetail struct {
-	Summary ProductionJobSummary `json:"summary"`
-	Entries []ProductionJobEntry `json:"entries"`
+	Summary  ProductionJobSummary    `json:"summary"`
+	Entries  []ProductionJobEntry    `json:"entries"`
+	Activity []ProductionJobActivity `json:"activity,omitempty"`
+}
+
+type ProductionJobActivity struct {
+	ActorID   string    `json:"actor_id"`
+	ActorName string    `json:"actor_name"`
+	Action    string    `json:"action"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 type ProductionJobReceipt struct {
