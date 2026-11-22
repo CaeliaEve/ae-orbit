@@ -24,6 +24,418 @@ tags:
   - {name: Jobs}
   - {name: Bridge}
 paths:
+  /bridge/qq/v1/inventory/keywords:
+    get:
+      operationId: cachedGETbridgeqqv1inventorykeywords
+      responses:
+        '200':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+      - qqBearer: []
+  /bridge/qq/v1/inventory:
+    get:
+      operationId: cachedGETbridgeqqv1inventory
+      responses:
+        '200':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+      - qqBearer: []
+    post:
+      operationId: cachedPOSTbridgeqqv1inventory
+      responses:
+        '204':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+      - qqBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+  /api/v1/plugins:
+    get:
+      operationId: cachedGETapiv1plugins
+      responses:
+        '200':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+  /bridge/qq/v1/poll:
+    post:
+      operationId: cachedPOSTbridgeqqv1poll
+      responses:
+        '204':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+      - qqBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+  /bridge/qq/v1/channels:
+    put:
+      operationId: cachedPUTbridgeqqv1channels
+      responses:
+        '204':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+      - qqBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+  /bridge/qq/v1/power:
+    get:
+      operationId: cachedGETbridgeqqv1power
+      responses:
+        '200':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+      - qqBearer: []
+    post:
+      operationId: cachedPOSTbridgeqqv1power
+      responses:
+        '204':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+      - qqBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+  /bridge/qq/v1/groups/{qqgroup}:
+    put:
+      operationId: cachedPUTbridgeqqv1groupsqqgroup
+      responses:
+        '204':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+      parameters:
+      - name: qqgroup
+        in: path
+        required: true
+        schema:
+          type: string
+      security:
+      - qqBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+  /bridge/qq/v1/deliveries/{delivery}/begin:
+    post:
+      operationId: cachedPOSTbridgeqqv1deliveriesdeliverybegin
+      responses:
+        '204':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+      parameters:
+      - name: delivery
+        in: path
+        required: true
+        schema:
+          type: string
+      security:
+      - qqBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+  /bridge/qq/v1/deliveries/{delivery}/receipt:
+    post:
+      operationId: cachedPOSTbridgeqqv1deliveriesdeliveryreceipt
+      responses:
+        '204':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+      parameters:
+      - name: delivery
+        in: path
+        required: true
+        schema:
+          type: string
+      security:
+      - qqBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+  /bridge/subnet/hello:
+    post:
+      operationId: cachedPOSTbridgesubnethello
+      responses:
+        '204':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+      - monitorBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+  /bridge/subnet/poll:
+    post:
+      operationId: cachedPOSTbridgesubnetpoll
+      responses:
+        '204':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+      - monitorBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+  /api/v1/subnet-catalog/{item}/image:
+    get:
+      operationId: cachedGETapiv1subnetcatalogitemimage
+      responses:
+        '200':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+      parameters:
+      - name: item
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/v1/integrations:
+    get:
+      operationId: integrationGETapiv1integrations
+      tags:
+      - Integrations
+      security:
+      - memberBearer: []
+      - browserCookie: []
+      responses:
+        '200':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      operationId: integrationPOSTapiv1integrations
+      tags:
+      - Integrations
+      security:
+      - memberBearer: []
+      - browserCookie: []
+      responses:
+        '201':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+  /api/v1/integrations/{key}:
+    put:
+      operationId: integrationPUTapiv1integrationskey
+      tags:
+      - Integrations
+      security:
+      - memberBearer: []
+      - browserCookie: []
+      responses:
+        '200':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+      parameters:
+      - name: key
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+  /api/v1/integrations/{key}/token:
+    post:
+      operationId: integrationPOSTapiv1integrationskeytoken
+      tags:
+      - Integrations
+      security:
+      - memberBearer: []
+      - browserCookie: []
+      responses:
+        '201':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+      parameters:
+      - name: key
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+  /api/integration/v1/check:
+    get:
+      operationId: integrationGETapiintegrationv1check
+      tags:
+      - Integrations
+      security:
+      - integrationBearer: []
+      responses:
+        '200':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+  /api/integration/v1/networks:
+    get:
+      operationId: integrationGETapiintegrationv1networks
+      tags:
+      - Integrations
+      security:
+      - integrationBearer: []
+      responses:
+        '200':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+  /api/integration/v1/networks/{network}/items:
+    get:
+      operationId: integrationGETapiintegrationv1networksnetworkitems
+      tags:
+      - Integrations
+      security:
+      - integrationBearer: []
+      responses:
+        '200':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+      parameters:
+      - name: network
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/integration/v1/networks/{network}/cpus:
+    get:
+      operationId: integrationGETapiintegrationv1networksnetworkcpus
+      tags:
+      - Integrations
+      security:
+      - integrationBearer: []
+      responses:
+        '200':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+      parameters:
+      - name: network
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/integration/v1/groups/{group}/energy:
+    get:
+      operationId: integrationGETapiintegrationv1groupsgroupenergy
+      tags:
+      - Integrations
+      security:
+      - integrationBearer: []
+      responses:
+        '200':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+      parameters:
+      - name: group
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/integration/v1/groups/{group}/subnets:
+    get:
+      operationId: integrationGETapiintegrationv1groupsgroupsubnets
+      tags:
+      - Integrations
+      security:
+      - integrationBearer: []
+      responses:
+        '200':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+      parameters:
+      - name: group
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/integration/v1/groups/{group}/subnets/{subnet}/items:
+    get:
+      operationId: integrationGETapiintegrationv1groupsgroupsubnetssubnetitems
+      tags:
+      - Integrations
+      security:
+      - integrationBearer: []
+      responses:
+        '200':
+          description: Successful operation
+        default:
+          $ref: '#/components/responses/Error'
+      parameters:
+      - name: group
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: subnet
+        in: path
+        required: true
+        schema:
+          type: string
   /api/v1/monitoring/groups:
     get:
       operationId: monitoringApiV1MonitoringGroups_get
@@ -1635,6 +2047,8 @@ paths:
         default: {$ref: '#/components/responses/Error'}
 components:
   securitySchemes:
+    qqBearer: {type: http, scheme: bearer, description: MaiBot connector token}
+    integrationBearer: {type: http, scheme: bearer, description: Independent scoped read-only application key}
     monitorBearer:
       type: http
       scheme: bearer

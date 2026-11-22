@@ -1,3 +1,4 @@
+import {createIntegrationSettings} from './integration-settings.mjs';
 import {
   createIcons, createElement, Orbit, Network, LogOut, Boxes, ListChecks, Cpu, RadioTower, RefreshCw,
   Search, ListPlus, ChevronLeft, ChevronRight, ChevronDown, X, Plus, Minus, Package,
@@ -129,6 +130,7 @@ const pluginMarket = createPluginMarket({runtimeRoot:$("#view-plugin-lsc"),onPlu
 let jobNotification = null;
 const qqNotifications = createQQNotifications({root:$('#view-plugin-qq'),showView,request:(path,options)=>api.request(path,options),member:()=>state.member,network:()=>state.network,toast,changed:v=>installationsChanged([...navigationInstallations.filter(r=>r.plugin.id!=='aeorbit.qq'),{plugin:{id:'aeorbit.qq'},enabled:v.enabled}])});
 const subnetMonitor=createSubnetMonitor({root:$('#view-plugin-subnet'),market:$('#view-plugins'),image:itemImage,request:(path,options)=>api.request(path,options),member:()=>state.member,network:()=>state.network,toast,showView,changed:v=>installationsChanged([...navigationInstallations.filter(r=>r.plugin.id!=='aeorbit.subnet'),v])});
+const integrationSettings=createIntegrationSettings({root:()=>$('#integration-settings-root'),request:(path,options)=>api.request(path,options),member:()=>state.member,toast});
 const activeStates = new Set(["queued", "assigned", "computing", "running"]);
 const attentionStates = new Set(["failed", "needs_review"]);
 const inventoryHistory = createHistoryController({ request: (path,options) => api.request(networkPath(path),options), onChange: () => renderInventoryHistory() });
@@ -527,14 +529,15 @@ function renderSettings() {
     },
     account: { title: "玩家与团队", description: "每位玩家使用独立身份，下单自动署名。", body: `<div id="account-controls-slot"></div>` + playerAccountHTML(state.member,state.networks,state.teamMembers,state.teamInvitations) },
     connection: {
-      title: "连接与凭据",
-      description: "管理服务连接、自动重连和浏览器会话。",
-      body: connectionSettingsHTML(),
+      title: "API 与集成",
+      description: "给外部应用分配独立只读接口与访问范围。",
+      body: `<div id="integration-settings-root"></div><details class="plugin-disclosure"><summary>网页连接与会话</summary>${connectionSettingsHTML()}</details>`,
     },
   };
   const current = sections[section] || sections.display;
   detail.innerHTML = `<div class="settings-detail-heading"><div><h2>${current.title}</h2><span class="muted">${current.description}</span></div></div><div class="settings-detail-body">${current.body}</div>`;
   placeGlobalControls();
+  if(section==='connection')integrationSettings.mount();
   paint();
 }
 
@@ -543,7 +546,7 @@ function errorText(error) {
   if (error?.code === "identity_changed") {
     api.setCSRF("");
     state.session = null;
-    qqNotifications.reset(); jobNotification=null;
+    qqNotifications.reset(); integrationSettings.reset(); jobNotification=null;
     pluginMarket.sessionChanged(); subnetMonitor.sessionChanged();
     clearSession(localStorage,sessionStorage);
     state.stream?.close();
@@ -2356,7 +2359,7 @@ async function switchNetwork(id) {
   state.streamState = "closed";
   cpuCallback = null;
   for (const dialog of ["cpu-dialog", "order-dialog", "job-dialog"]) if ($(`#${dialog}`).open) $(`#${dialog}`).close();
-  qqNotifications.reset(); jobNotification=null;
+  qqNotifications.reset(); integrationSettings.reset(); jobNotification=null;
   state.network = network || null;
   subnetMonitor.networkChanged();
   state.inventoryStats = null;
@@ -2523,6 +2526,7 @@ $("#settings-detail").addEventListener("click", async event => {
 async function acceptSession(member, csrf, expiresAt = "", persist = true) {
   await switchNetwork("");
   const context = state.context;
+  integrationSettings.reset();
   state.member = member;
   navigationInstallations = [];
   navigationPreferences = loadNavigation(localStorage,member.id);
@@ -2580,7 +2584,7 @@ $("#logout").addEventListener("click", async () => {
     clearSession(localStorage, sessionStorage);
     state.session = null;
     navigationPreferences = loadNavigation(localStorage, "");
-    qqNotifications.reset(); jobNotification=null;
+    qqNotifications.reset(); integrationSettings.reset(); jobNotification=null;
     pluginMarket.sessionChanged(); subnetMonitor.sessionChanged();
     $("#network").innerHTML = `<option value="">未连接</option>`;
     await switchNetwork("");
