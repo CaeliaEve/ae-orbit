@@ -209,7 +209,7 @@ func addQQEntryReminder(ctx context.Context, tx pgx.Tx, member, network, entry s
 		return nil
 	}
 	_, err := tx.Exec(ctx, `INSERT INTO qq_reminders(id,network_id,member_id,request_key,entry_id,cpu_name,group_id,recipient,private_copy,payload)
-  SELECT $1,$2,$3,'entry:'||e.id||':'||$1,e.id,e.cpu_name,$5,$6,$7,jsonb_build_object('cpu',e.cpu_name,'item',d.label,'registry',d.name,'quantity',e.quantity::text,'unit',CASE WHEN d.kind='fluid' THEN 'mB' ELSE '件' END,'owner',coalesce(nullif(m.game_id,''),m.name))
+  SELECT $1,$2,$3,'entry:'||e.id||':'||$1,e.id,e.cpu_name,$5,$6,$7,jsonb_build_object('cpu',e.cpu_name,'item_id',d.id::text,'item',d.label,'registry',d.name,'quantity',e.quantity::text,'unit',CASE WHEN d.kind='fluid' THEN 'mB' ELSE '件' END,'owner',coalesce(nullif(m.game_id,''),m.name))
   FROM production_job_entries e JOIN item_definitions d ON d.network_id=e.network_id AND d.id=e.item_id JOIN members m ON m.id=$3 WHERE e.id=$4
   ON CONFLICT(entry_id,member_id) WHERE entry_id IS NOT NULL AND state='watching' DO UPDATE SET group_id=excluded.group_id,recipient=excluded.recipient,private_copy=excluded.private_copy`, newID(), network, member, entry, n.GroupID, n.Recipient, n.PrivateCopy)
 	return err
@@ -388,6 +388,7 @@ func cpuQQFingerprint(cpu protocol.CPU) map[string]any {
 func cpuQQPayload(cpu protocol.CPU) map[string]any {
 	v := map[string]any{"cpu": cpu.Name, "title": "CPU 任务结束提醒"}
 	if cpu.Output != nil {
+		v["output"] = cpu.Output
 		v["item"] = cpu.Output.Label
 		v["registry"] = cpu.Output.Name
 		v["quantity"] = cpu.Output.Quantity

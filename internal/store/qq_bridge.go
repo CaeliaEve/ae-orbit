@@ -114,6 +114,9 @@ func (s *Store) QQBridgePoll(ctx context.Context, a QQAuth, in QQBridgePoll) (QQ
 		}
 		for _, id := range ids {
 			var d QQDelivery
+			if err := s.localizeQQDelivery(ctx, tx, id); err != nil {
+				return err
+			}
 			// Keep trigger-time telemetry and add a fresh cached observation at
 			// dispatch, so a delayed notification never labels old EU as current.
 			if _, err := tx.Exec(ctx, `UPDATE qq_outbox SET payload=payload||jsonb_build_object('current_energy',qq_lsc_snapshot(payload->>'object_id')) WHERE id=$1 AND kind='alarm' AND payload ? 'object_id'`, id); err != nil {
