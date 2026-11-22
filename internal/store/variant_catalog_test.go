@@ -79,10 +79,12 @@ func TestVariantSampleGroupAndExactCapability(t *testing.T) {
 	}
 }
 
-func TestVariantRealCatalogImportPreservesPlainProgress(t *testing.T) {
+func TestVariantCatalogImportPreservesPlainProgress(t *testing.T) {
 	root := os.Getenv("AE_TEST_PLAIN_CATALOG_ROOT")
+	wantPlain, wantVariants, wantPage := "53746", "16988", 50
 	if root == "" {
-		t.Skip("catalog not provided")
+		root = writePlainCatalogFixture(t, 3)
+		wantPlain, wantVariants, wantPage = "3", "1", 3
 	}
 	f := newCooperativeFixture(t)
 	f = openPlainCatalogFixture(t, f, root)
@@ -90,7 +92,7 @@ func TestVariantRealCatalogImportPreservesPlainProgress(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plain.Candidates != "53746" {
+	if plain.Candidates != wantPlain {
 		t.Fatal(plain)
 	}
 	var enabled time.Time
@@ -102,7 +104,7 @@ func TestVariantRealCatalogImportPreservesPlainProgress(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stats.Candidates != plain.Candidates || stats.Checked != plain.Checked || stats.Variants == nil || stats.Variants.Candidates != "16988" || stats.Variants.Checked != "0" {
+	if stats.Candidates != plain.Candidates || stats.Checked != plain.Checked || stats.Variants == nil || stats.Variants.Candidates != wantVariants || stats.Variants.Checked != "0" {
 		t.Fatal(stats)
 	}
 	var after time.Time
@@ -110,10 +112,10 @@ func TestVariantRealCatalogImportPreservesPlainProgress(t *testing.T) {
 		t.Fatal("profile epoch changed", after, err)
 	}
 	page, err := f.s.Items(ctx, f.admin.ID, f.network.ID, protocol.ItemQuery{Kind: "item", View: "all", Grouped: true, Limit: 50, Page: 1})
-	if err != nil || len(page.Items) != 50 {
+	if err != nil || len(page.Items) != wantPage {
 		t.Fatal(page, err)
 	}
-	t.Logf("Imported 16988 variants and read grouped catalog in %s", time.Since(started))
+	t.Logf("Imported %s variants and read grouped catalog in %s", wantVariants, time.Since(started))
 	// Supported quantities are never fabricated by metadata import.
 	stock, err := f.s.Items(ctx, f.admin.ID, f.network.ID, protocol.ItemQuery{Kind: "item", View: "stock", Grouped: true, Limit: 50})
 	if err != nil || len(stock.Items) != 0 {

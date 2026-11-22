@@ -6,12 +6,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/CaeliaEve/ae-orbit/internal/protocol"
-	"github.com/CaeliaEve/ae-orbit/internal/store"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/CaeliaEve/ae-orbit/internal/nbt"
+	"github.com/CaeliaEve/ae-orbit/internal/protocol"
+	"github.com/CaeliaEve/ae-orbit/internal/store"
 )
 
 func plainFixture(t *testing.T) cooperativeFixture {
@@ -41,11 +43,20 @@ func writePlainCatalogFixture(t *testing.T, count int) string {
 		t.Fatal(err)
 	}
 	gz := gzip.NewWriter(file)
+	tag := json.RawMessage(`{"type":"compound","value":{"name":{"type":"string","value":"Custom stone"}}}`)
+	encoded, err := nbt.EncodeTypedJSON(tag)
+	if err != nil {
+		t.Fatal(err)
+	}
+	variantID, err := nbt.NESQLItemID("minecraft:stone", 0, encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
 	rows := []map[string]any{
 		{"id": "iron", "registry": "minecraft:iron_ingot", "meta": 0, "nbt": nil},
 		{"id": "stone", "registry": "minecraft:stone", "meta": 0, "nbt": nil, "name": "text_stone"},
 		{"id": "dye", "registry": "minecraft:dye", "meta": 4, "nbt": nil},
-		{"id": "tagged", "registry": "minecraft:stone", "meta": 0, "nbt": map[string]any{}},
+		{"id": variantID, "registry": "minecraft:stone", "meta": 0, "nbt": tag},
 	}
 	for i := 3; i < count; i++ {
 		rows = append(rows, map[string]any{"id": fmt.Sprintf("bulk-%d", i), "registry": "test:catalog", "meta": i, "nbt": nil})

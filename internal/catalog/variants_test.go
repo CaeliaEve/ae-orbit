@@ -2,9 +2,10 @@ package catalog
 
 import (
 	"encoding/base64"
-	"github.com/CaeliaEve/ae-orbit/internal/nbt"
 	"os"
 	"testing"
+
+	"github.com/CaeliaEve/ae-orbit/internal/nbt"
 )
 
 func TestVariantCatalogLosslessRoundTrip(t *testing.T) {
@@ -39,12 +40,13 @@ func TestVariantCatalogLosslessRoundTrip(t *testing.T) {
 	if a != b {
 		t.Fatal("catalog changed NBT")
 	}
-}
-func TestVariantCatalogRealExport(t *testing.T) {
-	root := os.Getenv("AE_TEST_PLAIN_CATALOG_ROOT")
-	if root == "" {
-		t.Skip("catalog not provided")
+	if export := os.Getenv("AE_TEST_PLAIN_CATALOG_ROOT"); export != "" {
+		t.Run("full NESQL export", func(t *testing.T) { verifyVariantCatalogExport(t, export) })
 	}
+}
+
+func verifyVariantCatalogExport(t *testing.T, root string) {
+	t.Helper()
 	c, err := OpenNESQLPP(root)
 	if err != nil {
 		t.Fatal(err)

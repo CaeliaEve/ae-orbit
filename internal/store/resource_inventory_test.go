@@ -14,6 +14,16 @@ import (
 
 func resourceFixture(t *testing.T) cooperativeFixture {
 	t.Helper()
+	f := openPlainCatalogFixture(t, newCooperativeFixture(t), writeResourceCatalogFixture(t))
+	enablePlain(t, f)
+	if err := f.s.EnableResourceCatalog(ctx, f.admin.ID, f.network.ID); err != nil {
+		t.Fatal(err)
+	}
+	return f
+}
+
+func writeResourceCatalogFixture(t *testing.T) string {
+	t.Helper()
 	root := writePlainCatalogFixture(t, 3)
 	data, err := os.ReadFile(filepath.Join(root, "manifest.json"))
 	if err != nil {
@@ -57,12 +67,7 @@ func resourceFixture(t *testing.T) cooperativeFixture {
 	if err = os.WriteFile(filepath.Join(root, "manifest.json"), data, 0600); err != nil {
 		t.Fatal(err)
 	}
-	f := openPlainCatalogFixture(t, newCooperativeFixture(t), root)
-	enablePlain(t, f)
-	if err = f.s.EnableResourceCatalog(ctx, f.admin.ID, f.network.ID); err != nil {
-		t.Fatal(err)
-	}
-	return f
+	return root
 }
 
 func TestResourceInventoryRequiresCapabilityAndPreservesItems(t *testing.T) {

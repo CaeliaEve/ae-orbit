@@ -206,7 +206,7 @@ func TestSubnetExactLifecycleAndAlerts(t *testing.T) {
 func TestSubnetNESQLCatalogImport(t *testing.T) {
 	root := os.Getenv("AE_TEST_PLAIN_CATALOG_ROOT")
 	if root == "" {
-		t.Skip("NESQL fixture not configured")
+		root = writeResourceCatalogFixture(t)
 	}
 	o := store.DefaultOptions()
 	o.CatalogRoot = root
