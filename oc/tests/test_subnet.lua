@@ -14,7 +14,7 @@ local reads={};for i,name in ipairs({'test:empty','test:stock','water'})do reads
 local function w(seq,rs)return{session_id=string.rep('b',32),subnet_id=string.rep('c',32),sequence=seq,component_address=addr,revision=1,poll_millis=250,interval_seconds=1,item_count=3,reads=rs or {},budget=rs and #rs or 0,grant_id=string.rep('d',32),grant_ttl_millis=1000}end
 local last,attempt= nil,0
 local bridge=subnet.new({}, {component=component,address='oc',now=function()return now end,free_memory=function()return 1048576 end,
- client={send=function(_,path,body)local p=json.decode(body);if path=='/bridge/subnet/hello'then assert(#p.components==1);return w(0)end
+ client={send=function(_,path,body)local p=json.decode(body);if path=='/bridge/subnet/hello'then assert(#p.components==1 and p.inventory_discovery==true);return w(0)end
  attempt=attempt+1;if attempt==1 then return w(p.sequence,reads)end
  if attempt==2 then last=body;assert(p.samples[1].quantity=='0' and p.samples[2].quantity=='23' and p.samples[3].quantity=='9000');error({fatal=false,code='timeout'})end
  if attempt==3 then assert(body==last);return w(p.sequence,reads)end
@@ -31,3 +31,7 @@ local client=require('aeorbit.client').new({request=function(url)assert(url=='ht
  {url='http://example.test',token=string.rep('t',32),response_bytes=32768,request_bytes=16384},{now=function()return now end,sleep=function()end})
 assert(client:send('/bridge/subnet/poll','{}'))
 assert(not pcall(client.send,client,'/bridge/subnet/scan','{}'))
+-- Thousands of discovery identities never grow the monitored-cycle cache.
+fail=false;local rs={};for i,r in ipairs(reads)do rs[i]=r;rs[i].purpose='discovery'end
+local discover=subnet.new({}, {component=component,now=function()return now end,free_memory=function()return 1048576 end,client={send=function(_,path,body)if path:find('hello')then return w(0)end;return w(json.decode(body).sequence,rs)end}})
+discover:start();discover:tick();assert(next(discover.cycle_seen)==nil and discover.cycle_millis==0)

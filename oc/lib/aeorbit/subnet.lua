@@ -36,7 +36,7 @@ function M.new(config,deps)
  local hash=sha.new();hash:update((deps.address or 'subnet')..':'..tostring(deps.now())..':'..tostring(math.random())..':'..tostring(os.time()))
  local self={boot=hash:finish():sub(1,32),sequence=0,session=nil,pending=nil,samples=json.array({}),next_discovery=0,cycle_seen={},cycle_start=deps.now(),cycle_millis=0,reads=0}
  function self:start()
-  local w=deps.client:send('/bridge/subnet/hello',json.encode({boot_id=self.boot,components=M.discover(deps.component,deps.check)},4096));welcome(w)
+  local w=deps.client:send('/bridge/subnet/hello',json.encode({boot_id=self.boot,components=M.discover(deps.component,deps.check),inventory_discovery=true},4096));welcome(w)
   self.session,self.sequence,self.w=w.session_id,w.sequence,w
  end
  function self:tick()
@@ -79,7 +79,7 @@ function M.new(config,deps)
    end
    result.sample_millis=math.floor(deps.now()*1000)
    self.samples[#self.samples+1]=result
-   self.cycle_seen[r.item_id]=true
+   if r.purpose~='discovery' then self.cycle_seen[r.item_id]=true end
    local count=0;for _ in pairs(self.cycle_seen)do count=count+1 end
    if w.item_count>0 and count>=w.item_count then self.cycle_millis=math.max(1,math.floor((deps.now()-self.cycle_start)*1000));self.cycle_seen={};self.cycle_start=deps.now()end
    if deps.yield then deps.yield()end

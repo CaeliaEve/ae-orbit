@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"strconv"
 
 	"github.com/CaeliaEve/ae-orbit/internal/protocol"
 	"github.com/CaeliaEve/ae-orbit/internal/store"
@@ -9,6 +10,23 @@ import (
 
 func (s *Server) subnetRoutes() {
 	const base = "/api/v1/monitoring/groups/{group}/subnets"
+	s.mux.HandleFunc("GET "+base+"/{subnet}/discovered", s.user(func(w http.ResponseWriter, r *http.Request, m protocol.Member) {
+		offset := 0
+		if raw := r.URL.Query().Get("offset"); raw != "" {
+			var e error
+			offset, e = strconv.Atoi(raw)
+			if e != nil {
+				fail(w, store.ErrInvalid)
+				return
+			}
+		}
+		v, e := s.db.SubnetDiscovered(r.Context(), m.ID, r.PathValue("group"), r.PathValue("subnet"), r.URL.Query().Get("kind"), r.URL.Query().Get("q"), offset)
+		if e != nil {
+			fail(w, e)
+			return
+		}
+		respond(w, 200, v)
+	}))
 	s.mux.HandleFunc("GET "+base+"/plugin", s.user(func(w http.ResponseWriter, r *http.Request, m protocol.Member) {
 		v, e := s.db.SubnetPlugin(r.Context(), m.ID, r.PathValue("group"))
 		if e != nil {

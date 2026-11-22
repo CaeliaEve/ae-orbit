@@ -85,10 +85,11 @@ type SubnetAlert struct {
 	Resolved *time.Time        `json:"resolved_at,omitempty"`
 }
 type SubnetView struct {
-	Subnet Subnet        `json:"subnet"`
-	Items  []SubnetItem  `json:"items"`
-	Rules  []SubnetRule  `json:"rules"`
-	Alerts []SubnetAlert `json:"alerts"`
+	Subnet    Subnet                `json:"subnet"`
+	Items     []SubnetItem          `json:"items"`
+	Rules     []SubnetRule          `json:"rules"`
+	Alerts    []SubnetAlert         `json:"alerts"`
+	Discovery SubnetDiscoveryStatus `json:"discovery"`
 }
 
 func (s *Store) SubnetPlugin(ctx context.Context, member, group string) (SubnetPlugin, error) {
@@ -177,6 +178,9 @@ func (s *Store) SetSubnetPlugin(ctx context.Context, member, group string, enabl
 			}
 			if catalogCount == 0 {
 				if _, err = tx.CopyFrom(ctx, pgx.Identifier{"subnet_catalog"}, []string{"id", "kind", "name", "damage", "nbt", "label", "search_label"}, pgx.CopyFromRows(records)); err != nil {
+					return err
+				}
+				if _, err = tx.Exec(ctx, `WITH ordered AS (SELECT id,row_number() OVER(ORDER BY CASE WHEN kind='fluid' THEN 0 WHEN nbt='' THEN 1 ELSE 2 END,id) position FROM subnet_catalog) UPDATE subnet_catalog d SET scan_order=o.position FROM ordered o WHERE o.id=d.id`); err != nil {
 					return err
 				}
 			}
@@ -354,6 +358,10 @@ func (s *Store) SubnetView(ctx context.Context, member, group, id string) (Subne
 	if !found {
 		return v, ErrNotFound
 	}
+	v.Discovery, err = s.subnetDiscoveryStatus(ctx, id)
+	if err != nil {
+		return v, err
+	}
 	rows, err := s.pool.Query(ctx, `SELECT d.id,d.kind,d.name,d.damage,d.nbt,d.label,l.quantity,l.observed_at,coalesce(l.error,''),coalesce(l.epoch,1),coalesce(l.error='' AND l.observed_at>now()-n.stale_seconds*interval '1 second' AND l.revision=n.revision AND l.session_id=c.current_session AND c.last_seen>now()-n.stale_seconds*interval '1 second' AND NOT c.revoked AND n.enabled AND p.enabled,false) FROM subnet_items i JOIN subnet_catalog d ON d.id=i.item_id JOIN monitored_subnets n ON n.id=i.subnet_id JOIN subnet_plugins p ON p.server_group=n.server_group JOIN monitor_collectors c ON c.id=n.collector_id LEFT JOIN subnet_latest l USING(subnet_id,item_id) WHERE i.subnet_id=$1 AND i.enabled ORDER BY d.label,d.id`, id)
 	if err != nil {
 		return v, err
@@ -440,6 +448,9 @@ func (s *Store) AddSubnetItem(ctx context.Context, member, group, subnet, item s
 			if !found {
 				return ErrNotFound
 			}
+		}
+		if _, err = tx.Exec(ctx, `UPDATE subnet_items SET next_read_at=now() WHERE subnet_id=$1 AND item_id=$2`, subnet, item); err != nil {
+			return err
 		}
 		return nil
 	})

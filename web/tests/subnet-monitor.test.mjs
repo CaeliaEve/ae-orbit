@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {subnetItemsHTML,subnetRuleValues,subnetHistoryHTML} from '../src/subnet-monitor.mjs';
+import {subnetItemsHTML,subnetRuleValues,subnetHistoryHTML,subnetDiscoveryStatusHTML} from '../src/subnet-monitor.mjs';
 import {availableNavigation,partitionNavigation} from '../src/navigation.mjs';
 
 test('zero remains known, failed and stale observations retain unknown state',()=>{
@@ -21,4 +21,10 @@ test('rule thresholds remain exact and canonical with proper hysteresis',()=>{
 test('history gaps separate chart lines and plugin starts in More',()=>{
  const html=subnetHistoryHTML([{quantity:'0',at:'2026-11-22T00:00:00Z',epoch:1},{quantity:'9007199254740993',at:'2026-11-22T00:01:00Z',epoch:2}]);assert.equal((html.match(/<polyline/g)||[]).length,2);
  const nav=partitionNavigation(null,availableNavigation([{enabled:true,plugin:{id:'aeorbit.subnet'}}]),20);assert.ok(nav.drawer.some(n=>n.id==='plugin-subnet'));
+});
+test('connection, selected rows, and inventory discovery have distinct meanings',()=>{
+ assert.match(subnetDiscoveryStatusHTML({capable:false},{component_address:'x',online:true}),/更新专用子网 OC/);
+ const html=subnetDiscoveryStatusHTML({capable:true,found:2,checked:12,total:120,failed:1},{component_address:'x',online:true});
+ assert.match(html,/已发现 2 种/);assert.match(html,/12\/120/);assert.match(html,/10.0%/);assert.match(html,/失败 1 项/);
+ assert.match(subnetDiscoveryStatusHTML({capable:true},{component_address:'x',online:false}),/离线/);
 });

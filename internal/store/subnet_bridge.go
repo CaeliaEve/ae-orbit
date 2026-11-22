@@ -11,8 +11,9 @@ import (
 )
 
 type SubnetHello struct {
-	BootID     string             `json:"boot_id"`
-	Components []MonitorComponent `json:"components"`
+	BootID           string             `json:"boot_id"`
+	Components       []MonitorComponent `json:"components"`
+	DiscoveryCapable bool               `json:"inventory_discovery,omitempty"`
 }
 type SubnetRead struct {
 	ItemID       string              `json:"item_id"`
@@ -20,6 +21,7 @@ type SubnetRead struct {
 	AssignmentID string              `json:"assignment_id"`
 	Revision     int64               `json:"revision"`
 	TTL          int                 `json:"ttl_millis"`
+	Purpose      string              `json:"purpose,omitempty"`
 }
 type SubnetWelcome struct {
 	Session    string       `json:"session_id"`
@@ -112,6 +114,9 @@ func (s *Store) SubnetHello(ctx context.Context, a MonitorAuth, h SubnetHello) (
 		if _, err = tx.Exec(ctx, `UPDATE monitor_collectors SET current_session=$2,components=$3,modules='["aeorbit.subnet"]',last_seen=now() WHERE id=$1`, a.ID, w.Session, raw); err != nil {
 			return err
 		}
+		if _, err = tx.Exec(ctx, `UPDATE monitor_sessions SET subnet_discovery_capable=$2 WHERE id=$1`, w.Session, h.DiscoveryCapable); err != nil {
+			return err
+		}
 		return subnetWelcome(ctx, tx, a, &w)
 	})
 	return w, err
@@ -201,16 +206,29 @@ func (s *Store) SubnetPoll(ctx context.Context, a MonitorAuth, p SubnetPoll) (Su
 			if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM subnet_items i WHERE subnet_id=$1 AND item_id=$2 AND assignment_id=$3 AND assignment_session=$4 AND assignment_revision=$5 AND enabled AND assignment_until>now())`, w.SubnetID, r.ItemID, r.AssignmentID, p.Session, r.Revision).Scan(&valid); err != nil {
 				return err
 			}
-			if !valid || !enabled || r.Revision != w.Revision {
+			if !enabled || r.Revision != w.Revision {
 				continue
 			}
 			if priorAt != nil && priorMillis > 0 && now.Sub(*priorAt).Seconds()-float64(r.SampleMillis-priorMillis)/1000 > float64(stale) {
+				continue
+			}
+			if !valid {
+				accepted, e := acceptSubnetDiscovery(ctx, tx, &w, r, now)
+				if e != nil {
+					return e
+				}
+				if accepted && r.SampleMillis > latestMillis {
+					latestMillis = r.SampleMillis
+				}
 				continue
 			}
 			if r.SampleMillis > latestMillis {
 				latestMillis = r.SampleMillis
 			}
 			if err = acceptSubnetSample(ctx, tx, w.SubnetID, p.Session, r, stale, history, now); err != nil {
+				return err
+			}
+			if err = recordSubnetDiscovered(ctx, tx, &w, r, now); err != nil {
 				return err
 			}
 			if _, err = tx.Exec(ctx, `UPDATE subnet_items SET assignment_id='',assignment_until=NULL,next_read_at=now()+$3::int*interval '1 second' WHERE subnet_id=$1 AND item_id=$2`, w.SubnetID, r.ItemID, w.Interval); err != nil {
@@ -228,6 +246,16 @@ func (s *Store) SubnetPoll(ctx context.Context, a MonitorAuth, p SubnetPoll) (Su
 				if err = subnetReadAssignments(ctx, tx, &w); err != nil {
 					return err
 				}
+				var discovery bool
+				if err = tx.QueryRow(ctx, `SELECT subnet_discovery_capable FROM monitor_sessions WHERE id=$1`, w.Session).Scan(&discovery); err != nil {
+					return err
+				}
+				if discovery {
+					if err = subnetDiscoveryAssignments(ctx, tx, &w); err != nil {
+						return err
+					}
+				}
+				w.Budget = len(w.Reads)
 			}
 		}
 		body, _ := json.Marshal(w)
@@ -254,6 +282,7 @@ func subnetReadAssignments(ctx context.Context, tx pgx.Tx, w *SubnetWelcome) err
 		r.AssignmentID = newID()
 		r.Revision = w.Revision
 		r.TTL = 5000
+		r.Purpose = "monitor"
 		w.Reads = append(w.Reads, r)
 		b, _ := json.Marshal(w)
 		if len(b) > 30000 {
@@ -270,7 +299,6 @@ func subnetReadAssignments(ctx context.Context, tx pgx.Tx, w *SubnetWelcome) err
 			return err
 		}
 	}
-	w.Budget = len(w.Reads)
 	return nil
 }
 func (s *Store) subnetGrant(ctx context.Context, tx pgx.Tx, a MonitorAuth, subnet, session string, w *SubnetWelcome) error {
