@@ -128,7 +128,7 @@ const navigationButtons = new Map($$("#navigation-primary [data-view]").map(butt
 const pluginMarket = createPluginMarket({runtimeRoot:$("#view-plugin-lsc"),onPluginsChanged:installationsChanged,root:$('#view-plugins'),widget:$('#dashboard-energy-widgets'),request:(path,options)=>api.request(path,options),member:()=>state.member,network:()=>state.network,showView,toast});
 let jobNotification = null;
 const qqNotifications = createQQNotifications({root:$('#view-plugin-qq'),request:(path,options)=>api.request(path,options),member:()=>state.member,network:()=>state.network,toast,changed:v=>installationsChanged([...navigationInstallations.filter(r=>r.plugin.id!=='aeorbit.qq'),{plugin:{id:'aeorbit.qq'},enabled:v.enabled}])});
-const subnetMonitor=createSubnetMonitor({root:$('#view-plugin-subnet'),market:$('#view-plugins'),request:(path,options)=>api.request(path,options),member:()=>state.member,network:()=>state.network,toast,showView,changed:v=>installationsChanged([...navigationInstallations.filter(r=>r.plugin.id!=='aeorbit.subnet'),v])});
+const subnetMonitor=createSubnetMonitor({root:$('#view-plugin-subnet'),market:$('#view-plugins'),image:itemImage,request:(path,options)=>api.request(path,options),member:()=>state.member,network:()=>state.network,toast,showView,changed:v=>installationsChanged([...navigationInstallations.filter(r=>r.plugin.id!=='aeorbit.subnet'),v])});
 const activeStates = new Set(["queued", "assigned", "computing", "running"]);
 const attentionStates = new Set(["failed", "needs_review"]);
 const inventoryHistory = createHistoryController({ request: (path,options) => api.request(networkPath(path),options), onChange: () => renderInventoryHistory() });
@@ -325,6 +325,7 @@ function refreshTexturePackState() {
   patchDraftAppearance();
   renderCPUList();
   if(cpuDetails.current)renderCPUProcess();
+  subnetMonitor.refreshTextures();
   hideInventoryHover();
 }
 
@@ -611,7 +612,7 @@ function animateSpriteImages(timestamp) {
     const spriteID = element.dataset.spriteItem;
     const cpu = spriteID?.startsWith("cpu:") ? state.cpus.cpus?.find(cpu => `cpu:${cpu.id}` === spriteID) : null;
     const detailItem=spriteID?.startsWith("process:") ? cpuDetails.current?.data?.parts?.flatMap(part=>part.items || []).find(item=>`process:${item.row_id}`===spriteID) : null;
-    const item = cpu ? cpu.output : detailItem || itemFor(spriteID);
+    const item = cpu ? cpu.output : detailItem || subnetMonitor.textureItem(spriteID) || itemFor(spriteID);
     const animation = catalogAnimation(item);
     if (!animation) continue;
     const selected = animationFrameAt(animation, timestamp);

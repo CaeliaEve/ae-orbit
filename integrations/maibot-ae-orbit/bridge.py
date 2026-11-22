@@ -149,8 +149,50 @@ def short_energy(value: int) -> str:
     return f"{value:,} EU"
 
 
+def inventory_keyword(text: Any) -> str:
+    if not isinstance(text, str) or len(text) > 256:
+        return ""
+    text = text.strip()
+    explicit = re.fullmatch(r"[!/／]?库存\s+(.+)", text)
+    if explicit:
+        text = explicit.group(1)
+    key = " ".join(text.split()).lower()
+    if not 1 <= len(key) <= 32 or not all(c.isalpha() or c.isnumeric() or c in " _-" for c in key):
+        return ""
+    return key
+
+
+def inventory_text(payload: Dict[str, Any]) -> str:
+    lines = ["库存 · " + str(payload.get("keyword", ""))]
+    items = payload.get("items") or []
+    for item in items:
+        label = str(item.get("label") or "物品")
+        unit = "mB" if item.get("kind") == "fluid" else "件"
+        suffix = " · NBT " + str(item.get("item_id", ""))[:8] if item.get("nbt") else ""
+        heading = str(item.get("subnet") or "子网") + " · " + label + suffix
+        q = item.get("quantity")
+        valid = isinstance(q, str) and re.fullmatch(r"[0-9]{1,19}", q)
+        if item.get("known") is True and valid:
+            lines.append(heading + "：" + f"{int(q):,}" + " " + unit)
+        else:
+            last = "最后 " + f"{int(q):,}" + " " + unit + " · " if valid else ""
+            lines.append(heading + "：未知（" + last + observation_time(item.get("observed_at")) + "）")
+    if not items:
+        lines.append("没有匹配的监控项")
+    total = int(payload.get("total") or len(items))
+    if total > len(items):
+        lines.append(f"共 {total} 项，显示前 {len(items)} 项；可设置更具体的关键词。")
+    # Whole rows remain readable when an unusually large shared keyword matches.
+    while len("\n".join(lines)) > 1600 and len(lines) > 2:
+        lines.pop(-2)
+        lines[-1] = "其余结果请在子网页面查看。"
+    return "\n".join(lines)[:1600]
+
+
 def notification_text(delivery: Dict[str, Any]) -> str:
     payload = delivery["payload"]
+    if delivery.get("kind") == "inventory_query" or "keyword" in payload and "items" in payload:
+        return inventory_text(payload)
     if payload.get("alert_kind") == "low_energy" or isinstance(payload.get("energy"), dict):
         device = str(payload.get("device") or "蓝波顿").strip()
         if device == "蓝波顿超级电容库": device = "蓝波顿"

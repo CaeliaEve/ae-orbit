@@ -10,6 +10,28 @@ spec.loader.exec_module(bridge)
 
 
 class BridgeTests(unittest.TestCase):
+    def test_inventory_alias_is_exact_and_accepts_optional_prefix(self):
+        self.assertEqual(bridge.inventory_keyword(" Fuel   MK2 "), "fuel mk2")
+        self.assertEqual(bridge.inventory_keyword("库存 燃料"), "燃料")
+        self.assertEqual(bridge.inventory_keyword("/库存 燃料"), "燃料")
+        self.assertNotEqual(bridge.inventory_keyword("燃料还有多少"), "燃料")
+        for value in [None, "/电量", "a" * 33, "燃料?"]:
+            self.assertEqual(bridge.inventory_keyword(value), "")
+
+    def test_inventory_reply_keeps_units_exact_values_and_unknown(self):
+        data = {"kind": "inventory_query", "payload": {"keyword": "燃料", "total": 3, "items": [
+            {"subnet": "液体产线", "label": "燃料", "kind": "fluid", "quantity": "9007199254740993", "known": True},
+            {"subnet": "固体产线", "label": "燃料", "kind": "item", "quantity": "0", "known": True},
+            {"subnet": "固体产线", "label": "燃料", "kind": "item", "quantity": "9", "known": False, "nbt": True, "item_id": "12345678aaa", "observed_at": "2026-11-22T01:00:00Z"}]}}
+        text = bridge.notification_text(data)
+        self.assertIn("9,007,199,254,740,993 mB", text)
+        self.assertIn("固体产线 · 燃料：0 件", text)
+        self.assertIn("未知（最后 9 件", text)
+        self.assertIn("NBT 12345678", text)
+        self.assertIn("11-22 09:00:00", text)
+        self.assertNotIn("⚠", text)
+
+
     def test_subnet_batch_keeps_chinese_names_units_and_mention(self):
         delivery = {"kind": "subnet", "channel": "group", "recipient": "12345678", "payload": {"subnet": "酸液生产线", "items": [{"item": "钢板", "quantity": "0", "unit": "件", "rule": "zero"}, {"item": "硫酸", "quantity": "9007199254740993", "unit": "mB", "rule": "low", "threshold": "9007199254740994"}]}}
         text = bridge.notification_text(delivery)

@@ -60,6 +60,7 @@ type SubnetItem struct {
 	Error    string             `json:"error,omitempty"`
 	Known    bool               `json:"known"`
 	Epoch    int64              `json:"epoch"`
+	Keywords []string           `json:"keywords"`
 }
 type SubnetRuleInput struct {
 	ItemID       string                   `json:"item_id"`
@@ -385,6 +386,29 @@ func (s *Store) SubnetView(ctx context.Context, member, group, id string) (Subne
 	rows.Close()
 	if err = rows.Err(); err != nil {
 		return v, err
+	}
+	for i := range v.Items {
+		v.Items[i].Keywords = []string{}
+	}
+	keywords, e := s.pool.Query(ctx, `SELECT item_id,keyword FROM subnet_qq_keywords WHERE subnet_id=$1 ORDER BY keyword`, id)
+	if e != nil {
+		return v, e
+	}
+	for keywords.Next() {
+		var item, key string
+		if e = keywords.Scan(&item, &key); e != nil {
+			keywords.Close()
+			return v, e
+		}
+		for i := range v.Items {
+			if v.Items[i].ID == item {
+				v.Items[i].Keywords = append(v.Items[i].Keywords, key)
+			}
+		}
+	}
+	keywords.Close()
+	if e = keywords.Err(); e != nil {
+		return v, e
 	}
 	rows, err = s.pool.Query(ctx, `SELECT r.id,r.item_id,r.kind,r.threshold,r.recover,r.duration_seconds,r.enabled,r.revision,r.notification,r.member_id,EXISTS(SELECT 1 FROM subnet_alerts a WHERE a.rule_id=r.id AND a.state='active') FROM subnet_rules r WHERE r.subnet_id=$1 AND (r.member_id=$2 OR EXISTS(SELECT 1 FROM members WHERE id=$2 AND is_admin)) ORDER BY r.id`, id, member)
 	if err != nil {

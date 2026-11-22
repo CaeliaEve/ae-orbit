@@ -10,6 +10,18 @@ import (
 
 func (s *Server) subnetRoutes() {
 	const base = "/api/v1/monitoring/groups/{group}/subnets"
+	s.mux.HandleFunc("PUT "+base+"/{subnet}/items/{item}/keywords", s.user(func(w http.ResponseWriter, r *http.Request, m protocol.Member) {
+		var in store.SubnetKeywordsInput
+		if e := readJSON(w, r, &in, 4096); e != nil {
+			fail(w, e)
+			return
+		}
+		if e := s.db.SetSubnetKeywords(r.Context(), m.ID, r.PathValue("group"), r.PathValue("subnet"), r.PathValue("item"), in); e != nil {
+			fail(w, e)
+			return
+		}
+		respond(w, 204, nil)
+	}))
 	s.mux.HandleFunc("GET "+base+"/{subnet}/discovered", s.user(func(w http.ResponseWriter, r *http.Request, m protocol.Member) {
 		offset := 0
 		if raw := r.URL.Query().Get("offset"); raw != "" {

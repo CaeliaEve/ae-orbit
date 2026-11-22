@@ -16,9 +16,11 @@ import json
 import re
 import hashlib
 
-from maibot_sdk import API, Command, ConfigWidget, ConfigWidgetState, Field, HomeCard, MaiBotPlugin, PluginConfigBase
+from maibot_sdk import API, Command, EventHandler, ConfigWidget, ConfigWidgetState, Field, HomeCard, MaiBotPlugin, PluginConfigBase
 
-from .bridge import BridgeClient, ChannelPolicy, ReceiptJournal, message_segments, normalize_channels, notification_text
+from maibot_sdk.types import EventType
+
+from .bridge import BridgeClient, ChannelPolicy, ReceiptJournal, message_segments, normalize_channels, notification_text, inventory_keyword
 
 
 class ConnectorSettings(PluginConfigBase):
@@ -53,6 +55,8 @@ class AEOrbitPlugin(MaiBotPlugin):
         self._status = "等待连接"
         self._sending_enabled = False
         self._wake = asyncio.Event()
+        self._inventory_keywords: set[str] = set()
+        self._keywords_at = -100.0
 
     async def on_load(self) -> None:
         credentials = await asyncio.to_thread(lambda: json.loads(Path(self.config.plugin.credential_file).read_text()))
@@ -176,6 +180,64 @@ class AEOrbitPlugin(MaiBotPlugin):
             return False, None, True
         return True, None, True
 
+    async def _refresh_inventory_keywords(self) -> None:
+        now = asyncio.get_running_loop().time()
+        if now - self._keywords_at < 3:
+            return
+        self._keywords_at = now
+        try:
+            data = await self._http("/bridge/qq/v1/inventory/keywords", None, "GET")
+            self._inventory_keywords = {k for k in data.get("keywords", []) if isinstance(k, str)}
+        except Exception as exc:
+            self.ctx.logger.warning("Inventory keyword refresh unavailable: %s", type(exc).__name__)
+
+    @API("inventory_preview", description="预览子网关键词库存，不发送消息", version="1")
+    async def inventory_preview(self, group_id: str, keyword: str) -> Dict[str, Any]:
+        if group_id not in self._policy["groups"]:
+            raise ValueError("请先保存并授权该群")
+        payload = await self._http("/bridge/qq/v1/inventory?" + urlencode({"group_id": group_id, "keyword": keyword}), None, "GET")
+        return {"text": notification_text({"kind": "inventory_query", "payload": payload}), "sending_enabled": payload["sending_enabled"]}
+
+    async def _queue_inventory(self, group_id: str, incoming: Dict[str, Any], keyword: str) -> bool:
+        if group_id not in self._policy["groups"] or not self._sending_enabled:
+            return False
+        if str(incoming.get("account_id", "")) != self._bot_id:
+            return False
+        user = (incoming.get("message_info") or {}).get("user_info") or {}
+        if str(user.get("user_id", "")) == self._bot_id:
+            return False
+        message_id = str(incoming.get("message_id") or "")
+        if not message_id:
+            return False
+        key = hashlib.sha256((group_id + ":" + message_id).encode()).hexdigest()
+        try:
+            response = await self._http("/bridge/qq/v1/inventory", {"group_id": group_id, "request_key": "qq-inventory:" + key, "keyword": keyword})
+            if response.get("queued"):
+                self._wake.set()
+                return True
+        except Exception as exc:
+            self.ctx.logger.warning("Inventory request could not be queued: %s", type(exc).__name__)
+        return False
+
+    @EventHandler("subnet_inventory_keyword", description="授权群内精确匹配子网库存关键词",
+                  event_type=EventType.ON_MESSAGE_PRE_PROCESS, intercept_message=True, weight=100)
+    async def inventory_message(self, message: Optional[Dict[str, Any]] = None, **kwargs: Any) -> Dict[str, bool]:
+        del kwargs
+        incoming = message or {}
+        if incoming.get("platform") != "qq" or incoming.get("scope") != "group":
+            return {"continue_processing": True}
+        gid = str(((incoming.get("message_info") or {}).get("group_info") or {}).get("group_id") or "")
+        # Match only plain text; pictures, quotes, @ and notification events
+        # must not accidentally become inventory commands after preprocessing.
+        raw = incoming.get("raw_message") or []
+        if incoming.get("is_notify") or not raw or any(p.get("type") != "text" or not isinstance(p.get("data"), str) for p in raw):
+            return {"continue_processing": True}
+        keyword = inventory_keyword("".join(p["data"] for p in raw))
+        if not keyword or keyword not in self._inventory_keywords:
+            return {"continue_processing": True}
+        queued = await self._queue_inventory(gid, incoming, keyword)
+        return {"continue_processing": not queued}
+
     async def _flush_receipts(self) -> None:
         if self._journal is None:
             raise RuntimeError("Receipt journal not initialized")
@@ -256,6 +318,7 @@ class AEOrbitPlugin(MaiBotPlugin):
                     await self._refresh_groups()
                     if asyncio.get_running_loop().time() - self._catalog_at >= 30:
                         await self._sync_channels()
+                await self._refresh_inventory_keywords()
                 response = await self._http("/bridge/qq/v1/poll", {"bot_id": self._bot_id, "adapter": "snowluma"})
                 self._sending_enabled = response["sending_enabled"]
                 self._status = "已连接 · " + ("允许发送" if self._sending_enabled else "仅预览，不发送消息")

@@ -20,6 +20,35 @@ func (s *Server) qqBridge(fn func(http.ResponseWriter, *http.Request, store.QQAu
 }
 func (s *Server) qqRoutes() {
 	const group = "/api/v1/monitoring/groups/{group}/qq"
+	s.mux.HandleFunc("GET /bridge/qq/v1/inventory/keywords", s.qqBridge(func(w http.ResponseWriter, r *http.Request, a store.QQAuth) {
+		keys, e := s.db.QQInventoryKeywords(r.Context(), a)
+		if e != nil {
+			fail(w, e)
+			return
+		}
+		respond(w, 200, map[string]any{"keywords": keys})
+	}))
+	s.mux.HandleFunc("GET /bridge/qq/v1/inventory", s.qqBridge(func(w http.ResponseWriter, r *http.Request, a store.QQAuth) {
+		v, e := s.db.QQInventory(r.Context(), a, r.URL.Query().Get("group_id"), r.URL.Query().Get("keyword"))
+		if e != nil {
+			fail(w, e)
+			return
+		}
+		respond(w, 200, v)
+	}))
+	s.mux.HandleFunc("POST /bridge/qq/v1/inventory", s.qqBridge(func(w http.ResponseWriter, r *http.Request, a store.QQAuth) {
+		var in store.QQInventoryRequest
+		if e := readJSON(w, r, &in, 2048); e != nil {
+			fail(w, e)
+			return
+		}
+		queued, e := s.db.QQRequestInventory(r.Context(), a, in)
+		if e != nil {
+			fail(w, e)
+			return
+		}
+		respond(w, 202, map[string]bool{"queued": queued})
+	}))
 	s.mux.HandleFunc("GET "+group, s.user(func(w http.ResponseWriter, r *http.Request, m protocol.Member) {
 		v, e := s.db.QQSettings(r.Context(), m.ID, r.PathValue("group"))
 		if e != nil {

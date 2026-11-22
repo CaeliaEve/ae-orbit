@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {subnetItemsHTML,subnetRuleValues,subnetHistoryHTML,subnetDiscoveryStatusHTML} from '../src/subnet-monitor.mjs';
+import {subnetItemsHTML,subnetRuleValues,subnetHistoryHTML,subnetDiscoveryStatusHTML,subnetKeywordValues} from '../src/subnet-monitor.mjs';
 import {availableNavigation,partitionNavigation} from '../src/navigation.mjs';
 
 test('zero remains known, failed and stale observations retain unknown state',()=>{
@@ -33,4 +33,15 @@ test('small subnet mode shows list cadence and failures instead of catalog scan 
  const html=subnetDiscoveryStatusHTML({mode:'native',capable:true,found:23,progress_at:'2026-11-22T12:00:00Z'},n);
  assert.match(html,/每 30 秒/);assert.match(html,/已发现 23 种/);assert.doesNotMatch(html,/72210|正在发现/);
  const failed=subnetDiscoveryStatusHTML({mode:'native',capable:true,error:'item:too_many_items'},n);assert.match(failed,/超过 128 种/);
+});
+
+test('subnet textures use the shared renderer and expose escaped keyword chips',()=>{
+ const item={id:'fluid',kind:'fluid',label:'燃料',name:'fuel',quantity:'1',known:true,keywords:['fuel & mk2'],catalog:{image_url:'/strip.png',animation:{width:16,height:512}}};
+ const html=subnetItemsHTML({items:[item],can_manage:true},'m',i=>`<span class="item-image item-image-sprite" data-sheet-height="${i.catalog.animation.height}"></span>`);
+ assert.match(html,/item-image-sprite/);assert.match(html,/data-sheet-height="512"/);assert.doesNotMatch(html,/<img[^>]*strip.png/);assert.match(html,/fuel &amp; mk2/);assert.match(html,/data-keywords-item="fluid"/);
+});
+test('keyword editor separates aliases and normalizes case without broad matching',()=>{
+ assert.deepEqual(subnetKeywordValues(' 燃料，Fuel   MK2\n燃料、fuel mk2'),['燃料','fuel mk2']);
+ assert.deepEqual(subnetKeywordValues(''),[]);
+ for(const v of ['a,b,c,d,e,f,g,h,i','电量','/库存','x'.repeat(33)])assert.throws(()=>subnetKeywordValues(v));
 });
