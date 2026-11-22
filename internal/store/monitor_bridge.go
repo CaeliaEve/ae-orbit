@@ -24,8 +24,11 @@ func validMonitorComponents(cs []MonitorComponent) bool {
 	return true
 }
 func lockMonitor(ctx context.Context, tx pgx.Tx, a MonitorAuth) error {
+	if a.Purpose != "" && a.Purpose != "lsc" {
+		return ErrForbidden
+	}
 	var id string
-	err := tx.QueryRow(ctx, `SELECT id FROM monitor_collectors WHERE id=$1 AND token_hash=$2 AND NOT revoked FOR UPDATE`, a.ID, a.Hash).Scan(&id)
+	err := tx.QueryRow(ctx, `SELECT id FROM monitor_collectors WHERE id=$1 AND token_hash=$2 AND NOT revoked AND purpose='lsc' FOR UPDATE`, a.ID, a.Hash).Scan(&id)
 	if err == pgx.ErrNoRows {
 		return ErrUnauthorized
 	}

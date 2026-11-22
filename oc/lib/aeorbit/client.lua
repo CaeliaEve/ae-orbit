@@ -45,7 +45,7 @@ function M.new(internet,config,clock)
   local client={response_bytes=limit("response_bytes",16384,true),request_bytes=limit("request_bytes",16384,true),
     timeout=limit("timeout",10,false)}
   function client:send(path,body)
-    assert(type(path)=="string" and (path:match("^/bridge/v[12]/[a-z%-]+$") or path=="/bridge/monitor/hello" or path=="/bridge/monitor/poll"),"client: invalid path")
+    assert(type(path)=="string" and (path:match("^/bridge/v[12]/[a-z%-]+$") or path=="/bridge/monitor/hello" or path=="/bridge/monitor/poll" or path=="/bridge/subnet/hello" or path=="/bridge/subnet/poll"),"client: invalid path")
     assert(type(body)=="string" and #body<=self.request_bytes,"client: request budget exceeded")
     local handle
     local function check() if clock.check then clock.check() end end

@@ -13,6 +13,7 @@ export const coreNavigation = Object.freeze([
 export const pluginNavigation = Object.freeze([
   { id: 'plugin-lsc', pluginId: 'gtnh.lsc', label: '储能监控', title: '蓝波顿储能监控', icon: 'battery-charging', defaultPlacement: 'drawer' },
   { id: 'plugin-qq', pluginId: 'aeorbit.qq', label: 'QQ 联动', title: 'QQ 通知联动', icon: 'messages-square', defaultPlacement: 'drawer' },
+  { id:'plugin-subnet',pluginId:'aeorbit.subnet',label:'子网监控',title:'子 ME 网络库存监控',icon:'network',defaultPlacement:'drawer'},
 ]);
 const known = [...coreNavigation, ...pluginNavigation];
 export const navigationKey = memberId => `ae-orbit:navigation:v1:${encodeURIComponent(memberId || 'guest')}`;

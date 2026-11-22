@@ -14,6 +14,7 @@ local function safe_code(err,fallback)
 end
 function M.run(context,config_path,report,mode)
   local read_ok,initial=pcall(function()return assert(loadfile(config_path or "/etc/ae-orbit.cfg"))()end)
+  if read_ok and type(initial)=="table" and initial.role=="subnet_monitor" then return require("aeorbit.subnet").run(context,config_path,report,mode) end
   if read_ok and type(initial)=="table" and initial.role=="monitor" then
     return require("aeorbit.monitor").run(context,config_path,report,mode)
   end

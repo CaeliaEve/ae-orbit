@@ -93,6 +93,12 @@ func run(parent context.Context) error {
 					slog.Error("maintenance failed", "error", err)
 				}
 				work, stop = context.WithTimeout(ctx, 10*time.Second)
+				err = db.MaintainSubnets(work)
+				stop()
+				if err != nil && ctx.Err() == nil {
+					slog.Error("subnet maintenance failed", "error", err)
+				}
+				work, stop = context.WithTimeout(ctx, 10*time.Second)
 				err = db.MaintainMonitoring(work)
 				stop()
 				if err != nil && ctx.Err() == nil {

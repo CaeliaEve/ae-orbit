@@ -183,8 +183,10 @@ func TestMonitorPluginIndependentLifecycleAndAuthorization(t *testing.T) {
 		t.Fatal(err)
 	}
 	alerts = decode[[]store.MonitorAlert](t, send(t, f, "GET", base+"/alerts", adminToken, ""), 200)
-	if alerts[0].Kind != "collector_offline" {
-		t.Fatal(alerts)
+	for _, alert := range alerts {
+		if alert.Kind == "collector_offline" && alert.State == "active" {
+			t.Fatal("offline collection must not raise an inventory/energy alert", alerts)
+		}
 	}
 	// Disabling the plugin removes assignments and resolves active alerts.
 	configure["enabled"] = false

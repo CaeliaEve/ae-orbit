@@ -10,6 +10,14 @@ spec.loader.exec_module(bridge)
 
 
 class BridgeTests(unittest.TestCase):
+    def test_subnet_batch_keeps_chinese_names_units_and_mention(self):
+        delivery = {"kind": "subnet", "channel": "group", "recipient": "12345678", "payload": {"subnet": "酸液生产线", "items": [{"item": "钢板", "quantity": "0", "unit": "件", "rule": "zero"}, {"item": "硫酸", "quantity": "9007199254740993", "unit": "mB", "rule": "low", "threshold": "9007199254740994"}]}}
+        text = bridge.notification_text(delivery)
+        self.assertEqual(len(text.splitlines()), 3)
+        self.assertIn("钢板：0 件（归零）", text)
+        self.assertIn("硫酸：9007199254740993 mB", text)
+        self.assertEqual(bridge.message_segments(delivery, True)[0]["type"], "at")
+
     def test_channel_policy_persists_and_rejects_invalid_targets(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "channels.json"

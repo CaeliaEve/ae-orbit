@@ -3,12 +3,13 @@ import {
   Search, ListPlus, ChevronLeft, ChevronRight, ChevronDown, X, Plus, Minus, Package,
   Trash2, Check, Clock, CircleAlert, LogIn, ArrowUpRight, Server, Send, Pause, Play, Square,
   LayoutDashboard, Settings, Github, Bell, Activity, Monitor, SlidersHorizontal, Code2, FileText, CircleHelp, Copy,
-  WifiOff, PanelLeftClose, UserRound, Puzzle, Ellipsis, BatteryCharging, ArrowUp, ArrowDown, GripVertical,
+  WifiOff, PanelLeftClose, UserRound, Puzzle, Ellipsis, BatteryCharging, ArrowUp, ArrowDown, GripVertical, MessagesSquare,
 } from "lucide";
 import { createAPI } from "./api.mjs";
 import { createCPUDetails, cpuDetailColumnsHTML, cpuDetailStatus } from "./cpu-details.mjs";
 import { cpuOutputText } from "./cpu-ui.mjs";
 import { createPluginMarket } from "./plugin-market.mjs";
+import { createSubnetMonitor } from "./subnet-monitor.mjs";
 import { coreNavigation, pluginNavigation, availableNavigation, orderedNavigation, partitionNavigation, navigationKey, loadNavigation, saveNavigation, moveNavigation, placeNavigation, normalizeNavigation } from "./navigation.mjs";
 import { createInventoryWheel, inventoryKeyboardDirection } from "./inventory-paging.mjs";
 import { inventoryTooltipModel, paginateTooltipLines, splitTooltipLine, tooltipLineHTML, tooltipPosition } from "./inventory-tooltip.mjs";
@@ -74,7 +75,7 @@ function inventoryIcon(name) {
   }
   return inventoryIconCache.get(name);
 }
-const icons = { Orbit, Network, LogOut, Boxes, ListChecks, Cpu, RadioTower, RefreshCw, Search, ListPlus, ChevronLeft, ChevronRight, ChevronDown, X, Plus, Minus, Package, Trash2, Check, Clock, CircleAlert, LogIn, ArrowUpRight, Server, Send, Pause, Play, Square, LayoutDashboard, Settings, Github, Bell, Activity, Monitor, SlidersHorizontal, Code2, FileText, CircleHelp, Copy, WifiOff, PanelLeftClose, UserRound, Puzzle, Ellipsis, BatteryCharging, ArrowUp, ArrowDown, GripVertical };
+const icons = { Orbit, Network, LogOut, Boxes, ListChecks, Cpu, RadioTower, RefreshCw, Search, ListPlus, ChevronLeft, ChevronRight, ChevronDown, X, Plus, Minus, Package, Trash2, Check, Clock, CircleAlert, LogIn, ArrowUpRight, Server, Send, Pause, Play, Square, LayoutDashboard, Settings, Github, Bell, Activity, Monitor, SlidersHorizontal, Code2, FileText, CircleHelp, Copy, WifiOff, PanelLeftClose, UserRound, Puzzle, Ellipsis, BatteryCharging, ArrowUp, ArrowDown, GripVertical, MessagesSquare };
 const paint = () => {
   const pending = $$('i[data-lucide]');
   if (!pending.length) return;
@@ -127,6 +128,7 @@ const navigationButtons = new Map($$("#navigation-primary [data-view]").map(butt
 const pluginMarket = createPluginMarket({runtimeRoot:$("#view-plugin-lsc"),onPluginsChanged:installationsChanged,root:$('#view-plugins'),widget:$('#dashboard-energy-widgets'),request:(path,options)=>api.request(path,options),member:()=>state.member,network:()=>state.network,showView,toast});
 let jobNotification = null;
 const qqNotifications = createQQNotifications({root:$('#view-plugin-qq'),request:(path,options)=>api.request(path,options),member:()=>state.member,network:()=>state.network,toast,changed:v=>installationsChanged([...navigationInstallations.filter(r=>r.plugin.id!=='aeorbit.qq'),{plugin:{id:'aeorbit.qq'},enabled:v.enabled}])});
+const subnetMonitor=createSubnetMonitor({root:$('#view-plugin-subnet'),market:$('#view-plugins'),request:(path,options)=>api.request(path,options),member:()=>state.member,network:()=>state.network,toast,showView,changed:v=>installationsChanged([...navigationInstallations.filter(r=>r.plugin.id!=='aeorbit.subnet'),v])});
 const activeStates = new Set(["queued", "assigned", "computing", "running"]);
 const attentionStates = new Set(["failed", "needs_review"]);
 const inventoryHistory = createHistoryController({ request: (path,options) => api.request(networkPath(path),options), onChange: () => renderInventoryHistory() });
@@ -286,10 +288,11 @@ function openNavigationDrawer() {
   $('#navigation-dialog').showModal();
 }
 function installationsChanged(installations) {
+	if(!installations.some(r=>r.plugin.id==='aeorbit.subnet'))installations=[...installations,...navigationInstallations.filter(r=>r.plugin.id==='aeorbit.subnet')];
   const before = navigationInstallations.map(row => `${row.plugin.id}:${row.enabled}`).join(',');
   navigationInstallations = installations;
   renderNavigation();
-  if (['plugin-lsc','plugin-qq'].includes(state.view) && !navigationAvailable().some(entry => entry.id === state.view)) showView('plugins');
+  if (['plugin-lsc','plugin-qq','plugin-subnet'].includes(state.view) && !navigationAvailable().some(entry => entry.id === state.view)) showView('plugins');
   if (before !== installations.map(row => `${row.plugin.id}:${row.enabled}`).join(',') && state.settingsSection === 'navigation' && state.view === 'settings') renderSettings();
 }
 function navigationSettingsHTML() {
@@ -540,7 +543,7 @@ function errorText(error) {
     api.setCSRF("");
     state.session = null;
     qqNotifications.reset(); jobNotification=null;
-    pluginMarket.sessionChanged();
+    pluginMarket.sessionChanged(); subnetMonitor.sessionChanged();
     clearSession(localStorage,sessionStorage);
     state.stream?.close();
     showLogin();
@@ -843,7 +846,7 @@ function showView(view) {
   let hasRefresh = false;
   $$("[data-refresh-view]").forEach(button => { button.hidden = button.dataset.refreshView !== view; if (!button.hidden) hasRefresh = true; });
   $(".page-refresh").hidden = !hasRefresh;
-  for (const name of ["dashboard", "inventory", "history", "orders", "cpus", "network", "plugins", "plugin-lsc", "plugin-qq", "github", "settings"]) $(`#view-${name}`).hidden = name !== view;
+  for (const name of ["dashboard", "inventory", "history", "orders", "cpus", "network", "plugins", "plugin-lsc", "plugin-qq", "plugin-subnet", "github", "settings"]) $(`#view-${name}`).hidden = name !== view;
   $$("[data-view]").forEach(button => {
     if (button.dataset.view === view) button.setAttribute("aria-current", "page");
     else button.removeAttribute("aria-current");
@@ -866,7 +869,8 @@ function showView(view) {
   }
   if (view === "inventory") refreshInventoryCapacity();
   if (view === "dashboard") { renderDashboard(); void pluginMarket.refresh(); }
-  if (view === "plugins") pluginMarket.show();
+  if (view === "plugins") {pluginMarket.show();subnetMonitor.show();}
+  if (view === "plugin-subnet") subnetMonitor.show();
   if (view === "plugin-lsc") pluginMarket.showPlugin();
   if (view === "plugin-qq") qqNotifications.show();
   if (view === "history") { renderInventoryHistory(); if(state.network&&!inventoryHistory.state.series) void inventoryHistory.load(); }
@@ -2353,6 +2357,7 @@ async function switchNetwork(id) {
   for (const dialog of ["cpu-dialog", "order-dialog", "job-dialog"]) if ($(`#${dialog}`).open) $(`#${dialog}`).close();
   qqNotifications.reset(); jobNotification=null;
   state.network = network || null;
+  subnetMonitor.networkChanged();
   state.inventoryStats = null;
   state.inventoryTrend = [];
   state.inventoryTrendKey = "";
@@ -2523,7 +2528,7 @@ async function acceptSession(member, csrf, expiresAt = "", persist = true) {
   renderNavigation();
   api.setMember(member.id);
   api.setCSRF(csrf);
-  pluginMarket.sessionChanged();
+  pluginMarket.sessionChanged(); subnetMonitor.sessionChanged();
   state.session = { member: member.id, csrf, expiresAt };
   if (persist) {
     try { saveSession(localStorage, sessionStorage, state.session, state.settings.rememberSession); }
@@ -2575,14 +2580,15 @@ $("#logout").addEventListener("click", async () => {
     state.session = null;
     navigationPreferences = loadNavigation(localStorage, "");
     qqNotifications.reset(); jobNotification=null;
-    pluginMarket.sessionChanged();
+    pluginMarket.sessionChanged(); subnetMonitor.sessionChanged();
     $("#network").innerHTML = `<option value="">未连接</option>`;
     await switchNetwork("");
     showLogin();
   } catch (error) { toast(errorText(error), true); }
 });
 $("#network").addEventListener("change", event => switchNetwork(event.target.value));
-for (const id of ["#refresh-plugins", "#refresh-plugin-lsc"]) $(id).addEventListener("click", () => void pluginMarket.refresh());
+for (const id of ["#refresh-plugins", "#refresh-plugin-lsc"]) $(id).addEventListener("click", () => {void pluginMarket.refresh();void subnetMonitor.refresh();});
+$('#refresh-plugin-subnet').addEventListener('click',()=>subnetMonitor.show());
 $('#refresh-plugin-qq').addEventListener('click',()=>qqNotifications.show());
 $("#notifications").addEventListener("click", () => { refreshHeader(); renderCPUs(); renderNetwork(); $("#sync-dialog").showModal(); });
 $("#refresh-dashboard").addEventListener("click", () => {

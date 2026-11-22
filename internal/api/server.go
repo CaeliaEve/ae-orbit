@@ -108,6 +108,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if pattern == "POST /api/v1/networks/{network}/inventory-profile/variants" && budget < 3*time.Minute {
 			budget = 3 * time.Minute
 		}
+		if pattern == "PUT /api/v1/monitoring/groups/{group}/subnets/plugin" && budget < 3*time.Minute {
+			budget = 3 * time.Minute
+		}
 		if pattern == "GET /api/v1/networks/{network}/inventory-history/export" && budget < 5*time.Minute {
 			budget = 5 * time.Minute
 		}

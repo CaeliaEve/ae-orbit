@@ -9,6 +9,7 @@ import (
 
 const LSC = "gtnh.lsc"
 const QQ = "aeorbit.qq"
+const Subnet = "aeorbit.subnet"
 const MaxObjects = 16
 
 type Manifest struct {
@@ -26,6 +27,7 @@ func Catalog() []Manifest {
 	return []Manifest{
 		{LSC, "蓝波顿超级电容库", "1.1.0", "储能、容量、长期趋势与站内告警；支持每秒实时采集与独立历史间隔。", true, "LSC", []string{"getStoredEUString", "getEUCapacityString"}, 10},
 		{QQ, "QQ 联动", "1.0.0", "通过 MaiBot 接收蓝波顿低电量告警和 CPU 任务提醒，支持群内 @ 与私聊。", true, "", []string{}, 0},
+		{Subnet, "子 ME 网络库存监控", "1.0.0", "自选物品与流体、数量阈值、库存趋势与 QQ 预警。每个子网一台专用 OC，精确查询。", true, "me_interface", []string{"getItemInNetwork", "getFluidInNetwork"}, 1},
 	}
 }
 func Supported(id string) bool { return id == LSC }

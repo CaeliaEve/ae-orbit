@@ -165,6 +165,13 @@ def notification_text(delivery: Dict[str, Any]) -> str:
             heading = "\n" + name if len(devices) > 1 or name not in ("蓝波顿", "蓝波顿超级电容库") else ""
             lines.extend(energy_lines(device, heading))
         return "\n".join(lines)[:1600]
+    if delivery.get("kind") == "subnet":
+        lines = ["⚠️ " + str(payload.get("subnet", "子网")) + "库存预警"]
+        for item in (payload.get("items") or [payload])[:10]:
+            label = {"low": "低于", "high": "高于", "zero": "归零"}.get(item.get("rule"), "越界")
+            rule = label if item.get("rule") == "zero" else label + " " + str(item.get("threshold", ""))
+            lines.append(str(item.get("item") or item.get("registry") or "物品") + "：" + str(item.get("quantity", "未知")) + " " + str(item.get("unit", "件")) + "（" + rule + "）")
+        return "\n".join(lines)
     lines = [str(payload.get("title", "AE Orbit 通知"))]
     for key, label in (("cpu", "CPU"), ("device", "设备"), ("network", "网络"), ("owner", "下单玩家")):
         if payload.get(key):

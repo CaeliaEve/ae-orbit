@@ -31,6 +31,7 @@ type MonitorComponent struct {
 }
 type MonitorAuth struct {
 	ID, Group string
+	Purpose   string
 	Hash      []byte
 }
 type PluginInstallation struct {
@@ -187,7 +188,7 @@ func (s *Store) MonitoringPlugins(ctx context.Context, member, group string) ([]
 	}
 	out := []PluginInstallation{}
 	for _, p := range plugins.Catalog() {
-		if p.ID == plugins.QQ {
+		if p.ID != plugins.LSC {
 			continue
 		}
 		v := PluginInstallation{Plugin: p, Settings: plugins.Defaults()}
@@ -271,7 +272,7 @@ func (s *Store) CreateMonitorCollector(ctx context.Context, member, group, name 
 			return err
 		}
 		var count int
-		if err := tx.QueryRow(ctx, `SELECT count(*) FROM monitor_collectors WHERE server_group=$1 AND NOT revoked`, group).Scan(&count); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM monitor_collectors WHERE server_group=$1 AND NOT revoked AND purpose='lsc'`, group).Scan(&count); err != nil {
 			return err
 		}
 		if count >= 16 {
@@ -291,7 +292,7 @@ func (s *Store) MonitorCollectors(ctx context.Context, member, group string) ([]
 	if err := s.RequireGroupAccess(ctx, member, group); err != nil {
 		return nil, err
 	}
-	rows, err := s.pool.Query(ctx, `SELECT id,name,revoked,last_seen,free_memory,components,modules,coalesce(last_seen>now()-interval '60 seconds' AND NOT revoked,false) FROM monitor_collectors WHERE server_group=$1 ORDER BY created_at,id`, group)
+	rows, err := s.pool.Query(ctx, `SELECT id,name,revoked,last_seen,free_memory,components,modules,coalesce(last_seen>now()-interval '60 seconds' AND NOT revoked,false) FROM monitor_collectors WHERE server_group=$1 AND purpose='lsc' ORDER BY created_at,id`, group)
 	if err != nil {
 		return nil, err
 	}
@@ -324,7 +325,7 @@ func (s *Store) ChangeMonitorToken(ctx context.Context, member, group, id string
 	token := newToken("ac_mon_")
 	h := hashToken(token)
 	err := s.monitorTransaction(ctx, func(tx pgx.Tx) error {
-		tag, err := tx.Exec(ctx, `UPDATE monitor_collectors SET token_hash=$3,revoked=$4,current_session='',last_seen=NULL WHERE server_group=$1 AND id=$2`, group, id, h[:], revoke)
+		tag, err := tx.Exec(ctx, `UPDATE monitor_collectors SET token_hash=$3,revoked=$4,current_session='',last_seen=NULL WHERE server_group=$1 AND id=$2 AND purpose='lsc'`, group, id, h[:], revoke)
 		if err != nil {
 			return err
 		}
@@ -349,7 +350,7 @@ func (s *Store) AuthMonitor(ctx context.Context, token string) (MonitorAuth, err
 	}
 	h := hashToken(token)
 	a.Hash = h[:]
-	err := s.pool.QueryRow(ctx, `SELECT id,server_group FROM monitor_collectors WHERE token_hash=$1 AND NOT revoked`, h[:]).Scan(&a.ID, &a.Group)
+	err := s.pool.QueryRow(ctx, `SELECT id,server_group,purpose FROM monitor_collectors WHERE token_hash=$1 AND NOT revoked`, h[:]).Scan(&a.ID, &a.Group, &a.Purpose)
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = ErrUnauthorized
 	}
@@ -403,7 +404,7 @@ func (s *Store) SetMonitorObject(ctx context.Context, member, group, id string, 
 	}
 	err := s.monitorTransaction(ctx, func(tx pgx.Tx) error {
 		var modules, components []byte
-		err := tx.QueryRow(ctx, `SELECT modules,components FROM monitor_collectors WHERE id=$1 AND server_group=$2 AND NOT revoked FOR UPDATE`, in.CollectorID, group).Scan(&modules, &components)
+		err := tx.QueryRow(ctx, `SELECT modules,components FROM monitor_collectors WHERE id=$1 AND server_group=$2 AND NOT revoked AND purpose='lsc' FOR UPDATE`, in.CollectorID, group).Scan(&modules, &components)
 		if err != nil {
 			return notFound(err)
 		}
