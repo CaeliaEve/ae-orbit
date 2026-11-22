@@ -38,7 +38,7 @@ test('small subnet mode shows list cadence and failures instead of catalog scan 
 test('subnet textures use the shared renderer and expose escaped keyword chips',()=>{
  const item={id:'fluid',kind:'fluid',label:'燃料',name:'fuel',quantity:'1',known:true,keywords:['fuel & mk2'],catalog:{image_url:'/strip.png',animation:{width:16,height:512}}};
  const html=subnetItemsHTML({items:[item],can_manage:true},'m',i=>`<span class="item-image item-image-sprite" data-sheet-height="${i.catalog.animation.height}"></span>`);
- assert.match(html,/item-image-sprite/);assert.match(html,/data-sheet-height="512"/);assert.doesNotMatch(html,/<img[^>]*strip.png/);assert.match(html,/fuel &amp; mk2/);assert.match(html,/data-keywords-item="fluid"/);
+ assert.match(html,/item-image-sprite/);assert.match(html,/data-sheet-height="512"/);assert.doesNotMatch(html,/<img[^>]*strip.png/);assert.match(html,/fuel &amp; mk2/);assert.match(html,/data-item-settings="fluid"/);
 });
 test('keyword editor separates aliases and normalizes case without broad matching',()=>{
  assert.deepEqual(subnetKeywordValues(' 燃料，Fuel   MK2\n燃料、fuel mk2'),['燃料','fuel mk2']);

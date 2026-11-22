@@ -127,7 +127,7 @@ let navigationSignature = "", mobileNavigationSignature = "";
 const navigationButtons = new Map($$("#navigation-primary [data-view]").map(button => [button.dataset.view, button]));
 const pluginMarket = createPluginMarket({runtimeRoot:$("#view-plugin-lsc"),onPluginsChanged:installationsChanged,root:$('#view-plugins'),widget:$('#dashboard-energy-widgets'),request:(path,options)=>api.request(path,options),member:()=>state.member,network:()=>state.network,showView,toast});
 let jobNotification = null;
-const qqNotifications = createQQNotifications({root:$('#view-plugin-qq'),request:(path,options)=>api.request(path,options),member:()=>state.member,network:()=>state.network,toast,changed:v=>installationsChanged([...navigationInstallations.filter(r=>r.plugin.id!=='aeorbit.qq'),{plugin:{id:'aeorbit.qq'},enabled:v.enabled}])});
+const qqNotifications = createQQNotifications({root:$('#view-plugin-qq'),showView,request:(path,options)=>api.request(path,options),member:()=>state.member,network:()=>state.network,toast,changed:v=>installationsChanged([...navigationInstallations.filter(r=>r.plugin.id!=='aeorbit.qq'),{plugin:{id:'aeorbit.qq'},enabled:v.enabled}])});
 const subnetMonitor=createSubnetMonitor({root:$('#view-plugin-subnet'),market:$('#view-plugins'),image:itemImage,request:(path,options)=>api.request(path,options),member:()=>state.member,network:()=>state.network,toast,showView,changed:v=>installationsChanged([...navigationInstallations.filter(r=>r.plugin.id!=='aeorbit.subnet'),v])});
 const activeStates = new Set(["queued", "assigned", "computing", "running"]);
 const attentionStates = new Set(["failed", "needs_review"]);
