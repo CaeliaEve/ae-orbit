@@ -98,7 +98,7 @@ ae-orbit start</pre><p>启动后回到子网页面，选择实际 ME 组件，�
 
  async function editKeywords(itemID){
   const item=view.items.find(i=>i.id===itemID),captured=base()+'/'+selected,version=generation;
-  const d=dialog('QQ 关键词 · '+item.label,`<form class="qq-chooser"><label>查询关键词<textarea name="keywords" rows="4" placeholder="燃料，产线燃料">${esc((item.keywords||[]).join('，'))}</textarea></label><p class="muted">用逗号或换行分隔，最多 8 个，每个 1–32 字。群里直接发送“燃料”或“库存 燃料”即可查询。多个监控项可共用关键词，回复会逐项列出；数秒后生效。</p><p class="muted">仅完全匹配关键词时回复。电量、蓝波顿、蓝博顿、ae电量、库存保留给已有命令。留空可移除所有关键词。</p><p class="error" data-error></p><button class="primary">保存关键词</button></form>`);
+  const d=dialog('QQ 关键词 · '+item.label,`<form class="qq-chooser"><label>查询关键词<textarea name="keywords" rows="4" placeholder="燃料，产线燃料">${esc((item.keywords||[]).join('，'))}</textarea></label><p class="muted">用逗号或换行分隔，最多 8 个，每个 1–32 字。群里直接发送“燃料”或“库存 燃料”即可查询。多个监控项可共用关键词，回复会逐项列出；数秒后生效。</p><p class="muted">消息包含关键词就会回复，例如“硅岩燃料还有多少”或“/硅岩燃料”。电量、蓝波顿、蓝博顿、ae电量、库存保留给已有命令。留空可移除所有关键词。</p><p class="error" data-error></p><button class="primary">保存关键词</button></form>`);
   d.querySelector('form').onsubmit=async e=>{e.preventDefault();const b=e.target.querySelector('button');b.disabled=true;try{
    if(version!==generation||captured!==base()+'/'+selected)throw Error('子网已变化，请重新打开。');
    const keywords=subnetKeywordValues(new FormData(e.target).get('keywords'));

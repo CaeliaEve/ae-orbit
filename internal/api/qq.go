@@ -38,7 +38,7 @@ func (s *Server) qqRoutes() {
 	}))
 	s.mux.HandleFunc("POST /bridge/qq/v1/inventory", s.qqBridge(func(w http.ResponseWriter, r *http.Request, a store.QQAuth) {
 		var in store.QQInventoryRequest
-		if e := readJSON(w, r, &in, 2048); e != nil {
+		if e := readJSON(w, r, &in, 2*1024*1024); e != nil {
 			fail(w, e)
 			return
 		}

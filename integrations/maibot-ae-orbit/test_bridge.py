@@ -18,6 +18,12 @@ class BridgeTests(unittest.TestCase):
         for value in [None, "/电量", "a" * 33, "燃料?"]:
             self.assertEqual(bridge.inventory_keyword(value), "")
 
+    def test_mentions_match_anywhere_including_slashes_and_sentences(self):
+        for text in ["硅岩燃料", "/硅岩燃料", "硅岩燃料还剩多少？", "帮我看一下硅岩燃料库存"]:
+            self.assertEqual(bridge.matching_inventory_keywords(text, ["硅岩燃料", "燃料", "水"]), ["燃料", "硅岩燃料"])
+        self.assertEqual(bridge.matching_inventory_keywords(" Fuel   MK2? ", ["fuel mk2"]), ["fuel mk2"])
+        self.assertEqual(bridge.matching_inventory_keywords("今天天气", ["燃料"]), [])
+
     def test_inventory_reply_keeps_units_exact_values_and_unknown(self):
         data = {"kind": "inventory_query", "payload": {"keyword": "燃料", "total": 3, "items": [
             {"subnet": "液体产线", "label": "燃料", "kind": "fluid", "quantity": "9007199254740993", "known": True},

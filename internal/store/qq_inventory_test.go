@@ -93,8 +93,22 @@ func TestSubnetQQKeywordsIdentityFreshnessAndDelivery(t *testing.T) {
 	if q, e := s.QQRequestInventory(ctx, auth, in); e != nil || !q {
 		t.Fatal("new query throttled", q, e)
 	}
+	batch := store.QQInventoryRequest{GroupID: "1081348823", RequestKey: "query-batch", Keywords: []string{"燃料", "fuel mk2", "燃料"}}
+	for x := 0; x < 2; x++ {
+		if q, e := s.QQRequestInventory(ctx, auth, batch); e != nil || !q {
+			t.Fatal("combined query failed", q, e)
+		}
+	}
+	var raw json.RawMessage
+	if err = s.Pool().QueryRow(ctx, `SELECT payload FROM qq_outbox WHERE source_key='inventory:query-batch'`).Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	var combined store.QQInventoryView
+	if err = json.Unmarshal(raw, &combined); err != nil || len(combined.Items) != 2 || combined.Total != 2 || len(combined.Keywords) != 2 {
+		t.Fatal("overlapping aliases duplicated identities", combined, err)
+	}
 	var count int
-	if err = s.Pool().QueryRow(ctx, `SELECT count(*) FROM qq_outbox WHERE kind='inventory_query'`).Scan(&count); err != nil || count != 2 {
+	if err = s.Pool().QueryRow(ctx, `SELECT count(*) FROM qq_outbox WHERE kind='inventory_query'`).Scan(&count); err != nil || count != 3 {
 		t.Fatal(count, err)
 	}
 	// Read failures, rebooted sessions, changed config, pause and stale samples
@@ -115,7 +129,7 @@ func TestSubnetQQKeywordsIdentityFreshnessAndDelivery(t *testing.T) {
 	}
 	enableQQSending(t, s, a, n)
 	out, err := s.QQBridgePoll(ctx, auth, store.QQBridgePoll{BotID: "12345678", Adapter: "snowluma"})
-	if err != nil || len(out.Deliveries) != 2 {
+	if err != nil || len(out.Deliveries) != 3 {
 		t.Fatal(out, err)
 	}
 	for _, d := range out.Deliveries {

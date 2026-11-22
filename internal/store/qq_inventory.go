@@ -16,9 +16,10 @@ type SubnetKeywordsInput struct {
 	Keywords []string `json:"keywords"`
 }
 type QQInventoryRequest struct {
-	GroupID    string `json:"group_id"`
-	RequestKey string `json:"request_key"`
-	Keyword    string `json:"keyword"`
+	GroupID    string   `json:"group_id"`
+	RequestKey string   `json:"request_key"`
+	Keyword    string   `json:"keyword"`
+	Keywords   []string `json:"keywords,omitempty"`
 }
 type QQInventoryItem struct {
 	SubnetID string             `json:"subnet_id"`
@@ -33,6 +34,7 @@ type QQInventoryItem struct {
 }
 type QQInventoryView struct {
 	Keyword        string            `json:"keyword"`
+	Keywords       []string          `json:"keywords,omitempty"`
 	Items          []QQInventoryItem `json:"items"`
 	Total          int               `json:"total"`
 	SendingEnabled bool              `json:"sending_enabled"`
@@ -117,7 +119,10 @@ func (s *Store) QQInventoryKeywords(ctx context.Context, a QQAuth) ([]string, er
 	return keys, rows.Err()
 }
 func qqInventoryView(ctx context.Context, tx pgx.Tx, a QQAuth, gid, key string) (QQInventoryView, error) {
-	v := QQInventoryView{Keyword: key, Items: []QQInventoryItem{}}
+	return qqInventoryKeysView(ctx, tx, a, gid, []string{key})
+}
+func qqInventoryKeysView(ctx context.Context, tx pgx.Tx, a QQAuth, gid string, keys []string) (QQInventoryView, error) {
+	v := QQInventoryView{Keyword: strings.Join(keys, "、"), Keywords: keys, Items: []QQInventoryItem{}}
 	var allowed bool
 	if err := tx.QueryRow(ctx, `SELECT c.sending_enabled,c.enabled AND c.catalog_ready AND g.enabled FROM qq_connectors c JOIN qq_groups g ON g.server_group=c.server_group WHERE c.server_group=$1 AND g.group_id=$2`, a.Group, gid).Scan(&v.SendingEnabled, &allowed); err != nil {
 		return v, notFound(err)
@@ -125,7 +130,7 @@ func qqInventoryView(ctx context.Context, tx pgx.Tx, a QQAuth, gid, key string) 
 	if !allowed {
 		return v, ErrForbidden
 	}
-	rows, err := tx.Query(ctx, `SELECT n.id,n.name,d.id,d.label,d.kind,d.nbt<>'',l.quantity,l.observed_at,coalesce(l.quantity IS NOT NULL AND l.error='' AND l.observed_at>now()-n.stale_seconds*interval '1 second' AND l.revision=n.revision AND l.session_id=c.current_session AND c.last_seen>now()-n.stale_seconds*interval '1 second' AND NOT c.revoked AND n.enabled AND p.enabled,false),count(*) OVER() FROM subnet_qq_keywords k JOIN subnet_items i ON i.subnet_id=k.subnet_id AND i.item_id=k.item_id JOIN subnet_catalog d ON d.id=i.item_id JOIN monitored_subnets n ON n.id=i.subnet_id AND n.server_group=k.server_group JOIN subnet_plugins p ON p.server_group=n.server_group JOIN monitor_collectors c ON c.id=n.collector_id LEFT JOIN subnet_latest l ON l.subnet_id=i.subnet_id AND l.item_id=i.item_id WHERE k.server_group=$1 AND k.keyword=$2 AND i.enabled AND p.enabled ORDER BY n.name,n.id,d.label,d.id LIMIT 20`, a.Group, key)
+	rows, err := tx.Query(ctx, `SELECT n.id,n.name,d.id,d.label,d.kind,d.nbt<>'',l.quantity,l.observed_at,coalesce(l.quantity IS NOT NULL AND l.error='' AND l.observed_at>now()-n.stale_seconds*interval '1 second' AND l.revision=n.revision AND l.session_id=c.current_session AND c.last_seen>now()-n.stale_seconds*interval '1 second' AND NOT c.revoked AND n.enabled AND p.enabled,false),count(*) OVER() FROM subnet_items i JOIN subnet_catalog d ON d.id=i.item_id JOIN monitored_subnets n ON n.id=i.subnet_id JOIN subnet_plugins p ON p.server_group=n.server_group JOIN monitor_collectors c ON c.id=n.collector_id LEFT JOIN subnet_latest l ON l.subnet_id=i.subnet_id AND l.item_id=i.item_id WHERE n.server_group=$1 AND EXISTS(SELECT 1 FROM subnet_qq_keywords k WHERE k.subnet_id=i.subnet_id AND k.item_id=i.item_id AND k.server_group=n.server_group AND k.keyword=ANY($2::text[])) AND i.enabled AND p.enabled ORDER BY n.name,n.id,d.label,d.id LIMIT 20`, a.Group, keys)
 	if err != nil {
 		return v, err
 	}
@@ -150,15 +155,33 @@ func (s *Store) QQInventory(ctx context.Context, a QQAuth, gid, keyword string) 
 }
 func (s *Store) QQRequestInventory(ctx context.Context, a QQAuth, in QQInventoryRequest) (bool, error) {
 	queued := false
-	key, err := normalizeSubnetKeyword(in.Keyword)
-	if err != nil || !protocol.QQNumberValid(in.GroupID) || !protocol.ProductionJobKeyValid(in.RequestKey) {
+	keys := in.Keywords
+	if len(keys) == 0 {
+		keys = []string{in.Keyword}
+	}
+	if len(keys) > 8192 {
 		return false, ErrInvalid
 	}
-	err = s.monitorTransaction(ctx, func(tx pgx.Tx) error {
+	normalized := []string{}
+	seen := map[string]bool{}
+	for _, raw := range keys {
+		key, err := normalizeSubnetKeyword(raw)
+		if err != nil {
+			return false, err
+		}
+		if !seen[key] {
+			normalized = append(normalized, key)
+			seen[key] = true
+		}
+	}
+	if !protocol.QQNumberValid(in.GroupID) || !protocol.ProductionJobKeyValid(in.RequestKey) {
+		return false, ErrInvalid
+	}
+	err := s.monitorTransaction(ctx, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `SELECT group_id FROM qq_groups WHERE server_group=$1 AND group_id=$2 FOR UPDATE`, a.Group, in.GroupID); err != nil {
 			return err
 		}
-		v, err := qqInventoryView(ctx, tx, a, in.GroupID, key)
+		v, err := qqInventoryKeysView(ctx, tx, a, in.GroupID, normalized)
 		if err != nil {
 			return err
 		}

@@ -5,7 +5,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
@@ -160,6 +160,15 @@ def inventory_keyword(text: Any) -> str:
     if not 1 <= len(key) <= 32 or not all(c.isalpha() or c.isnumeric() or c in " _-" for c in key):
         return ""
     return key
+
+
+def matching_inventory_keywords(text: Any, keywords: Iterable[str]) -> List[str]:
+    if not isinstance(text, str):
+        return []
+    normalized = " ".join(text.split()).lower()
+    # Stable ordering makes one message one request regardless of set order;
+    # the API unions identities so overlapping aliases never duplicate stock.
+    return sorted(k for k in set(keywords) if k and k in normalized)
 
 
 def inventory_text(payload: Dict[str, Any]) -> str:

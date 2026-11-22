@@ -148,12 +148,17 @@ func (s *Store) QQBridgePoll(ctx context.Context, a QQAuth, in QQBridgePoll) (QQ
 			}
 			if d.Kind == "inventory_query" {
 				var requested struct {
-					Keyword string `json:"keyword"`
+					Keyword  string   `json:"keyword"`
+					Keywords []string `json:"keywords"`
 				}
 				if err := json.Unmarshal(d.Payload, &requested); err != nil {
 					return err
 				}
-				current, err := qqInventoryView(ctx, tx, a, d.GroupID, requested.Keyword)
+				keys := requested.Keywords
+				if len(keys) == 0 {
+					keys = []string{requested.Keyword}
+				}
+				current, err := qqInventoryKeysView(ctx, tx, a, d.GroupID, keys)
 				if err != nil {
 					return err
 				}
@@ -211,7 +216,7 @@ func (s *Store) QQBeginDelivery(ctx context.Context, a QQAuth, id, attempt strin
 		if !enabled {
 			return ErrForbidden
 		}
-		tag, err := tx.Exec(ctx, `UPDATE qq_outbox q SET state='sending',lease_until=now()+interval '120 seconds' FROM qq_groups g,qq_connectors c WHERE q.id=$1 AND q.server_group=$2 AND q.attempt_id=$3 AND q.kind<>'network' AND (q.kind<>'alarm' OR q.payload->>'alert_kind'='low_energy' AND q.payload->>'state'='active') AND (q.kind<>'inventory_query' OR EXISTS(SELECT 1 FROM subnet_qq_keywords k JOIN subnet_items i ON i.subnet_id=k.subnet_id AND i.item_id=k.item_id JOIN subnet_plugins p ON p.server_group=k.server_group WHERE k.server_group=q.server_group AND k.keyword=q.payload->>'keyword' AND i.enabled AND p.enabled)) AND q.state='leased' AND q.lease_until>now() AND q.expires_at>now() AND g.server_group=q.server_group AND g.group_id=q.group_id AND g.enabled AND c.server_group=q.server_group AND c.catalog_ready AND (q.channel='group' OR c.allow_private)`, id, a.Group, attempt)
+		tag, err := tx.Exec(ctx, `UPDATE qq_outbox q SET state='sending',lease_until=now()+interval '120 seconds' FROM qq_groups g,qq_connectors c WHERE q.id=$1 AND q.server_group=$2 AND q.attempt_id=$3 AND q.kind<>'network' AND (q.kind<>'alarm' OR q.payload->>'alert_kind'='low_energy' AND q.payload->>'state'='active') AND (q.kind<>'inventory_query' OR EXISTS(SELECT 1 FROM subnet_qq_keywords k JOIN subnet_items i ON i.subnet_id=k.subnet_id AND i.item_id=k.item_id JOIN subnet_plugins p ON p.server_group=k.server_group WHERE k.server_group=q.server_group AND (k.keyword=q.payload->>'keyword' OR coalesce(q.payload->'keywords','[]'::jsonb) ? k.keyword) AND i.enabled AND p.enabled)) AND q.state='leased' AND q.lease_until>now() AND q.expires_at>now() AND g.server_group=q.server_group AND g.group_id=q.group_id AND g.enabled AND c.server_group=q.server_group AND c.catalog_ready AND (q.channel='group' OR c.allow_private)`, id, a.Group, attempt)
 		if err == nil && tag.RowsAffected() == 0 {
 			err = ErrConflict
 		}

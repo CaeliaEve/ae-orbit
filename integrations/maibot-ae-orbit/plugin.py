@@ -16,11 +16,11 @@ import json
 import re
 import hashlib
 
-from maibot_sdk import API, Command, EventHandler, ConfigWidget, ConfigWidgetState, Field, HomeCard, MaiBotPlugin, PluginConfigBase
+from maibot_sdk import API, Command, HookHandler, ConfigWidget, ConfigWidgetState, Field, HomeCard, MaiBotPlugin, PluginConfigBase
 
-from maibot_sdk.types import EventType
+from maibot_sdk.types import HookMode, HookOrder
 
-from .bridge import BridgeClient, ChannelPolicy, ReceiptJournal, message_segments, normalize_channels, notification_text, inventory_keyword
+from .bridge import BridgeClient, ChannelPolicy, ReceiptJournal, message_segments, normalize_channels, notification_text, matching_inventory_keywords
 
 
 class ConnectorSettings(PluginConfigBase):
@@ -123,7 +123,8 @@ class AEOrbitPlugin(MaiBotPlugin):
     @API("channels_status", description="读取通知渠道和机器人已加入群", version="1")
     async def channels_status(self) -> Dict[str, Any]:
         return {"groups": self._available_groups, "policy": dict(self._policy), "status": self._status,
-                "sending_enabled": self._sending_enabled, "endpoint": self.config.plugin.endpoint}
+                "sending_enabled": self._sending_enabled, "endpoint": self.config.plugin.endpoint,
+                "inventory_keywords": sorted(self._inventory_keywords), "inventory_hook": "chat.receive.before_process"}
 
     @API("channels_refresh", description="刷新机器人群列表，不发送消息", version="1")
     async def channels_refresh(self) -> Dict[str, Any]:
@@ -198,7 +199,7 @@ class AEOrbitPlugin(MaiBotPlugin):
         payload = await self._http("/bridge/qq/v1/inventory?" + urlencode({"group_id": group_id, "keyword": keyword}), None, "GET")
         return {"text": notification_text({"kind": "inventory_query", "payload": payload}), "sending_enabled": payload["sending_enabled"]}
 
-    async def _queue_inventory(self, group_id: str, incoming: Dict[str, Any], keyword: str) -> bool:
+    async def _queue_inventory(self, group_id: str, incoming: Dict[str, Any], keywords: List[str]) -> bool:
         if group_id not in self._policy["groups"] or not self._sending_enabled:
             return False
         if str(incoming.get("account_id", "")) != self._bot_id:
@@ -211,7 +212,7 @@ class AEOrbitPlugin(MaiBotPlugin):
             return False
         key = hashlib.sha256((group_id + ":" + message_id).encode()).hexdigest()
         try:
-            response = await self._http("/bridge/qq/v1/inventory", {"group_id": group_id, "request_key": "qq-inventory:" + key, "keyword": keyword})
+            response = await self._http("/bridge/qq/v1/inventory", {"group_id": group_id, "request_key": "qq-inventory:" + key, "keywords": keywords})
             if response.get("queued"):
                 self._wake.set()
                 return True
@@ -219,24 +220,25 @@ class AEOrbitPlugin(MaiBotPlugin):
             self.ctx.logger.warning("Inventory request could not be queued: %s", type(exc).__name__)
         return False
 
-    @EventHandler("subnet_inventory_keyword", description="授权群内精确匹配子网库存关键词",
-                  event_type=EventType.ON_MESSAGE_PRE_PROCESS, intercept_message=True, weight=100)
-    async def inventory_message(self, message: Optional[Dict[str, Any]] = None, **kwargs: Any) -> Dict[str, bool]:
+    @HookHandler("chat.receive.before_process", name="subnet_inventory_keyword",
+                 description="授权群消息包含子网库存关键词时查询", mode=HookMode.BLOCKING, order=HookOrder.EARLY, timeout_ms=5000)
+    async def inventory_message(self, message: Optional[Dict[str, Any]] = None, **kwargs: Any) -> Dict[str, str]:
         del kwargs
         incoming = message or {}
-        if incoming.get("platform") != "qq" or incoming.get("scope") != "group":
-            return {"continue_processing": True}
+        if incoming.get("platform") != "qq":
+            return {"action": "continue"}
         gid = str(((incoming.get("message_info") or {}).get("group_info") or {}).get("group_id") or "")
-        # Match only plain text; pictures, quotes, @ and notification events
-        # must not accidentally become inventory commands after preprocessing.
+        # Inspect text before the LLM and before media preprocessing. Non-text
+        # content and bot messages cannot recursively trigger cached queries.
         raw = incoming.get("raw_message") or []
-        if incoming.get("is_notify") or not raw or any(p.get("type") != "text" or not isinstance(p.get("data"), str) for p in raw):
-            return {"continue_processing": True}
-        keyword = inventory_keyword("".join(p["data"] for p in raw))
-        if not keyword or keyword not in self._inventory_keywords:
-            return {"continue_processing": True}
-        queued = await self._queue_inventory(gid, incoming, keyword)
-        return {"continue_processing": not queued}
+        if incoming.get("is_notify") or not isinstance(raw, list):
+            return {"action": "continue"}
+        text = "".join(p["data"] for p in raw if isinstance(p, dict) and p.get("type") == "text" and isinstance(p.get("data"), str))
+        keywords = matching_inventory_keywords(text, self._inventory_keywords)
+        if not keywords:
+            return {"action": "continue"}
+        queued = await self._queue_inventory(gid, incoming, keywords)
+        return {"action": "abort" if queued else "continue"}
 
     async def _flush_receipts(self) -> None:
         if self._journal is None:
