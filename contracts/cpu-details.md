@@ -6,13 +6,11 @@ CPU 监控的“查看合成过程”打开独立面板：active（AE 已派发�
 
 主 OC 在协议 2 协商 cpu_details 能力。poll ACK 按需携带 cpu_detail assignment，期限 8 秒，消耗一个采集额度。三种清单轮流派发，每次相隔至少 10 秒；重放 ACK 不重新派发，OC 去重并保留不可变上报包。副 OC 不参与。更新主 OC 后重启协商能力；旧客户端保持原有最终产物监控。
 
-升级时从后端重新下载最新安装器，避免主 OC 本机旧安装器漏装新模块：
+升级时从后端重新下载安装器，确保主 OC 得到完整模块清单。先将示例地址替换为当前实例地址。
 
 ```sh
 ae-orbit stop
-wget -f http://125.77.172.25:8080/oc/install.lua /tmp/ae-orbit-install.lua
-lua /tmp/ae-orbit-install.lua http://125.77.172.25:8080
-reboot
+wget -f https://ae.example.com/oc/install.lua /tmp/ae-orbit-install.lua && lua /tmp/ae-orbit-install.lua https://ae.example.com && reboot
 ```
 
 重启后执行 `ae-orbit start`。基础 CPU 上报只保留有限尺寸产物字段，不依赖详情模块的加载和哈希；单台产物信息异常只标记该台产物不可用，其他 CPU 的状态仍上报。
