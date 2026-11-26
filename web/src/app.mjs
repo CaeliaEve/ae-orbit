@@ -12,7 +12,7 @@ import { cpuOutputText } from "./cpu-ui.mjs";
 import { createPluginMarket } from "./plugin-market.mjs";
 import { createSubnetMonitor } from "./subnet-monitor.mjs";
 import { coreNavigation, pluginNavigation, availableNavigation, orderedNavigation, partitionNavigation, navigationKey, loadNavigation, saveNavigation, moveNavigation, placeNavigation, normalizeNavigation } from "./navigation.mjs";
-import { createInventoryWheel, inventoryKeyboardDirection } from "./inventory-paging.mjs";
+import { createInventoryView } from "./inventory-view.mjs";
 import { inventoryTooltipModel, paginateTooltipLines, splitTooltipLine, tooltipLineHTML, tooltipPosition } from "./inventory-tooltip.mjs";
 import { quantityKnown, craftingKindSupported, craftingQuantityLabel, stockText, stockFreshness, inventorySummary,resourceUnit,resourceLabel } from "./plain-inventory.mjs";
 import { inventoryTrendHTML, inventoryTrendModel, loadTrendHistory, recordTrendSample, saveTrendHistory, trendStorageKey } from "./inventory-trend.mjs";
@@ -92,10 +92,10 @@ const state = {
   orders: [], devices: [], cpus: { cpus: [] }, icons: {}, filter: "", sort: "name", search: "",resourceKind:"item",
   stockView: "stock", inventoryScope: "", inventoryStats: null,
   inventoryTrend: [], inventoryTrendKey: "", dashboardTrendHours: 24,
-  cursor: "", anchorCursor: "", inventoryWindowAnchored: false, nextCursor: "", cursors: [{ cursor: "", anchor: "" }], page: 0, inventoryPageCount: 1, inventoryTotal: null, inventoryDesiredPage: null, inventoryLimit: 50, inventoryTarget: null, inventoryQueryPending: false, selected: null, amount: "1",
+  selected: null, amount: "1",
   cpuName: "", waitForCPU: false, inspector: "detail", draft: { version: 1, entries: [], receipts: {} },
-  draftKey: "", draftBlocked: false, unchecked: new Set(), busy: false, preparing: false, inventoryLoading: false,
-  orderFilter: "active", orderGroup: "batch", stream: null, streamConnected: false, streamState: "closed", generation: 0,
+  draftKey: "", draftBlocked: false, unchecked: new Set(), busy: false, preparing: false,
+  orderFilter: "active", orderGroup: "batch", stream: null, streamConnected: false, streamState: "closed",
   context: 0, orderGeneration: 0, orderSnapshot: null, ordersLoading: false, ordersError: false,
   cpuMonitor: { search: "", filter: "all", sort: "network", expanded: new Set() },
   networkNodes: { search: "", filter: "all", role: "all", expanded: new Set() },
@@ -177,23 +177,9 @@ function renderInventoryHistory() {
 }
 const endedStates = new Set(["done", "failed", "canceled", "expired"]);
 const stateNames = { queued: "排队中", assigned: "已派发", computing: "计算中", running: "合成中", done: "已完成", failed: "失败", canceled: "已撤回", expired: "已过期", needs_review: "结果待确认" };
-let searchTimer, toastTimer, streamTimer, streamRefreshTimer, queryController, ordersController, detailController, cpuCallback, inspectorFocus, inventoryResizeTimer;
+let toastTimer, streamTimer, streamRefreshTimer, ordersController, detailController, cpuCallback, inspectorFocus;
 let draftItemsRequest = null, draftItemsRefreshAt = 0;
-const inventoryWheel = createInventoryWheel();
 let spriteAnimationFrame = 0;
-const inventoryPrefetchControllers = new Set();
-const inventoryPageCache = new Map();
-const inventoryPageRequests = new Map();
-let inventoryCacheEpoch = 0, inventoryLiveRequest = null;
-let inventoryPrefetchJob = null, inventoryPrefetchTarget = null;
-let inventoryNavigationFrame = 0, inventoryVisibleTimer = 0, inventoryImageTimer = 0;
-let inventoryDirection = 1;
-const inventoryImages = new Map();
-const INVENTORY_PREFETCH_DEPTH = 24;
-const INVENTORY_PAGE_CACHE_LIMIT = 160;
-const INVENTORY_PAGE_CACHE_TTL = 120000;
-const INVENTORY_PAGE_FRESH_TTL = 10000;
-const INVENTORY_PAGE_CACHE_ITEMS = 6000;
 
 function toast(message, error = false, category = "general") {
   if (!error && category !== "general") {
@@ -416,7 +402,7 @@ function updateSettings(patch, notify = true) {
     applySettings();
     if (["sidebarCollapsed", "inventoryLayout", "density"].some(key => Object.prototype.hasOwnProperty.call(patch, key))) {
       hideInventoryHover();
-      requestAnimationFrame(() => refreshInventoryCapacity());
+      inventory.resize();
     }
     if (Object.prototype.hasOwnProperty.call(patch, "rememberSession")) {
       if (state.settings.rememberSession && state.session) saveSession(localStorage, sessionStorage, state.session, true);
@@ -841,6 +827,7 @@ function showView(view) {
   if(view!=="cpus" && $("#cpu-process-dialog").open) $("#cpu-process-dialog").close();
   hideInventoryHover();
   if (![...coreNavigation,...pluginNavigation,{id:'settings'}].some(entry=>entry.id===view)) return;
+  if (state.view === "inventory" && view !== "inventory") inventory.hide();
   state.view = view;
   $('#navigation-dialog').close();
   const definition = [...coreNavigation,...pluginNavigation].find(entry=>entry.id===view);
@@ -871,7 +858,7 @@ function showView(view) {
     renderNetwork();
     if (state.network) refreshNetwork();
   }
-  if (view === "inventory") refreshInventoryCapacity();
+  if (view === "inventory") inventory.show();
   if (view === "dashboard") { renderDashboard(); void pluginMarket.refresh(); }
   if (view === "plugins") {pluginMarket.show();subnetMonitor.show();}
   if (view === "plugin-subnet") subnetMonitor.show();
@@ -913,8 +900,8 @@ function renderInventory() {
     <td>${item.group ? `<span class="variant-count" title="${item.group.candidates} 个已登记变种；点击展开">${item.group.stock || item.group.candidates}</span>` : `<button class="icon-button" data-quick-add="${esc(item.id)}" title="加入清单" aria-label="将${esc(catalogDisplayName(item))}加入清单" ${craftingKindSupported(item, state.network?.capabilities) && item.craftable && item.exact && !state.draftBlocked && !state.busy && !state.preparing ? "" : "disabled"}>${inventoryIcon("plus")}</button>`}</td>
   </tr>`).join("");
   $("#inventory-empty").hidden = state.items.length > 0;
-  $("#inventory-empty").textContent = state.inventoryLoading ? "正在读取库存…" : !state.member ? "登录后查看库存" : !state.network ? "没有可访问的网络" : "没有匹配的物品";
-  renderInventoryPager();
+  $("#inventory-empty").textContent = inventory.loading ? "正在读取库存…" : !state.member ? "登录后查看库存" : !state.network ? "没有可访问的网络" : "没有匹配的物品";
+  inventory.renderPager();
   paint();
   scheduleSpriteAnimation();
   if (hoveredID) {
@@ -976,27 +963,23 @@ function patchInventoryRows() {
     }
   });
   $("#inventory-empty").hidden = state.items.length > 0;
-  renderInventoryPager();
+  inventory.renderPager();
   paint();
   scheduleSpriteAnimation();
   if (inventoryHover.button) refreshInventoryHover();
   return true;
 }
 
-function renderInventoryPager() {
-  const loading = state.inventoryLoading;
-  $("#first-page").disabled = state.inventoryQueryPending || (state.page === 0 && !state.inventoryWindowAnchored);
-  $("#prev-page").disabled = state.inventoryQueryPending || state.inventoryPageCount <= 1;
-  $("#next-page").disabled = state.inventoryQueryPending || state.inventoryPageCount <= 1;
-  $("#refresh-inventory").disabled = loading;
-  $("#inventory-rows").setAttribute("aria-busy", String(loading && !state.inventoryTarget?.absolute));
-  const targetPage = state.inventoryDesiredPage ?? state.inventoryTarget?.page;
-  const position = `${state.page + 1} / ${state.inventoryPageCount}`;
-  $("#page-label").textContent = loading
-    ? `${position} 页 · 正在读取${targetPage != null && targetPage !== state.page ? `第 ${targetPage + 1} 页` : ""}…`
-    : state.inventoryQueryPending ? "读取失败 · 点击刷新重试"
-    : `${position} 页 · ${state.items.length} 项`;
-}
+const inventory = createInventoryView({
+  state, $, request: (path, options) => api.request(networkPath(path), options), lookupItems,
+  render: renderInventory, patchRows: patchInventoryRows, updateDraft: patchDraftAppearance,
+  hideHover: hideInventoryHover, textureAssetURL, message: text => message("#inventory-message", text), errorText,
+  updateSelection(previous, { navigation = false } = {}) {
+    if (state.inspector !== "detail" || !state.selected) return;
+    if (!navigation && detailNeedsRender(previous, state.selected)) renderDetail();
+    else patchSelectedDetail(state.selected);
+  },
+});
 
 function patchSelectedDetail(item) {
   if (!item) return;
@@ -1511,16 +1494,16 @@ function renderOrders() {
   paint();
 }
 
-async function lookupItems(ids) {
+async function lookupItems(ids, signal) {
   const unique = [...new Set(ids.map(String))];
   if (!unique.length) return;
   const context = state.context;
   const requests = [];
   for (let offset = 0; offset < unique.length; offset += 200) {
-    requests.push(api.request(networkPath(`/items/lookup?${new URLSearchParams({ ids: unique.slice(offset, offset + 200).join(",") })}`)));
+    requests.push(api.request(networkPath(`/items/lookup?${new URLSearchParams({ ids: unique.slice(offset, offset + 200).join(",") })}`), { signal }));
   }
   const pages = await Promise.all(requests);
-  if (context !== state.context) return;
+  if (context !== state.context || signal?.aborted) return;
   const items = pages.flatMap(value => value.items || []);
   for (const item of items) {
     state.itemCache.set(String(item.id), item);
@@ -1831,354 +1814,6 @@ async function createNetwork(event) {
   }
 }
 
-function inventoryPageLimit() {
-  const fallback = 50;
-  if (matchMedia("(max-width: 900px)").matches) return fallback;
-  const wrap = $("#view-inventory .table-wrap");
-  if (!wrap || wrap.clientWidth < 100 || wrap.clientHeight < 100) return state.inventoryLimit || fallback;
-  const empty = $("#inventory-empty");
-  const wasEmptyVisible = empty && !empty.hidden;
-  if (wasEmptyVisible) empty.hidden = true;
-  const width = wrap.clientWidth;
-  const height = wrap.clientHeight;
-  if (wasEmptyVisible) empty.hidden = false;
-  const gridStyle = getComputedStyle($("#inventory-rows"));
-  const gap = parseFloat(gridStyle.gap) || 8;
-  const cardWidth = parseFloat(gridStyle.getPropertyValue("--inventory-card-min")) || 76;
-  const cardHeight = parseFloat(gridStyle.getPropertyValue("--inventory-card-height")) || 84;
-  const tableStyle = getComputedStyle($("#view-inventory .inventory-table"));
-  const horizontalPadding = parseFloat(tableStyle.paddingLeft) + parseFloat(tableStyle.paddingRight);
-  const verticalPadding = parseFloat(tableStyle.paddingTop) + parseFloat(tableStyle.paddingBottom);
-  const columns = Math.max(1, Math.floor((width - horizontalPadding + gap) / (cardWidth + gap)));
-  const rows = Math.max(1, Math.floor((height - verticalPadding + gap) / (cardHeight + gap)));
-  wrap.style.setProperty("--inventory-rows", String(rows));
-  return Math.min(200, columns * rows);
-}
-
-function refreshInventoryCapacity() {
-  const nextLimit = inventoryPageLimit();
-  if (nextLimit === state.inventoryLimit) return false;
-  if (state.network && state.view === "inventory") {
-    if (!state.inventoryLoading) void loadInventory(false, { page: state.page, cursor: "", anchor: inventoryWindowAnchor(), limit: nextLimit });
-  } else state.inventoryLimit = nextLimit;
-  return true;
-}
-
-function inventoryWindowAnchor() {
-  return state.page > 0 || state.inventoryWindowAnchored ? state.anchorCursor : "";
-}
-
-function inventoryQuerySpec(limit) {
-  return { search: state.search, sort: state.sort, filter: state.filter, limit, view: state.stockView, scope: state.inventoryScope,kind:state.resourceKind,grouped:state.resourceKind==='item' };
-}
-
-function inventoryPageKey(cursor, spec) {
-  return JSON.stringify([spec.search, spec.sort, spec.filter, spec.limit, spec.view, spec.scope, cursor, spec.anchor || "", spec.page || "",spec.kind]);
-}
-
-function cachedInventoryPage(cursor, spec, fresh = false) {
-  const key = inventoryPageKey(cursor, spec);
-  const cached = inventoryPageCache.get(key);
-  if (!cached) return null;
-  if (Date.now() - cached.cachedAt > INVENTORY_PAGE_CACHE_TTL) {
-    inventoryPageCache.delete(key);
-    return null;
-  }
-  if (fresh && Date.now() - cached.cachedAt > INVENTORY_PAGE_FRESH_TTL) return null;
-  inventoryPageCache.delete(key);
-  inventoryPageCache.set(key, cached);
-  return cached;
-}
-
-function cacheInventoryPage(cursor, spec, page) {
-  const key = inventoryPageKey(cursor, spec);
-  inventoryPageCache.delete(key);
-  inventoryPageCache.set(key, { ...page, cachedAt: Date.now() });
-  while (inventoryPageCache.size > INVENTORY_PAGE_CACHE_LIMIT) inventoryPageCache.delete(inventoryPageCache.keys().next().value);
-  let items = [...inventoryPageCache.values()].reduce((sum, page) => sum + page.items.length, 0);
-  while (items > INVENTORY_PAGE_CACHE_ITEMS && inventoryPageCache.size > 1) {
-    const first = inventoryPageCache.keys().next().value;
-    items -= inventoryPageCache.get(first).items.length;
-    inventoryPageCache.delete(first);
-  }
-}
-
-function invalidateInventoryPageNumbers(total, pageCount) {
-  for (const [key, page] of inventoryPageCache) {
-    if (JSON.parse(key)[8]) { page.cachedAt = Math.min(page.cachedAt, Date.now() - INVENTORY_PAGE_FRESH_TTL - 1); page.pageCount = pageCount; page.total = total; }
-  }
-}
-
-function clearInventoryPages() {
-  inventoryCacheEpoch++;
-  for (const controller of inventoryPrefetchControllers) controller.abort();
-  inventoryPrefetchControllers.clear();
-  inventoryPageCache.clear(); inventoryPageRequests.clear();
-  inventoryPrefetchJob = null; inventoryPrefetchTarget = null;
-  clearTimeout(inventoryVisibleTimer); clearTimeout(inventoryImageTimer);
-  cancelAnimationFrame(inventoryNavigationFrame); inventoryNavigationFrame = 0;
-}
-
-function requestInventoryPage(cursor, limit, signal, spec = inventoryQuerySpec(limit), fresh = false) {
-  const key = inventoryPageKey(cursor, spec);
-  const cached = !fresh && cachedInventoryPage(cursor, spec);
-  if (cached) return Promise.resolve(cached);
-  const pending = inventoryPageRequests.get(key);
-  if (pending && !fresh && !pending.signal?.aborted) return pending.promise;
-  const epoch = inventoryCacheEpoch;
-  const query = new URLSearchParams({ q: spec.search, sort: spec.sort, limit: String(spec.limit), consistency: "window", pagination: "pages" });
-  if (spec.filter) query.set("craftable", spec.filter);
-  query.set("kind",spec.kind || "item");
-  if(spec.grouped)query.set('grouped','true');
-  if (spec.scope === "nesql_plain") query.set("view", spec.view);
-  if (cursor) query.set("cursor", cursor);
-  if (spec.anchor) query.set("anchor", spec.anchor);
-  if (spec.page) query.set("page", String(spec.page));
-  const request = api.request(networkPath(`/items?${query}`), signal ? { signal } : undefined)
-    .then(value => {
-      const page = { items: value.items || [], nextCursor: value.next_cursor || "", anchorCursor: value.anchor_cursor || "", scope: value.scope || "", pageNumber: value.page_number, pageCount: value.page_count, total: value.total };
-      if (epoch === inventoryCacheEpoch && !signal?.aborted) cacheInventoryPage(cursor, spec, page);
-      return page;
-    })
-    .finally(() => {
-      if (inventoryPageRequests.get(key)?.promise === request) inventoryPageRequests.delete(key);
-    });
-  inventoryPageRequests.set(key, { promise: request, signal });
-  return request;
-}
-
-function prefetchInventoryPages(pageIndex, generation, limit) {
-  const spec = inventoryQuerySpec(limit);
-  inventoryPrefetchTarget = { pageIndex, spec, direction: inventoryDirection };
-  if (inventoryPrefetchJob) return inventoryPrefetchJob.promise;
-  const controller = new AbortController();
-  const job = { controller, epoch: inventoryCacheEpoch, promise: null };
-  inventoryPrefetchJob = job;
-  inventoryPrefetchControllers.add(controller);
-  job.promise = (async () => {
-    try {
-      while (!controller.signal.aborted && job.epoch === inventoryCacheEpoch) {
-        const target = inventoryPrefetchTarget;
-        if (!target || state.inventoryLoading || state.inventoryQueryPending) break;
-        const count = state.inventoryPageCount;
-        const depth = Math.min(count - 1, INVENTORY_PREFETCH_DEPTH, Math.floor(INVENTORY_PAGE_CACHE_ITEMS / target.spec.limit / 2));
-        const candidates = [];
-        for (let n = 1; n <= depth; n++) {
-          candidates.push({ index: (target.pageIndex + target.direction * n + count) % count, direction: target.direction });
-          if (n <= 4) candidates.push({ index: (target.pageIndex - target.direction * n + count) % count, direction: -target.direction });
-        }
-        const missing = candidates.find(value => !cachedInventoryPage("", { ...target.spec, page: value.index + 1 }, true));
-        if (missing == null) break;
-        const batch = Math.max(1, Math.min(Math.floor(200 / target.spec.limit), depth, missing.direction < 0 ? missing.index + 1 : count - missing.index));
-        const start = missing.direction < 0 ? Math.max(0, missing.index - batch + 1) : missing.index;
-        const value = await requestInventoryBlock(start, batch, target.spec, controller.signal, job.epoch);
-        if (job.epoch !== inventoryCacheEpoch || controller.signal.aborted) break;
-        if (value.total != null && state.inventoryTotal != null && value.total !== state.inventoryTotal) break;
-      }
-    } catch {} finally {
-      inventoryPrefetchControllers.delete(controller);
-      if (inventoryPrefetchJob === job) inventoryPrefetchJob = null;
-      scheduleInventoryImageWarmup();
-    }
-  })();
-  return job.promise;
-}
-
-async function requestInventoryBlock(start, pages, spec, signal, epoch) {
-  const query = new URLSearchParams({ q: spec.search, sort: spec.sort, limit: String(Math.min(200, pages * spec.limit)), page_size: String(spec.limit), consistency: "window", pagination: "pages", page: String(start + 1) });
-  if (spec.filter) query.set("craftable", spec.filter);
-  query.set("kind",spec.kind || "item");
-  if(spec.grouped)query.set('grouped','true');
-  if (spec.scope === "nesql_plain") query.set("view", spec.view);
-  const value = await api.request(networkPath(`/items?${query}`), { signal });
-  if (epoch !== inventoryCacheEpoch || signal.aborted) return value;
-  if (value.total != null && state.inventoryTotal != null && value.total !== state.inventoryTotal) invalidateInventoryPageNumbers(value.total, value.page_count);
-  for (let offset = 0; offset < value.items.length; offset += spec.limit) {
-    const index = value.page_number - 1 + offset / spec.limit;
-    const page = { items: value.items.slice(offset, offset + spec.limit), anchorCursor: value.page_anchors?.[offset / spec.limit] || "", nextCursor: index < value.page_count - 1 ? value.next_cursor || "more" : "", scope: value.scope, pageNumber: index + 1, pageCount: value.page_count, total: value.total };
-    cacheInventoryPage("", { ...spec, page: index + 1 }, page);
-  }
-  return value;
-}
-
-function scheduleInventoryImageWarmup() {
-  clearTimeout(inventoryImageTimer);
-  inventoryImageTimer = setTimeout(() => {
-    const spec = inventoryQuerySpec(state.inventoryLimit);
-    for (const distance of [1, -1, 2, 3]) {
-      const index = (state.page + inventoryDirection * distance + state.inventoryPageCount) % state.inventoryPageCount;
-      const page = cachedInventoryPage("", { ...spec, page: index + 1 });
-      for (const item of page?.items || []) {
-        const url = textureAssetURL(item);
-        if (!url || inventoryImages.has(url)) continue;
-        const img = new Image(); img.decoding = "async"; img.src = url;
-        inventoryImages.set(url, img);
-        while (inventoryImages.size > 320) inventoryImages.delete(inventoryImages.keys().next().value);
-      }
-    }
-  }, 120);
-}
-
-async function loadInventory(reset = false, target = null) {
-  if (!state.network) return;
-  const limit = target?.limit || inventoryPageLimit();
-  const destination = reset ? { page: 0, cursor: "", anchor: "" }
-    : target || { page: state.page, cursor: "", anchor: inventoryWindowAnchor() };
-  if (reset) {
-    state.inventoryDesiredPage = null;
-    state.inventoryQueryPending = true;
-    clearInventoryPages();
-    inventoryWheel.reset();
-  }
-  inventoryLiveRequest?.abort(); inventoryLiveRequest = null;
-  queryController?.abort();
-  queryController = new AbortController();
-  const generation = ++state.generation;
-  const cursor = destination.cursor;
-  const spec = { ...inventoryQuerySpec(limit), anchor: destination.anchor || "", page: destination.absolute ? destination.page + 1 : "" };
-  state.inventoryLoading = true;
-  state.inventoryTarget = destination;
-  renderInventoryPager();
-  if (!state.items.length) renderInventory();
-  try {
-    const value = await requestInventoryPage(cursor, limit, queryController.signal, spec);
-    if (generation !== state.generation) return;
-    if (reset) { state.cursors = [{ cursor: "", anchor: "" }]; state.inventoryQueryPending = false; }
-    if (limit !== state.inventoryLimit) clearInventoryPages();
-    state.inventoryLimit = limit;
-    state.inventoryDesiredPage = null;
-    applyInventoryPage(destination, value);
-  } catch (error) {
-    if (generation !== state.generation || error.name === "AbortError") return;
-    inventoryWheel.reset();
-    state.inventoryDesiredPage = null;
-    message("#inventory-message", errorText(error));
-  } finally {
-    if (generation === state.generation) {
-      state.inventoryLoading = false;
-      state.inventoryTarget = null;
-      renderInventoryPager();
-      if (!state.items.length) renderInventory();
-      if (inventoryPageLimit() !== limit && inventoryPageLimit() !== state.inventoryLimit) refreshInventoryCapacity();
-    }
-  }
-}
-
-function applyInventoryPage(destination, page) {
-  const navigated = destination.page !== state.page;
-  const hadItemFocus = $("#inventory-rows").contains(document.activeElement);
-  const focusedItem = document.activeElement?.dataset?.item || document.activeElement?.dataset?.quickAdd;
-  const focusKind = document.activeElement?.dataset?.quickAdd ? "data-quick-add" : "data-item";
-  const windowX = window.scrollX, windowY = window.scrollY;
-  if (navigated) hideInventoryHover();
-  if (page.total != null && state.inventoryTotal != null && page.total !== state.inventoryTotal) invalidateInventoryPageNumbers(page.total, page.pageCount);
-  state.page = page.pageNumber ? page.pageNumber - 1 : destination.page;
-  state.inventoryPageCount = page.pageCount || state.inventoryPageCount;
-  state.inventoryTotal = page.total ?? state.inventoryTotal;
-  state.cursor = destination.cursor;
-  state.items = page.items;
-  state.anchorCursor = page.anchorCursor;
-  state.inventoryWindowAnchored = Boolean(destination.anchor);
-  state.nextCursor = page.nextCursor;
-  state.inventoryScope = page.scope;
-  state.cursors[state.page] = { cursor: state.cursor, anchor: inventoryWindowAnchor() };
-  state.cursors.length = state.page + 1;
-  state.items.forEach(item => {if(!item.group)state.itemCache.set(String(item.id), item);});
-  patchDraftAppearance();
-  const selected = state.selected?.group ? state.items.find(item=>item.id===state.selected.id) : state.itemCache.get(String(state.selected?.id));
-  if (selected && (!selected.group || state.selected?.group)) state.selected = selected;
-  cacheInventoryPage(state.cursor, { ...inventoryQuerySpec(state.inventoryLimit), anchor: destination.anchor || "", page: destination.absolute ? state.page + 1 : "" }, page);
-  cacheInventoryPage("", { ...inventoryQuerySpec(state.inventoryLimit), anchor: inventoryWindowAnchor() }, page);
-  if (destination.absolute || !destination.anchor) cacheInventoryPage("", { ...inventoryQuerySpec(state.inventoryLimit), page: state.page + 1 }, page);
-  state.inventoryLoading = false;
-  state.inventoryTarget = null;
-  message("#inventory-message", "");
-  $("#stock-view-label").hidden = state.inventoryScope !== "nesql_plain";
-  renderInventory();
-  if (!navigated) {
-    if (window.scrollY !== windowY) window.scrollTo(windowX, windowY);
-    if (focusedItem) $(`[${focusKind}="${CSS.escape(focusedItem)}"]`)?.focus({ preventScroll: true });
-  }
-  if (navigated) {
-    const wrap = $("#view-inventory .table-wrap");
-    wrap.scrollTop = 0;
-    if (matchMedia("(max-width: 900px)").matches) wrap.scrollIntoView({ block: "start" });
-    if (hadItemFocus) $("[data-item]", wrap)?.focus({ preventScroll: true });
-  }
-  if (state.selected && state.inspector === "detail") patchSelectedDetail(state.selected);
-  void prefetchInventoryPages(state.page, state.generation, state.inventoryLimit);
-  scheduleInventoryImageWarmup();
-  clearTimeout(inventoryVisibleTimer);
-  inventoryVisibleTimer = setTimeout(() => { if (!state.inventoryLoading) { void patchVisibleInventory(); void refreshInventoryWindow(); } }, 180);
-}
-
-function changeInventoryPage(direction) {
-  if (!state.network || state.inventoryQueryPending || (direction !== 0 && state.inventoryPageCount <= 1)) return false;
-  const current = state.inventoryDesiredPage ?? state.inventoryTarget?.page ?? state.page;
-  const next = direction === 0 ? 0 : (current + direction + state.inventoryPageCount) % state.inventoryPageCount;
-  state.inventoryDesiredPage = next;
-  if (direction) inventoryDirection = direction;
-  if (cachedInventoryPage("", { ...inventoryQuerySpec(state.inventoryLimit), page: next + 1 })) {
-    cancelAnimationFrame(inventoryNavigationFrame); inventoryNavigationFrame = 0;
-    navigateInventoryPage(next);
-  } else {
-    if (!inventoryNavigationFrame) inventoryNavigationFrame = requestAnimationFrame(() => {
-      inventoryNavigationFrame = 0;
-      if (state.inventoryDesiredPage != null) navigateInventoryPage(state.inventoryDesiredPage);
-    });
-  }
-  return true;
-}
-
-function navigateInventoryPage(pageIndex) {
-  const destination = { page: pageIndex, cursor: "", anchor: "", absolute: true };
-  const limit = inventoryPageLimit();
-  const cached = cachedInventoryPage("", { ...inventoryQuerySpec(limit), page: pageIndex + 1 });
-  if (cached) {
-    state.generation++;
-    queryController?.abort();
-    inventoryLiveRequest?.abort(); inventoryLiveRequest = null;
-    state.inventoryLimit = limit;
-    state.inventoryDesiredPage = null;
-    applyInventoryPage(destination, cached);
-    return;
-  }
-  void loadInventory(false, { ...destination, limit });
-}
-
-function inventoryWheelDelta(event) {
-  const raw = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
-  if (!raw) return 0;
-  const multiplier = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? window.innerHeight : 1;
-  return raw * multiplier;
-}
-
-async function patchVisibleInventory() {
-  if (!state.network || !state.items.length || state.inventoryLoading || inventoryLiveRequest) return;
-  const generation = state.generation, context = state.context;
-  try {
-    const value = await lookupItems(state.items.map(i => i.id).concat(state.selected?.id || []));
-    if (!value || generation !== state.generation || context !== state.context) return;
-    const previousSelected = state.selected;
-    const live = new Map(value.items.map(i => [String(i.id), i]));
-    state.items = state.items.map(item => live.get(String(item.id)) || item);
-    if (state.inventoryScope === "nesql_plain" && state.stockView === "stock") {
-      state.items = state.items.filter(item => quantityKnown(item) && BigInt(item.quantity) > 0n);
-    }
-    if (state.selected && live.has(String(state.selected.id))) state.selected = live.get(String(state.selected.id));
-    // Quantity changes do not reorder the list while the user is choosing items.
-    const focused = document.activeElement;
-    const focusKind = focused?.dataset?.quickAdd ? "data-quick-add" : "data-item";
-    const focusItem = focused?.dataset?.item || focused?.dataset?.quickAdd;
-    if (!patchInventoryRows()) renderInventory();
-    if (focusItem) $(`[${focusKind}="${CSS.escape(focusItem)}"]`)?.focus({ preventScroll: true });
-    if (state.inspector === "detail" && state.selected) {
-      if (detailNeedsRender(previousSelected, state.selected)) renderDetail();
-      else patchSelectedDetail(state.selected);
-    }
-  } catch {}
-}
-
 let inventoryStatsRequest = null;
 let inventoryStatsAt = 0, inventoryStatsContext = -1;
 async function refreshInventoryStats() {
@@ -2205,80 +1840,10 @@ async function refreshInventoryStats() {
   return promise;
 }
 
-let catalogListRefreshAt = 0, inventoryRefreshTimer = null;
-async function refreshInventoryWindow(force = false) {
-  if (!state.network || state.inventoryLoading || state.inventoryQueryPending || inventoryLiveRequest) return;
-  const context = state.context, generation = state.generation;
-  const spec = { ...inventoryQuerySpec(state.inventoryLimit), anchor: inventoryWindowAnchor() };
-  const cursor = spec.anchor ? "" : state.cursor;
-  if (force) clearInventoryPages();
-  const controller = new AbortController();
-  inventoryLiveRequest = controller;
-  try {
-    const value = await requestInventoryPage(cursor, spec.limit, controller.signal, spec, true);
-    if (context !== state.context || generation !== state.generation) return;
-    // A selected item can leave the stock filter while its detail stays open.
-    const selectedID = state.selected?.id;
-    if (selectedID && !value.items.some(item => String(item.id) === String(selectedID))) {
-      try { await lookupItems([selectedID]); } catch {}
-      if (context !== state.context || generation !== state.generation) return;
-    }
-    const previousSelected = state.selected;
-    const focused = document.activeElement;
-    const focusKind = focused?.dataset?.quickAdd ? "data-quick-add" : "data-item";
-    const focusItem = focused?.dataset?.item || focused?.dataset?.quickAdd;
-    const scroll = $(".table-wrap");
-    const scrollTop = scroll?.scrollTop || 0;
-    const windowX=window.scrollX, windowY=window.scrollY;
-    state.items = value.items; state.nextCursor = value.nextCursor;
-    if (value.total != null && state.inventoryTotal != null && value.total !== state.inventoryTotal) {
-      invalidateInventoryPageNumbers(value.total, value.pageCount);
-    }
-    state.inventoryPageCount = value.pageCount || state.inventoryPageCount;
-    state.inventoryTotal = value.total ?? state.inventoryTotal;
-    state.page = Math.min(state.page, state.inventoryPageCount - 1);
-    state.anchorCursor = value.anchorCursor || state.anchorCursor;
-    state.cursors[state.page] = { cursor: state.cursor, anchor: inventoryWindowAnchor() };
-    cacheInventoryPage("", { ...inventoryQuerySpec(state.inventoryLimit), anchor: inventoryWindowAnchor() }, value);
-    state.items.forEach(item => {if(!item.group)state.itemCache.set(String(item.id), item);});
-    patchDraftAppearance();
-    const selected = state.items.find(item => String(item.id) === String(state.selected?.id)) || state.itemCache.get(String(state.selected?.id));
-    if (selected && (!selected.group || state.selected?.group)) state.selected = selected;
-    if (!patchInventoryRows()) renderInventory();
-    if (scroll) scroll.scrollTop = scrollTop;
-    if (window.scrollY!==windowY) window.scrollTo(windowX,windowY);
-    renderInventoryPager();
-    if (focusItem) $(`[${focusKind}="${CSS.escape(focusItem)}"]`)?.focus({ preventScroll: true });
-    if (state.inspector === "detail" && state.selected) {
-      if (detailNeedsRender(previousSelected, state.selected)) renderDetail();
-      else patchSelectedDetail(state.selected);
-    }
-    message("#inventory-message", "");
-    if (!spec.anchor) cacheInventoryPage("", { ...inventoryQuerySpec(state.inventoryLimit), page: state.page + 1 }, value);
-    void prefetchInventoryPages(state.page, generation, spec.limit);
-  } catch (error) {
-    if (context === state.context && generation === state.generation && error.name !== "AbortError") message("#inventory-message", errorText(error));
-  } finally {
-    if (inventoryLiveRequest === controller) inventoryLiveRequest = null;
-  }
-}
 function refreshInventoryObservation() {
   void refreshInventoryStats();
   if (state.view === "inventory" && state.inspector === "draft") void refreshDraftItems();
-  if (Date.now() - catalogListRefreshAt >= 5000 && !state.inventoryLoading) {
-    clearTimeout(inventoryRefreshTimer); inventoryRefreshTimer = null;
-    catalogListRefreshAt = Date.now();
-    void refreshInventoryWindow();
-  } else {
-    void patchVisibleInventory();
-    if (!inventoryRefreshTimer) {
-      const context = state.context;
-      inventoryRefreshTimer = setTimeout(() => {
-        inventoryRefreshTimer = null;
-        if (context === state.context) refreshInventoryObservation();
-      }, Math.max(500, 5000 - (Date.now() - catalogListRefreshAt)));
-    }
-  }
+  inventory.observe();
 }
 
 function connectStream() {
@@ -2343,14 +1908,10 @@ async function switchNetwork(id) {
   clearTimeout(historySearchTimer);clearTimeout(historyWheelTimer);inventoryHistory.reset();
   state.context++;
   draftItemsRequest = null; draftItemsRefreshAt = 0;
-  clearTimeout(inventoryRefreshTimer); inventoryRefreshTimer = null;
-  inventoryLiveRequest?.abort(); inventoryLiveRequest = null;
   const network = state.networks.find(n => n.id === id);
-  queryController?.abort();
   ordersController?.abort();
   state.orderGeneration++;
   invalidateOrderDetail();
-  state.generation++;
   state.stream?.close();
   clearInterval(streamTimer);
   clearTimeout(streamRefreshTimer);
@@ -2372,12 +1933,7 @@ async function switchNetwork(id) {
   state.itemCache.clear();
   state.selected = null;
   state.items = [];
-  state.nextCursor = "";
-  state.page = 0; state.cursor = ""; state.anchorCursor = ""; state.inventoryWindowAnchored = false;
-  state.inventoryPageCount = 1; state.inventoryTotal = null; state.inventoryDesiredPage = null;
-  state.cursors = [{ cursor: "", anchor: "" }]; state.inventoryTarget = null; state.inventoryQueryPending = false;
-  clearInventoryPages(); inventoryWheel.reset();
-  state.inventoryLoading = false;
+  inventory.reset();
   state.orders = [];
   state.orderSnapshot = null;
   state.crafting = { search: "", sort: "newest", owner: state.member?.admin ? "all" : "mine", orderSearch: "" };
@@ -2415,7 +1971,7 @@ async function switchNetwork(id) {
   try { localStorage.setItem("ae-orbit:last-network", network.id); } catch {}
   connectStream();
   const context = state.context;
-  await Promise.all([loadInventory(true), refreshInventoryStats(), refreshOrders(false), refreshCPUs(), refreshNetwork(), refreshJobs(), refreshDraftItems(true)]);
+  await Promise.all([state.view === "inventory" && inventory.reload(), refreshInventoryStats(), refreshOrders(false), refreshCPUs(), refreshNetwork(), refreshJobs(), refreshDraftItems(true)]);
   if (context !== state.context) return;
   if(state.view==='history')void inventoryHistory.load();
   try {
@@ -2600,25 +2156,15 @@ $("#refresh-dashboard").addEventListener("click", () => {
   renderDashboard();
   if (state.network) { refreshNetwork(); refreshInventoryObservation(); refreshCPUs(); refreshJobs(); }
 });
-$("#search").addEventListener("input", event => {
-  clearTimeout(searchTimer);
-  if (event.isComposing) return;
-  searchTimer = setTimeout(() => { state.search = event.target.value.trim(); loadInventory(true); }, 220);
-});
-$("#search").addEventListener("compositionend", event => {
-  clearTimeout(searchTimer);
-  searchTimer = setTimeout(() => { state.search = event.target.value.trim(); loadInventory(true); }, 220);
-});
-$("#sort").addEventListener("change", event => { state.sort = event.target.value; loadInventory(true); });
-$("#stock-view").addEventListener("change", event => { state.stockView = event.target.value; loadInventory(true); });
+inventory.bind();
 $("#inventory-resource-tabs").addEventListener("click", event => {
   const kind=event.target.closest("[data-resource-kind]")?.dataset.resourceKind;
   if (!kind || kind===state.resourceKind)return;
   state.resourceKind=kind;state.filter="";state.selected=null;
   $$("[data-filter]").forEach(button=>button.setAttribute("aria-pressed",String(button.dataset.filter==="")));
-  renderDetail();refreshHeader();void loadInventory(true);
+  renderDetail();refreshHeader();void inventory.reload();
 });
-$("#refresh-inventory").addEventListener("click", () => { void (state.inventoryQueryPending ? loadInventory(true) : refreshInventoryWindow(true)); void refreshInventoryStats(); });
+$("#refresh-inventory").addEventListener("click", () => { void inventory.refresh(); void refreshInventoryStats(); });
 $("#refresh-history").addEventListener('click',()=>{if(state.network)void inventoryHistory.refresh()});
 $("#history-search").addEventListener('input',event=>{clearTimeout(historySearchTimer);if(event.isComposing)return;$("#history-search-results").hidden=false;event.target.setAttribute('aria-expanded','true');historySearchTimer=setTimeout(()=>inventoryHistory.search(event.target.value.trim()),220)});
 $("#history-search").addEventListener('compositionend',event=>{clearTimeout(historySearchTimer);historySearchTimer=setTimeout(()=>inventoryHistory.search(event.target.value.trim()),220)});
@@ -2641,24 +2187,6 @@ $("#history-chart").addEventListener('pointerup',event=>{const start=historyGest
 $("#history-chart").addEventListener('pointercancel',()=>{historyGesture=null});
 $("#history-chart").addEventListener('dblclick',()=>void inventoryHistory.setRange('all'));
 $("#history-chart").addEventListener('wheel',event=>{const pos=historyPosition(event);if(!pos)return;event.preventDefault();clearTimeout(historyWheelTimer);const s=inventoryHistory.state.series,from=Date.parse(s.from),to=Date.parse(s.to),factor=event.deltaY>0?1.5:0.67;const start=Math.max(Date.parse(s.started_at)||from,pos.time-(pos.time-from)*factor),end=Math.min(Date.now(),pos.time+(to-pos.time)*factor);historyWheelTimer=setTimeout(()=>void inventoryHistory.setWindow(start,end),100)},{passive:false});
-$("#first-page").addEventListener("click", () => { inventoryWheel.reset(); changeInventoryPage(0); });
-$("#prev-page").addEventListener("click", () => { inventoryWheel.reset(); changeInventoryPage(-1); });
-$("#next-page").addEventListener("click", () => { inventoryWheel.reset(); changeInventoryPage(1); });
-$("#view-inventory .catalog").addEventListener("wheel", event => {
-  if (matchMedia("(max-width: 900px)").matches || state.view !== "inventory") return;
-  if (event.ctrlKey || event.target.closest("input, select, textarea")) return;
-  const delta = inventoryWheelDelta(event);
-  if (!delta) return;
-  event.preventDefault();
-  const direction = inventoryWheel.consume(delta, performance.now());
-  if (direction) changeInventoryPage(direction);
-}, { passive: false });
-document.addEventListener("keydown", event => {
-  if (state.view !== "inventory" || $$("dialog[open]").length) return;
-  const direction = inventoryKeyboardDirection(event);
-  if (direction === null) return;
-  event.preventDefault(); inventoryWheel.reset(); changeInventoryPage(direction);
-});
 $("#open-draft").addEventListener("click", () => openInspector("draft"));
 $("#detail-tab").addEventListener("click", () => openInspector("detail"));
 $("#draft-tab").addEventListener("click", () => openInspector("draft"));
@@ -2973,7 +2501,7 @@ document.addEventListener("click", async event => {
   if ("filter" in data) {
     state.filter = data.filter;
     $$("[data-filter]").forEach(b => b.setAttribute("aria-pressed", String(b === button)));
-    loadInventory(true);
+    void inventory.reload();
   }
   if (data.item) {
     hideInventoryHover();
@@ -3173,12 +2701,12 @@ window.addEventListener("resize", () => {
   const sheet = matchMedia("(max-width:800px)").matches && $("#inspector").dataset.open === "true";
   $("#sheet-backdrop").hidden = !sheet;
   document.body.classList.toggle("sheet-open", sheet);
-  clearTimeout(inventoryResizeTimer);
-  inventoryResizeTimer = setTimeout(() => refreshInventoryCapacity(), 120);
+  inventory.resize();
 });
 document.addEventListener("visibilitychange", () => {
   if(document.visibilityState!=="visible"){$("#cpu-process-dialog").close();cpuDetails.close();}
-  if (document.visibilityState !== "visible") hideInventoryHover();
+  if (document.visibilityState !== "visible") { hideInventoryHover(); inventory.hide(); }
+  else if (state.view === "inventory") inventory.show();
   if (document.visibilityState === "visible" && state.member && state.network) { refreshNetwork(); refreshInventoryObservation(); refreshOrders(false); refreshJobs(); }
 });
 document.addEventListener("error", event => {
