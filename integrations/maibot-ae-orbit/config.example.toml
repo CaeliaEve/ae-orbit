@@ -1,6 +1,7 @@
 [plugin]
 enabled = true
-endpoint = "http://125.77.172.25:8080"
+# Replace with the origin of your AE Orbit instance.
+endpoint = "https://ae.example.com"
 credential_file = "/opt/qqbot/ae-orbit-connector.json"
 config_version = "1.3.0"
 

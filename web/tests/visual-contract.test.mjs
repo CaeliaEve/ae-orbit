@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises";
 const compactCSS = await readFile(new URL("../src/compact.css", import.meta.url), "utf8");
 const styleCSS = await readFile(new URL("../src/style.css", import.meta.url), "utf8");
 const appSource = await readFile(new URL("../src/app.mjs", import.meta.url), "utf8");
+const inventoryView = await readFile(new URL("../src/inventory-view.mjs", import.meta.url), "utf8");
 const indexHTML = await readFile(new URL("../static/index.html", import.meta.url), "utf8");
 
 test("inventory cards expose a restrained depth and selected-state contract", () => {
@@ -40,13 +41,8 @@ test("desktop workbench stays inside the viewport while mobile keeps natural flo
 test("inventory grid fills available width and supports wheel page navigation", () => {
   assert.match(compactCSS, /\.inventory-table tbody[\s\S]*?grid-template-columns:\s*repeat\(auto-fit,\s*minmax\(/);
   assert.doesNotMatch(compactCSS, /grid-template-columns:\s*repeat\((?:8|7|6|5),/);
-  assert.match(appSource, /function inventoryPageLimit\(\)/);
-  assert.match(appSource, /const limit = inventoryPageLimit\(\)/);
-  assert.match(appSource, /limit: String\(spec\.limit\)/);
-  assert.match(appSource, /function refreshInventoryCapacity\(\)/);
-  assert.match(appSource, /function changeInventoryPage\(direction\)/);
-  assert.match(appSource, /\.catalog[\s\S]*?addEventListener\("wheel"/);
-  assert.match(appSource, /event\.preventDefault\(\)/);
+  assert.match(appSource, /inventory\.bind\(\)/);
+  assert.match(inventoryView, /"#view-inventory \.catalog"\)\.addEventListener\("wheel"/);
 });
 
 test("inventory footer names navigation and announces loading without rebuilding rows", () => {

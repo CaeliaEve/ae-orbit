@@ -102,6 +102,10 @@ jobs:
         run: |
           python scripts/test_lua.py
           python scripts/verify_contracts.py
+      - name: MaiBot bridge and notification tests
+        run: |
+          python integrations/maibot-ae-orbit/test_bridge.py
+          python integrations/maibot-ae-orbit/test_inventory_plugin.py
       - name: Build native executables and OC package
         run: python scripts/build.py
       - name: Independent process smoke test

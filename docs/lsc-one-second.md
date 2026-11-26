@@ -1,16 +1,16 @@
 # 蓝波顿每秒采集
 
-实时采集间隔与历史保存间隔分别配置。本次服务器设置为实时 1 秒、历史 10 秒，原始历史继续保留 30 天，小时和日汇总继续长期保留。容量变化、启动会话变化、离线后恢复、读取错误后恢复会立即保存历史节点。
+实时采集间隔与历史保存间隔分别配置。可设为实时 1 秒、历史 10 秒。原始历史默认保留 30 天，小时和日汇总长期保留。容量变化、启动会话变化、离线后恢复、读取错误后恢复会立即保存历史节点。
 
 每次读取储能、容量和输入输出等小规模数据；不读取 AE 网络，不扫描物品，不控制机器。5 秒平均输入输出仍由游戏提供，每秒读取不会把它变成 1 秒平均值。
 
 新版专用监控 OC 通过握手声明 `min_interval_seconds=1`；旧 OC 默认下限 10 秒，服务器不会向它派发无法接受的 1 秒配置。页面显示当前实际采集间隔；更新专用监控 OC 并重启后生效。主 OC 和数量副 OC 无需为这次功能更新。
 
+先将示例地址替换为当前实例地址。
+
 ```sh
 ae-orbit stop
-wget -f http://125.77.172.25:8080/oc/install.lua /tmp/ae-orbit-install.lua
-lua /tmp/ae-orbit-install.lua http://125.77.172.25:8080
-reboot
+wget -f https://ae.example.com/oc/install.lua /tmp/ae-orbit-install.lua && lua /tmp/ae-orbit-install.lua https://ae.example.com && reboot
 ```
 
 重启后执行 `ae-orbit start`，保留已有配置和监控令牌。网络失败时只重试同一上报包，不堆积采样，不重复读取机器。

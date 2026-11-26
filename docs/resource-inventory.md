@@ -30,12 +30,11 @@ CPU 监控的最终产物使用同一份 NESQL 纹理和本地纹理包。新版
 
 ## 更新 OC
 
-在主 OC 和支持对应组件的副 OC 上依次执行：
+在主 OC 和支持对应组件的副 OC 上依次更新。先将示例地址替换为当前实例地址。
 
 ```sh
 ae-orbit stop
-wget -f http://125.77.172.25:8080/oc/install.lua /tmp/ae-orbit-install.lua && lua /tmp/ae-orbit-install.lua http://125.77.172.25:8080
-reboot
+wget -f https://ae.example.com/oc/install.lua /tmp/ae-orbit-install.lua && lua /tmp/ae-orbit-install.lua https://ae.example.com && reboot
 ```
 
 重启后执行 `ae-orbit start`（已设置开机启动的机器会自动运行）。本次新增样本登记命令，需下载新版安装器以获取完整模块清单。更新器保留 `/etc/ae-orbit.cfg`。必须保留 `inventory_mode="exact_only"` 和关闭库存事件的配置；重启让 OpenOS 清除旧模块缓存并重新上报能力。

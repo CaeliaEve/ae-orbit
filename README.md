@@ -6,6 +6,8 @@
 
 适合自己或固定小团队，一套服务连接多个 AE 网络。OC 主动通过因特网卡访问后端，游戏服务器不需要向外开放端口，也不要求安装本项目的服务端模组。
 
+[快速启动](#运行本地实例) · [技术架构](docs/architecture.md) · [运维手册](docs/operations.md) · [开发与贡献](CONTRIBUTING.md) · [API 与集成](docs/api-integrations.md)
+
 已验证真实 PostgreSQL、HTTP 服务进程、Go 模拟器和 Lua 5.2 / 5.3 / 5.4 组件替身的闭环；本地 GTNH 存档已完成库存读取和单笔实际合成回库测试。忙碌 CPU 的真实产物、区块卸载恢复及大规模 OC/JVM 内存和 TPS 仍需进一步实测。
 
 ## 已实现的范围
@@ -15,20 +17,22 @@
 | 库存 | 迭代采集、事件提示后精确重读、后台复核、短 ID、分批提交、重复上传去重、观察时间、搜索、实时名称分页及按 ID 批量读取 |
 | 库存历史 | 独立趋势与原始明细页面、单物品曲线、时间筛选、固定水位分页、CSV 导出；后台持续记录，不自动清理 |
 | 订单 | 指定额外合成数量、成员与网络权限、幂等下单、执行窗口、排队取消、断线待核对、状态审计、完成后定点复核 |
-| CPU | CPU 概览、忙闲状态、可用的最终产物、观察时间及截断标记 |
+| CPU | CPU 概览、忙闲状态、可用的最终产物、观察时间、截断标记及按需合成过程 |
 | 多网络 | 默认单机，支持显式启用一主多助手协作；同游戏服务器共享采集和合成规划预算 |
 | HTTP | 成员/设备令牌隔离、浏览器会话与 CSRF、请求容量限制、SSE 失效通知 |
 | 运行维护 | 自动迁移、健康检查、管理指标、设备令牌轮换、OC 安装文件、容器配置 |
-| 插件市场 | 按服务器组启用官方监控插件、独立监控 OC、蓝波顿多设备储能、趋势、站内告警与个人主页组件 |
+| 插件市场 | 按服务器组启用蓝波顿储能监控、子网库存监控和 QQ 联动 |
 | 网页 | 电脑双栏与手机底部面板、搜索分页、本机清单、持久化生产任务、暂停/继续/停止、历史分页、原请求核对 |
 
-NESQL 精确查询模式支持**物品、无 NBT 流体和源质**，分别显示库存和单位，资源默认只显示已确认有库存的条目。流体、源质使用名单内精确查询，共用现有采集预算；流体支持按 mB 下单与 CPU 调度，源质目前仅查看库存。更新与稳定性边界见 [资源库存说明](docs/resource-inventory.md)。不包含成品配送、详细 CPU 物料树、ETA、游戏中正在运行的任务强制取消。CPU 最终产物受 AE 接口和合成监控器能力限制。
+NESQL 精确查询模式支持**物品、已登记的 NBT 变种、无 NBT 流体和源质**，分别显示库存和单位。各类名单内精确查询共用采集预算。流体支持按 mB 下单与 CPU 调度，源质目前仅查看库存。CPU 过程按需显示正在进行、待加工和 CPU 内材料，由主 OC 按栏轮询，最终产物和过程数据取决于 AE 接口及合成监控器能力。 [资源库存说明](docs/resource-inventory.md) [CPU 过程契约](contracts/cpu-details.md)
 
 生产任务的接口与边界见 [生产任务契约](contracts/production-jobs.md)。网页的新单笔和批量提交均保存为不可变生产清单，由后端逐步调度；旧订单仍可查看和核对。
 
 团队可通过邀请码注册独立玩家账号，用游戏 ID 和密码登录。订单自动记录下单人，任务详情保留操作人；普通玩家控制自己的任务，管理员可处理全组。原令牌登录和历史归属保留。详见 [玩家身份说明](docs/player-identity.md)。
 
 插件市场支持独立于 ME 的专用监控 OC。蓝波顿超级电容库使用精确大整数 EU 读数，提供多设备监控、原始/汇总历史、站内告警和可选主页组件。插件启用不代表已经采集，需安装监控程序并绑定实际控制器。配置、安装和数据边界见 [插件市场说明](docs/plugin-market.md)。
+
+子 ME 网络由专用 OC 采集物品与流体，支持库存阈值预警和 QQ 关键词查询。MaiBot 负责授权群和实际发送，可在子网预警规则中搜索群友并添加多个接收人。 [子网监控](docs/subnet-monitoring.md) [QQ 联动](docs/qq-notifications.md)
 
 库存历史从功能启用时开始积累，不能还原此前未保存的数据。分钟采样及小时、日汇总只读取后端已有库存，不增加 OC 查询；首次观测和初始库存不计作生产增量。原始记录长期保留，随数据库一起备份。详见 [库存历史说明](docs/inventory-history.md)。
 
@@ -121,7 +125,7 @@ docker compose --env-file .env -f deploy/compose.yaml -f deploy/compose.https.ya
 
 Caddy 提供 HTTPS，并设置匹配的 `AE_PUBLIC_URL`。也可以使用已有 HTTPS 反向代理，转发到本机 8080 端口，关闭 SSE 响应缓冲。
 
-`AE_PUBLIC_URL` 必须是无路径、无末尾斜杠的源地址。非回环访问要求 HTTPS；OC 的 `url` 使用这个外部地址。MC 服务器的因特网卡访问规则需要允许它。
+`AE_PUBLIC_URL` 必须是无路径、无末尾斜杠的源地址，并与浏览器访问地址匹配。公开入口使用 HTTPS，OC 的 `url` 使用这个外部地址。MC 服务器的因特网卡访问规则需要允许它。
 
 ### 重启恢复验收
 
@@ -233,7 +237,7 @@ Invoke-RestMethod -Uri "$origin/api/v1/networks/$networkId/cpus" -Headers $heade
 
 游戏内准备 OpenOS 电脑、因特网卡、持久磁盘，以及可通过 OC 组件网络访问的 AE 控制器或完整 ME 接口。默认每个逻辑网络运行一个主桥接器；协作模式可增加独立数量助手，配置见下文。重新接到不同 AE 网络时创建新的逻辑网络。
 
-**适配目标为最新 GTNH 版 OpenComputers；截至 2026-11-06 为 1.13.0-GTNH，并需要与它配套的 AE2 和 GTNH 模组组合。** 当前桥接器依赖 `allItems()` 逐项迭代、接受物品描述表和 NBT 的 `getItemInNetwork(detail)`，以及 `getCraftable(detail, "item")`。仅更新本项目的 Lua 脚本不能补齐模组接口。安装模组时以游戏实际使用的目录为准；启用版本隔离的启动器通常使用 `versions/<实例>/mods`。建议使用匹配的完整 GTNH 实例。程序不会退回全库存数组采集。
+适配 GTNH 版 OpenComputers 和与之配套的 AE2。迭代模式用 `allItems()`，精确模式使用接受物品描述和 NBT 的 `getItemInNetwork(detail)`，合成使用 `getCraftable(detail, "item")`。以游戏实例实际暴露的 OC 组件方法和握手能力为准。安装模组时确认实际使用的目录，启用版本隔离的启动器通常使用 `versions/<实例>/mods`。 [采集边界](docs/architecture.md#数据与执行边界)
 
 在 OpenOS 终端粘贴这一整行，即可从 GitHub 安装，无需 Git、解压工具或 GitHub 令牌：
 
@@ -290,7 +294,7 @@ return {
 
 主机和数量助手均可从自己的服务下载 `oc/bin/ae-orbit-exact-only.lua` 到 `/tmp` 后用 `lua /tmp/ae-exact-only.lua` 运行。脚本安全停止桥接、更新模块，保留现有角色、吞吐和连接配置，并备份到 `/etc/ae-orbit.cfg.before-exact-only`。完成后必须分别重启 OpenOS，清除旧的原生迭代器并重新加载模块，再逐台恢复 ME 连接并运行 `ae-orbit start`；已启用自启的主机通常会自动启动。两种角色启动时都会主动关闭已有原生事件订阅，健康信息均含 `native_scan_disabled` 和 `events_disabled`，用于确认该模式已运行。
 
-协作网络可由管理员调用 POST /api/v1/networks/{network}/inventory-profile/nesql-plain，启用 NESQL 无 NBT 候选查询。服务从只读导出中注册精确的 registry + metadata 身份与调度记录，只有真实查询成功才建立库存观察。后台派发、手动刷新和新增合成任务均受这份清单限制，排除 NBT 变体、流体和清单外物品。原有记录及订单历史保留；清单外排队订单不会继续派发。此模式仅向握手报告 native_scan_disabled、events_disabled、exact_quantities 的 OC 分配新任务，因此两台 OC 都须完整更新并重启。
+协作网络可由管理员调用 `POST /api/v1/networks/{network}/inventory-profile/nesql-plain`，启用 NESQL 无 NBT 物品候选查询。服务从只读导出中注册精确的 registry + metadata 身份与调度记录，只有真实查询成功才建立库存观察。NBT 变种、流体与源质使用另行启用的候选名单。后台派发、手动刷新和新增合成任务受已启用名单及设备能力约束。启用精确采集前，更新并重启参与此网络的 OC，确认握手报告 `native_scan_disabled`、`events_disabled` 和 `exact_quantities`。 [资源与变种](docs/resource-inventory.md)
 
 完整导出的首次元数据注册使用 COPY 和集合 SQL，并在同一事务中启用。该管理员操作单独允许最多 60 秒、事务内每条语句最多 30 秒；普通 HTTP 和数据库语句仍沿用原来的时限。导入失败会回滚候选及模式，不会制造库存。
 
@@ -512,19 +516,12 @@ Windows 竞争检测需要兼容 C 编译器和 `CGO_ENABLED=1`；发行二进�
 
 ## 代码与文档
 
-| 目录 | 职责 |
-| --- | --- |
-| cmd/ | 服务和模拟器入口 |
-| internal/api/ | HTTP、鉴权、SSE、OC 下载 |
-| internal/store/ | 数据库、库存事务、订单、共享调度 |
-| internal/protocol/ | 精确整数、身份和协议校验 |
-| oc/ | Lua 桥接器、OpenOS 入口和安装器 |
-| contracts/ | HTTP / 设备协议 |
-| web/ | 同源网页、源代码及轻量前端测试 |
-| deploy/、scripts/ | 部署、构建和验证 |
+- 数据流、权限边界和改动入口见 [技术架构](docs/architecture.md)。
+- 备份、恢复演练、升级回滚和排障见 [运维手册](docs/operations.md)。
+- 开发环境、CI 与跨组件变更检查见 [开发与贡献](CONTRIBUTING.md)。
+- 接口字段和状态语义见 [OpenAPI](contracts/openapi.yaml)、[协议 v1](contracts/protocol-v1.md)、[协议 v2](contracts/protocol-v2.md) 和 [前端下单边界](contracts/frontend-orders.md)。
 
-进一步阅读：[协议语义](contracts/protocol-v1.md)、[OpenAPI](contracts/openapi.yaml)、[前端下单边界](contracts/frontend-orders.md)。
-
+### 库存浏览体验
 
 库存连续浏览与搜索：网页使用 `consistency=window` 按当前位置读取，每次返回 `anchor_cursor`（本页第一项）和 `next_cursor`。收到库存事件后最多每 5 秒刷新当前窗口，数量就地更新，保持页码、选择和焦点；搜索、筛选、排序改变才回到第一页。窗口包含该次请求时已确认的数据，不冻结快照：数量排序会跟随锚点物品的新排名，归零或不再符合筛选时用后续结果补位。首次查询与低频兜底仍依赖 OC 的精确扫描进度，网页实时显示的是服务端已收到的数据。
 
@@ -534,12 +531,12 @@ Windows 竞争检测需要兼容 C 编译器和 `CGO_ENABLED=1`；发行二进�
 
 搜索支持中文、完整拼音、拼音首字母及 registry 名称；多个空格分隔的条件同时满足。`@gregtech gangding` / `@gregtech gd` 可搜索 GregTech 的钢锭，`@minecraft` 只筛选完整的 Mod ID，`lv`、`lü`、`lu:` 均可用于“铝”。拼音使用字典常用读音，不做所有多音字组合或无限模糊匹配。索引在服务端生成并迁移已有标签，不触发游戏整网扫描，也不重置库存观察或调度。中文输入法组字期间不会发起搜索。
 
-旧主 OC 的 CPU 数量上限需用新配置更新，网页无法显示 OC 没有上传的 CPU：
+### 更新旧主 OC 的 CPU 上限
+
+旧主 OC 可用以下命令更新 CPU 上限。先把 `https://ae.example.com` 替换为当前实例的地址。
 
 ```sh
-wget -f http://125.77.172.25:8080/oc/bin/ae-orbit-cpu-full.lua /tmp/ae-orbit-cpu-full.lua
-lua /tmp/ae-orbit-cpu-full.lua
-reboot
+wget -f https://ae.example.com/oc/bin/ae-orbit-cpu-full.lua /tmp/ae-orbit-cpu-full.lua && lua /tmp/ae-orbit-cpu-full.lua && reboot
 ```
 
 重启后运行 `ae-orbit start`。更新器保留角色、连接设置、缓存与任务日志，备份原配置到 `/etc/ae-orbit.cfg.before-cpu-full`，保持 `exact_only` 和关闭原生事件，CPU 上限为 64；CPU 基础列表优先于可选产物详情，包大小仍受限。此更改不改变全组读取额度或 NESQL 无 NBT 身份检查。超过限额时页面明确显示列表不完整。未命名和重名 CPU 逐台展示；严格指定仍须在游戏内设置唯一名称。
